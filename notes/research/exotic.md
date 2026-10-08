@@ -195,13 +195,15 @@ content+0xa8 "Drag Fade";  content+0xb0 — CABackdropLayer фонового б�
 - **Своя тень**: параметры тени окна сервера → CA-тень слоя «Shadow». Range 34 / offset (0,10) / α 0.467 задаются
   серверными параметрами тени (функции у Fable) — WS сам переводит их в CA. [H соответствие единиц]
 - **Обрезка B без прямоугольного клипа** (главная боль Fable §1.4): вместо `set_window_list_global_clip_shape` —
-  `bounds`+`masksToBounds`+`cornerRadius` на слое «Hosting» (+0x98) или маска на «Server root». Тогда обрезка скруглённая,
+  `bounds`+`masksToBounds`+`cornerRadius` на слое «Hosting» (+0x98). Маску на «Server root» НЕ использовать: ingestion
+  на одном из путей делает `[root setMask:nil]` (186e262f8) [V]. Тогда обрезка скруглённая,
   тень по скруглённой форме, всё анимируется CA. Риск [H]: WS переустанавливает bounds слоёв при изменении рамки окна
   (`setBounds:`/`setFrame:` в ingestion для +0x60/+0x70/+0x78/+0xa0/+0x68/+0xb0) — значения надо ставить после ingestion
   (наш тик уже после) и повторять после каждого configure.
 - **Свои слои рамки/glow** (градиент 45°, кроссфейд 600 мс): `CAGradientLayer` + маска-кольцо, добавленные сабслоем в
-  «Server root» (+0x80). Едут с окном в том же коммите, без отдельных окон-подложек и без процесса hyprdeco. [H — WS не
-  вызывает `setSublayers:` на +0x80 (setSublayers встречается 1 раз в ingestion, для маски), но проверить.]
+  «Server root» (+0x80). Едут с окном в том же коммите, без отдельных окон-подложек и без процесса hyprdeco. [H — единственный `setSublayers:` в ingestion
+  бьёт по «Drag Fade» (+0xa8, `[dragFade setSublayers:nil]` 186e26304), не по +0x80 [V]; но при пересоздании контента окна
+  (initialize_ca_content_for_context) наши сабслои пропадут — переустанавливать.]
 - **Деформация сеткой (варп)**: `set_mesh_warp` → `meshTransform`. Пригодно для «тянущегося» содержимого при resize
   (Hyprland во время resize показывает растянутый старый буфер), для «желе»-эффектов. Это путь Dock-genie. [V механизм]
 

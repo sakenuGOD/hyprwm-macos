@@ -225,7 +225,7 @@ dyld cache (только чтение — GOT/vtable/CFString). Живой WS, �
   РАМКУ окна (held ждёт изменения A — `actual()`/`w->ax..ah`). Но новая рамка у AppKit появляется в момент
   setFrame, ДО того как Telegram перерисовал содержимое: первые кадры нового размера у Telegram — фон окна
   (его вид раскладывается асинхронно). Плюс в полосе B−A, пока буфер меньше рамки, видна подложка hyprdeco
-  цвета `windowBackgroundColor` (wayland_gap §1.4, `deco.py:11`). Итог — «через серый экран».
+  цвета `NSColor.windowBackgroundColor` (wayland_gap §1.4, `hook/deco/hyprdeco.m:101`). Итог — «через серый экран».
 - [V] Как сервер знает, что приложение реально прислало новый кадр: `WS::CA::GetLastChangeDataForContext(uint
   ctx_id, double& time, uint& seed)` 186de75e4 (зовётся в ingestion @186e24f70, пишет в `cwc+0x71c/+0x720`),
   id контекста приложения — `CGXWindow::ca_client_context_id() const` 187060758 (он же `cwc+0x50`).
@@ -242,7 +242,7 @@ dyld cache (только чтение — GOT/vtable/CFString). Живой WS, �
 4. Дотяжка края (буфер меньше B) вместо серого: в Hosting под Window — слой-«полоса» = второй `CALayerHost`
    того же контекста приложения (WS сам держит два хоста: +0x60 и +0x68), обрезанный до последнего столбца/строки
    и растянутый трансформом на ширину пустоты (линейная фильтрация 1-px полосы = clamp-to-edge) [гипотеза];
-   упрощённо — `Hosting.backgroundColor` = цвет края (уже считается `ax_edge_color`).
+   упрощённо — `Hosting.backgroundColor` = цвет края (уже есть `ax_edge_color` в `hook/src/axlib.c`).
 Честный предел: сама скорость перерисовки Telegram — его; наша часть — не показывать промежуточный фон.
 
 ## Шаги для основного агента (каждый с проверкой)
