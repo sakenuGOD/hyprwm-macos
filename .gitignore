@@ -1,0 +1,26 @@
+# Apple binaries and analysis databases: not ours, large — never commit
+extracted/
+ghidra_proj/
+scripts/sl_map.tsv
+*.whl
+*.zip
+# environments, build outputs, caches
+.venv/
+__pycache__/
+hook/build/
+hook/*.bin
+hook/*.dylib
+hook/keys/hyprkeys
+hook/scripts/wlist.bin
+hook/scripts/wlist_json
+# runtime state and logs
+*.log
+hs_err_pid*
+hook/*.state
+hook/*.state.json
+hook/hyprwm.chan
+hook/minsize*.json
+hook/config/hypr_cfg.json
+# personal screen captures (contain private chats)
+evidence/
+.DS_Store

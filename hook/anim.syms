@@ -1,0 +1,8 @@
+{
+ "size": 16384,
+ "vmsize": 16384,
+ "syms": {
+  "anim_frame": 1536,
+  "anim_tick": 704
+ }
+}
