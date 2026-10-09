@@ -13,6 +13,14 @@ HOOK = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CHAN = open("/tmp/hyprwm/chan_path").read().strip()     # новый файл на каждую установку (chan.py)
 KEY = 0x30000000
 SHAPE_OFF = 0x170       # CGXWindow -> CGSRegion формы (WSWindowGetScreenRect, macOS 26.7.1)
+MAGIC = 0x3531574d52505948   # HYPRWM15 (src/chan.h)
+# Жёсткие смещения в CGXWindow (0x30 соединение, 0x170 форма, 0x18 CAWindowContent) проверены только на
+# этой сборке. На другой — не ставить: запись по чужому указателю внутри WS (P31).
+BUILDS = {"25G241"}
+import subprocess
+_b = subprocess.run(["sw_vers", "-buildVersion"], capture_output=True, text=True).stdout.strip()
+if _b not in BUILDS and not os.environ.get("HYPRWM_FORCE_BUILD"):
+    raise RuntimeError("сборка macOS %s не проверена (есть %s) — сверить смещения и добавить в BUILDS" % (_b, BUILDS))
 
 t = lldb.debugger.GetSelectedTarget()
 proc = t.GetProcess()
@@ -94,8 +102,8 @@ if ch in (0, 0xffffffffffffffff):
     raise RuntimeError("mmap канала")
 if int.from_bytes(proc.ReadMemory(ch + 0xc, 4, err), "little") > os.path.getsize(CHAN):
     raise RuntimeError("канал меньше структуры движка — не ставлю")
-if r64(ch) != 0x3530574d52505948:
-    raise RuntimeError("в канале нет магии HYPRWM05 — сначала chan.Chan(create=True)")
+if r64(ch) != MAGIC:
+    raise RuntimeError("в канале нет магии HYPRWM15 — сначала chan.Chan(create=True)")
 
 # ── ctx ──────────────────────────────────────────────────────────────────
 w64(ctx + 0x00, sign(sym("CGXSetWindowTransform3DList")))
@@ -124,6 +132,76 @@ w64(ctx + 0x90, sign(sym("CGRegionCreateWithRect")))
 w64(ctx + 0x98, sign(sym("CFRelease")))
 w64(ctx + 0xa0, sign(sym("_ZNK9CGXWindow22resolved_corner_radiusEv")))
 w64(ctx + 0xa8, sign(sym("CGRegionCreateDifferenceWithRegion")))
+_ma = ev('(unsigned long)dlsym((void*)-2,"mach_absolute_time")')    # подписан IA/0, как exp/sin/cos
+if not _ma:
+    raise RuntimeError("dlsym mach_absolute_time")
+w64(ctx + 0xb0, _ma)
+import ctypes
+class _TB(ctypes.Structure):
+    _fields_ = [("numer", ctypes.c_uint32), ("denom", ctypes.c_uint32)]
+_tb = _TB()
+ctypes.CDLL("/usr/lib/libSystem.B.dylib").mach_timebase_info(ctypes.byref(_tb))
+w(ctx + 0xb8, struct.pack("<d", _tb.numer / _tb.denom / 1000.0))   # мкс на mach-тик
+# П4: ObjC/CA и транзакция WS (указатели из dlsym уже подписаны IA/0, символы WS — sign())
+for off, name in ((0xc0, "objc_msgSend"), (0xc8, "sel_registerName"), (0xd0, "objc_getClass"), (0xd8, "CGColorCreateSRGB")):
+    p = ev('(unsigned long)dlsym((void*)-2,"%s")' % name)
+    if not p:
+        raise RuntimeError("dlsym " + name)
+    w64(ctx + off, p)
+w64(ctx + 0xe0, sign(sym("_ZN27WSCAContextScopeTransactionC1E19WSCAScopeParameters")))
+w64(ctx + 0xe8, sign(sym("_ZN27WSCAContextScopeTransaction18addContextToCommitEP9CAContext")))
+w64(ctx + 0xf0, sign(sym("_ZN27WSCAContextScopeTransactionD1Ev")))
+# перенос окна на стол изнутри WS (OP_SPACE)
+w64(ctx + 0x148, sign(sym("PKGSpaceForID")))
+w64(ctx + 0x150, sign(sym("window_ordering_group_list_create_from_window_id_array")))
+w64(ctx + 0x158, sign(sym("PKGWindowsMoveToManagedSpace")))
+_fr = ev('(unsigned long)dlsym((void*)-2,"free")')
+if not _fr:
+    raise RuntimeError("dlsym free")
+w64(ctx + 0x160, _fr)
+w64(ctx + 0x280, sign(sym("CGXScheduleUpdateDisplaysIntersectingWindow")))
+w64(ctx + 0x338, sign(sym("CGXOrderWindow")))
+w64(ctx + 0x3b0, sign(sym("_ZN9CGXWindow20set_window_list_tagsEP13CGXConnectionPKPS_m18WSWindowTagBitMaskb")))
+w64(ctx + 0x3c0, sign(sym("WSPostNotificationToConnection")))   # OP_CFG (native_hooks §1)
+w64(ctx + 0x3c8, sign(sym("CGXWindowGetOwner")))
+try:                                             # невидимая тень override-ом (beyond_bounds §1.7); нет — режим 2
+    w64(ctx + 0x3d8, sign(sym("WSWindowSetWindowManagerShadowProperties")))
+    w64(ctx + 0x3e0, sign(sym("WSWindowInvalidateShadowFrame")))
+    w64(ctx + 0x3e8, sign(sym("_ZN9CGXWindow37invalidate_shadow_and_schedule_updateEP13CGXConnection")))
+except Exception as e:
+    print("override тени выключен:", e)
+    for off in (0x3d8, 0x3e0, 0x3e8):
+        w64(ctx + off, 0)
+# native_hooks §5.2: при свайпе столов WS рисует окна из плоской копии (FlatteningPolicy swipe) — Telegram на
+# минимуме «стирался». 1 = set_should_flatten_barring_change (меняющееся окно рисуется живым). Пользователь
+# проверил 2026-10-09 16:25 («всё норм»). Отладочный байт SkyLight, живёт до перезапуска WS.
+try:
+    w(sym("_ZN7cgdebugL28allow_unflatten_during_swipeE"), b"\x01")
+except Exception as e:
+    print("allow_unflatten_during_swipe:", e)
+# П8 снимок закрытия (необязательно: нет символа — П8 выключен, движок ставится)
+try:
+    for off, name in ((0x340, "_ZL19CreateCloneOfWindowP9CGXWindow6CGRectPK10PKGDisplayb"),
+                      (0x348, "_ZNK9CGXWindow21screen_rect_from_rectE6CGRect"), (0x350, "PKGWindowGetDisplay"),
+                      (0x358, "PKGDisplayGetMain"), (0x360, "_ZN9CGXWindow18set_level_internalEP13CGXConnectionis"),
+                      (0x368, "_ZN9CGXWindow14release_windowEP13CGXConnectionPS_"),
+                      (0x370, "WSAddNotificationCallback"), (0x378, "WSRemoveNotificationCallback"),
+                      (0x388, "WSWindowGetID")):
+        w64(ctx + off, sign(sym(name)))
+    w64(ctx + 0x380, sign(code + meta["syms"]["anim_will_release"]))   # paciza: blraaz в invoke_callbacks
+except Exception as e:
+    print("П8 выключен:", e)
+    for off in range(0x340, 0x390, 8):
+        w64(ctx + off, 0)
+w64(ctx + 0x228, sign(sym("_ZN9CGXWindow23set_debug_corner_radiusEd")))
+w64(ctx + 0x230, sign(sym("_ZN9CGXWindow25clear_debug_corner_radiusEv")))
+# П6 тень: путь скруглённого прямоугольника (CoreGraphics, dlsym — уже подписаны)
+for off, name in ((0x218, "CGPathCreateWithRoundedRect"), (0x220, "CGPathRelease"), (0x238, "CGPathCreateMutable"),
+                  (0x240, "CGPathAddRoundedRect"), (0x248, "CGPathAddRect")):
+    p = ev('(unsigned long)dlsym((void*)-2,"%s")' % name)
+    if not p:
+        raise RuntimeError("dlsym " + name)
+    w64(ctx + off, p)
 
 
 ev("((void(*)(void*,void*,void*,void*,int,int,double))reschedule_callback_on_session)"

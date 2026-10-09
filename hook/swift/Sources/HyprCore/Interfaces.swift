@@ -1,0 +1,213 @@
+// Границы демона с системой. Вся логика (WM) говорит с миром только через эти протоколы:
+// живые реализации — в цели hyprwm-swift (SkyLight/AX/канал), подделки — в тестах (WS не трогают).
+import Foundation
+
+/// Окно из снимка (winsnap.m: CGWindowList + стол окна).
+public struct WinInfo: Equatable {
+    public var wid: Int, pid: Int
+    public var owner: String, name: String
+    public var x, y, w, h: Double
+    public var on: Bool
+    public var space: Int
+    public init(wid: Int, pid: Int, owner: String, name: String = "", x: Double, y: Double, w: Double, h: Double,
+                on: Bool, space: Int) {
+        self.wid = wid; self.pid = pid; self.owner = owner; self.name = name
+        self.x = x; self.y = y; self.w = w; self.h = h; self.on = on; self.space = space
+    }
+    public var rect: Rect { Rect(x, y, w, h) }
+
+    public static func from(_ j: JSON) -> WinInfo {
+        WinInfo(wid: j["wid"]?.int ?? 0, pid: j["pid"]?.int ?? 0, owner: j["owner"]?.string ?? "",
+                name: j["name"]?.string ?? "", x: j["x"]?.double ?? 0, y: j["y"]?.double ?? 0,
+                w: j["w"]?.double ?? 0, h: j["h"]?.double ?? 0, on: (j["on"] ?? .null).truthy,
+                space: j["space"]?.int ?? 0)
+    }
+}
+
+public struct Snapshot {
+    public var space: Int
+    public var stable: Bool
+    public var area: Rect                // visible frame экрана (без меню-бара и дока)
+    public var windows: [WinInfo]        // спереди назад, сначала окна на экране
+    public init(space: Int, stable: Bool, area: Rect, windows: [WinInfo]) {
+        self.space = space; self.stable = stable; self.area = area; self.windows = windows
+    }
+    /// JSON из ws_snapshot().
+    public static func parse(_ j: JSON) -> Snapshot {
+        let v = j["visible"] ?? .object([])
+        return Snapshot(space: j["space"]?.int ?? 0, stable: (j["stable"] ?? .null).truthy,
+                        area: Rect(v["x"]?.double ?? 0, v["y"]?.double ?? 0, v["w"]?.double ?? 0, v["h"]?.double ?? 0),
+                        windows: (j["windows"]?.array ?? []).map(WinInfo.from))
+    }
+}
+
+/// Слот окна в движке (struct ch_win) — то, что демон из него читает.
+public struct EngWin {
+    public var wid: Int
+    public var pos: (Double, Double), size: (Double, Double)
+    public var posActive: Bool, sizeActive: Bool, alphaActive: Bool
+    public var settling: Bool
+    public var curAlpha: Double
+    public var held: Bool
+    public var radius: Double
+    public var ax, ay, aw, ah: Double
+    public init(wid: Int, pos: (Double, Double), size: (Double, Double), posActive: Bool = false,
+                sizeActive: Bool = false, alphaActive: Bool = false, settling: Bool = false, curAlpha: Double = 1,
+                held: Bool = false, radius: Double = 0, a: Rect) {
+        self.wid = wid; self.pos = pos; self.size = size; self.posActive = posActive; self.sizeActive = sizeActive
+        self.alphaActive = alphaActive; self.settling = settling; self.curAlpha = curAlpha; self.held = held
+        self.radius = radius; ax = a.x; ay = a.y; aw = a.w; ah = a.h
+    }
+    public var moving: Bool { posActive || sizeActive || settling }
+    public var visible: Rect { Rect(pos.0, pos.1, size.0, size.1) }   // видимая рамка B
+    public var real: Rect { Rect(ax, ay, aw, ah) }                      // фактическая рамка A
+}
+
+public struct EngEvent {
+    public var type: Int, wid: Int, t: Double
+    public var rect: Rect
+    public init(type: Int, wid: Int, t: Double, rect: Rect) { self.type = type; self.wid = wid; self.t = t; self.rect = rect }
+}
+
+/// Номера событий/флагов — из chan.h (EV_*). Дублируются здесь только как Int для протоколов;
+/// живой канал сверяет их с chan.h в тесте (ChannelABITests).
+public enum Ev { public static let gone = 1, settled = 2, done = 3, new = 4, moved = 5 }
+
+/// Счётчики заголовка канала для status.
+public struct EngStats {
+    public var ticks = 0, nactive = 0, errors = 0, ticksLate = 0, teSkips = 0
+    public var tickUsMax = 0.0, tickUsLast = 0.0
+    public init() {}
+}
+
+/// Канал демон -> движок (chan.py Chan).
+public protocol ChannelAPI: AnyObject {
+    func geom(_ wid: Int, _ to: Rect, _ cpos: Int, _ csize: Int, dpos: Double, dsize: Double, frm: Rect?,
+              move: Bool, warp: Bool, stretch: Bool)
+    func alpha(_ wid: Int, _ a: Double, _ curve: Int, _ dur: Double, frm: Double?)
+    func under(_ wid: Int, _ under: Int)
+    func forget(_ wid: Int)
+    func commit()
+    func events() -> [EngEvent]
+    func wins() -> [EngWin]
+    var stats: EngStats { get }
+    /// cmd_tail != cmd_head: движок ещё не забрал опубликованную пачку
+    var pending: Bool { get }
+    var widMax: Int { get set }
+}
+
+public extension ChannelAPI {
+    func geom(_ wid: Int, _ to: Rect, _ cpos: Int, _ csize: Int, dpos: Double = 0, dsize: Double = 0,
+              frm: Rect? = nil, move: Bool = true, warp: Bool = false, stretch: Bool = false) {
+        geom(wid, to, cpos, csize, dpos: dpos, dsize: dsize, frm: frm, move: move, warp: warp, stretch: stretch)
+    }
+    func alpha(_ wid: Int, _ a: Double, _ curve: Int, _ dur: Double = 0) { alpha(wid, a, curve, dur, frm: nil) }
+}
+
+/// Обёртка движка (engine.py Engine).
+public protocol EngineAPI: AnyObject {
+    var c: ChannelAPI { get }
+    func anim(_ leaf: String) -> (curve: Int, dur: Double, on: Bool)
+    func alive() -> Bool
+    func ensure(startup: Bool) throws
+}
+
+public extension EngineAPI {
+    /// wid -> фактическая рамка окна на сервере (без нашего трансформа).
+    func real() -> [Int: Rect] {
+        var d: [Int: Rect] = [:]
+        for w in c.wins() { d[w.wid] = w.real }   // как dict-компрехеншен: последний побеждает
+        return d
+    }
+}
+
+/// Подложки (deco.py).
+public protocol DecoAPI: AnyObject {
+    func ensure(_ wid: Int, _ owner: String, _ radius: Double)
+    func place(_ wid: Int, _ rect: Rect) -> Int?
+    func sample(_ wid: Int)
+    func drop(_ wid: Int)
+}
+
+public final class NullDeco: DecoAPI {
+    public init() {}
+    public func ensure(_ wid: Int, _ owner: String, _ radius: Double) {}
+    public func place(_ wid: Int, _ rect: Rect) -> Int? { nil }
+    public func sample(_ wid: Int) {}
+    public func drop(_ wid: Int) {}
+}
+
+/// Всё, что демон спрашивает у системы (SkyLight, AX, CoreGraphics, процессы) и часы.
+public protocol SysAPI: AnyObject {
+    func now() -> Double
+    func sleep(_ s: Double)
+    func snapshot() throws -> Snapshot
+    func winPidLevel(_ wid: Int) -> (pid: Int?, level: Int?)
+    func frontPid() -> Int?
+    func winBounds(_ wid: Int) -> Rect?
+    func winAlpha(_ wid: Int) -> Double?
+    func moveToSpace(_ wids: [Int], _ space: Int)
+    func activeSpace() -> UInt64
+    func mouse() -> (Double, Double)
+    func mouseDown() -> Bool
+    // AX (axlib.c)
+    func axTileable(_ pid: Int, _ wid: Int) -> Int
+    func axFrame(_ pid: Int, _ wid: Int, _ r: Rect) -> Int
+    func axGetFrame(_ pid: Int, _ wid: Int) -> Rect?
+    func axForget(_ wid: Int)
+    func axFocus(_ pid: Int, _ wid: Int, raise: Bool) -> Int
+    func axMenuPress(_ pid: Int, _ title: String) -> Int
+    // winsnap.m
+    func wsClose(_ pid: Int, _ wid: Int) -> Int
+    func wsQuit(_ pid: Int) -> Int
+    // exec
+    func spotlight()
+    func pgrep(_ name: String) -> Int?
+    func spawn(_ argv: [String])
+    func background(_ f: @escaping () -> Void)
+}
+
+/// Куда уходят задания configure (живой — Configurer с очередью на приложение; в тестах — запись).
+public protocol ConfigureSink: AnyObject {
+    func submit(_ jobs: [CfgJob])
+}
+
+public struct CfgJob: Equatable {
+    public var wid: Int, pid: Int
+    public var owner: String
+    public var to: Rect
+    public var seq = 0
+    public init(wid: Int, pid: Int, owner: String, to: Rect) { self.wid = wid; self.pid = pid; self.owner = owner; self.to = to }
+}
+
+/// Ответ configure (что окно реально приняло).
+public struct CfgResult {
+    public var wid: Int
+    public var owner: String
+    public var to: Rect
+    public var got: Rect?
+    public var e: Int
+    public var pre: Rect?
+    public init(wid: Int, owner: String, to: Rect, got: Rect?, e: Int, pre: Rect?) {
+        self.wid = wid; self.owner = owner; self.to = to; self.got = got; self.e = e; self.pre = pre
+    }
+}
+
+public var hyprLogSink: (String) -> Void = { line in
+    FileHandle.standardOutput.write((line + "\n").data(using: .utf8)!)
+}
+
+/// Как log() в hyprwm.py: "HH:MM:SS.mmm сообщение".
+private let logTimeFormat: DateFormatter = {
+    let f = DateFormatter()
+    f.dateFormat = "HH:mm:ss"
+    return f
+}()
+
+public func log(_ parts: Any...) {
+    let t = Date().timeIntervalSince1970
+    let f = logTimeFormat
+    let ms = Int((t.truncatingRemainder(dividingBy: 1)) * 1000)
+    hyprLogSink(f.string(from: Date(timeIntervalSince1970: t)) + String(format: ".%03d ", ms) +
+                parts.map { "\($0)" }.joined(separator: " "))
+}

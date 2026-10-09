@@ -89,6 +89,7 @@ def need(node):
     """Минимальный размер плитки под поддерево (с зазорами вокруг окна)."""
     if "wid" in node:
         mw, mh = MINS.get(node["wid"], (MIN_W, MIN_H))
+        mw, mh = max(mw, MIN_W), max(mh, MIN_H)        # выученный 0 по оси — не меньше дефолта
         pad = 2 * max(GAPS_IN, *GAPS_OUT.values())     # худший случай: плитка у края экрана
         return mw + pad, mh + pad
     (aw, ah), (bw, bh) = need(node["a"]), need(node["b"])

@@ -12,12 +12,13 @@ static struct { CGWindowID wid; pid_t pid; AXUIElementRef el; } cache[NC];
 
 int ax_focus(int pid, unsigned wid, int raise);
 
-static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;   // кэш общий для потоков live-resize
+static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;   // кэш общий для потоков configure
+static int evict;                                        // следующий слот на вытеснение (кэш полон)
 
 static AXUIElementRef lookup_locked(pid_t pid, CGWindowID wid, int refresh) {
     for (int i = 0; i < NC; i++)
         if (cache[i].el && cache[i].wid == wid && cache[i].pid == pid) {
-            if (!refresh) return cache[i].el;
+            if (!refresh) return (AXUIElementRef)CFRetain(cache[i].el);
             CFRelease(cache[i].el); cache[i].el = NULL;
         }
     AXUIElementRef app = AXUIElementCreateApplication(pid), found = NULL;
@@ -31,11 +32,11 @@ static AXUIElementRef lookup_locked(pid_t pid, CGWindowID wid, int refresh) {
             int slot = -1;
             for (int j = 0; j < NC; j++) if (cache[j].el && cache[j].wid == id) { slot = j; break; }
             if (slot < 0) for (int j = 0; j < NC; j++) if (!cache[j].el) { slot = j; break; }
-            if (slot < 0) continue;
+            if (slot < 0) { slot = evict; evict = (evict + 1) % NC; }   // кэш полон: вытеснить по кругу
             if (cache[slot].el) CFRelease(cache[slot].el);
             cache[slot].wid = id; cache[slot].pid = pid; cache[slot].el = (AXUIElementRef)CFRetain(el);
             AXUIElementSetMessagingTimeout(el, 0.25f);
-            if (id == wid) found = el;
+            if (id == wid && !found) found = (AXUIElementRef)CFRetain(el);   // +1: слот могут вытеснить
         }
         CFRelease(wins);
     }
@@ -46,8 +47,7 @@ static AXUIElementRef lookup_locked(pid_t pid, CGWindowID wid, int refresh) {
 // Элемент возвращается с +1 (CFRetain) — поток может пользоваться им без блокировки.
 static AXUIElementRef lookup(pid_t pid, CGWindowID wid, int refresh) {
     pthread_mutex_lock(&mu);
-    AXUIElementRef el = lookup_locked(pid, wid, refresh);
-    if (el) CFRetain(el);
+    AXUIElementRef el = lookup_locked(pid, wid, refresh);   // уже +1
     pthread_mutex_unlock(&mu);
     return el;
 }

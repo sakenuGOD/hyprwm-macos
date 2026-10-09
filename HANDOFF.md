@@ -215,6 +215,12 @@ Entry-point для продолжения (в т.ч. другим помощни
 
 ---
 
+## 2б. Сессия 8 (2026-10-09, утро–день) — кратко
+Движок HYPRWM13 (маска Hosting, OP_SPACE, рамка/тень/заливка слоями в Server root, радиус через
+set_debug_corner_radius). Всё по шагам и с проверками — `notes/PROGRESS.md`; вход — `notes/MASTER.md` §5 (шапка).
+Переключатели: HYPRWM_MASK, HYPRWM_BORDER(=0), HYPRWM_BORDER_MS, HYPRWM_SHADOW(=0), HYPRWM_SHADOW_DENS,
+HYPRWM_SYS_SHADOW(=1 — оставить системную тень/контур), HYPRWM_BORDER_ONLY=<wid>.
+
 ## 3. СТЕНД / ДОСТУП
 
 - Машина: MacBook Air, macOS 26.7.1 (25G241), arm64e. защита целостности системы в режиме разработки (для lldb/dtrace по

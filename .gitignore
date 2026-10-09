@@ -24,3 +24,7 @@ hook/config/hypr_cfg.json
 # personal screen captures (contain private chats)
 evidence/
 .DS_Store
+# дампы листингов (сотни МБ) и сборки
+cache/
+hook/active/*.dylib
+hook/swift/.build/

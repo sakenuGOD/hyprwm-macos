@@ -126,3 +126,42 @@ if __name__ == "__main__":
     print("dwindle:", dwindle())
     for leaf in ("windowsMove", "windowsIn", "windowsOut", "border", "workspaces"):
         print("%-12s %s spring=%s" % (leaf, animation(leaf), spring(leaf)))
+
+
+def _rgba(s):
+    """'rgba(ffb4a4ee)' / 'rgb(1a1110)' / '0xeeffb4a4' -> (r, g, b, a) 0..1."""
+    s = str(s).strip()
+    if s.startswith("rgba(") or s.startswith("rgb("):
+        h = s[s.index("(") + 1:s.index(")")]
+        if len(h) == 6:
+            h += "ff"
+        return tuple(int(h[i:i + 2], 16) / 255 for i in (0, 2, 4, 6))
+    if s.startswith("0x"):                              # 0xAARRGGBB
+        v = int(s, 16)
+        return ((v >> 16 & 255) / 255, (v >> 8 & 255) / 255, (v & 255) / 255, (v >> 24 & 255) / 255)
+    raise ValueError("цвет: " + s)
+
+
+def border():
+    """Рамка: ширина, радиус окна, градиент активной (цвета, угол °), цвет неактивной."""
+    g = general()
+    col = g.get("col", {})
+    act = col.get("active_border", "rgba(33ccffee)")
+    if isinstance(act, dict):
+        colors, angle = act.get("colors", []), act.get("angle", 0)
+    else:
+        colors, angle = [act], 0
+    dec = load()["config"].get("decoration", {})
+    return {"size": g.get("border_size", 1), "rounding": dec.get("rounding", 0),
+            "active": [_rgba(x) for x in colors] or [_rgba("rgba(33ccffee)")], "angle": angle,
+            "inactive": _rgba(col.get("inactive_border", "rgba(595959aa)"))}
+
+
+def shadow():
+    """decoration.shadow: (вкл., α активной, α неактивной, range, offset y, render_power)."""
+    sh = load()["config"].get("decoration", {}).get("shadow", {})
+    ca = _rgba(sh.get("color", "rgba(1a1a1aee)"))
+    ci = _rgba(sh.get("color_inactive", sh.get("color", "rgba(1a1a1aee)")))
+    off = sh.get("offset", [0, 0])
+    return {"on": sh.get("enabled", True), "act": ca[3], "inact": ci[3], "range": sh.get("range", 4),
+            "offset": off[1] if isinstance(off, (list, tuple)) else 0, "power": sh.get("render_power", 3)}

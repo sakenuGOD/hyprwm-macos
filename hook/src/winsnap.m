@@ -10,6 +10,31 @@ typedef int CGSConnectionID;
 extern CGSConnectionID SLSMainConnectionID(void);
 extern uint64_t SLSGetActiveSpace(CGSConnectionID cid);
 extern CFArrayRef SLSCopySpacesForWindows(CGSConnectionID cid, int mask, CFArrayRef wids);
+extern CFArrayRef SLSCopyManagedDisplaySpaces(CGSConnectionID cid);
+extern CFArrayRef SLSCopyWindowsWithOptionsAndTags(CGSConnectionID cid, uint32_t owner, CFArrayRef spaces,
+                                                   uint32_t options, uint64_t *set_tags, uint64_t *clear_tags);
+
+// wid -> Space для всех окон: по одному запросу на рабочий стол (раньше — запрос на каждое окно, ~35 RPC
+// в WindowServer на снимок, 60 снимков/с).
+static NSMutableDictionary *space_map(CGSConnectionID cid) {
+    NSMutableDictionary *m = [NSMutableDictionary dictionary];
+    CFArrayRef ds = SLSCopyManagedDisplaySpaces(cid);
+    if (!ds) return m;
+    for (NSDictionary *d in (__bridge NSArray *)ds) {
+        for (NSDictionary *sp in d[@"Spaces"]) {
+            NSNumber *sid = sp[@"id64"] ?: sp[@"ManagedSpaceID"];
+            if (!sid) continue;
+            uint64_t set = 0, clear = 0;
+            CFArrayRef ws = SLSCopyWindowsWithOptionsAndTags(cid, 0, (__bridge CFArrayRef) @[ sid ], 0x7, &set, &clear);
+            if (!ws) continue;
+            for (NSNumber *w in (__bridge NSArray *)ws)
+                if (!m[w]) m[w] = sid;
+            CFRelease(ws);
+        }
+    }
+    CFRelease(ds);
+    return m;
+}
 
 static NSString *esc(NSString *s) {
     NSData *d = [NSJSONSerialization dataWithJSONObject:@[ s ?: @"" ] options:0 error:nil];
@@ -45,6 +70,7 @@ int ws_snapshot(char *buf, int cap) {
             if (![seen containsObject:d[(id)kCGWindowNumber]]) [m addObject:d];
         CFRelease(on); CFRelease(all);
         CFArrayRef a = (__bridge_retained CFArrayRef)m;
+        NSDictionary *spm = getenv("WINSNAP_OLD") ? nil : space_map(cid);
         BOOL first = YES;
         for (CFIndex i = 0; i < CFArrayGetCount(a); i++) {
             NSDictionary *d = (__bridge NSDictionary *)CFArrayGetValueAtIndex(a, i);
@@ -53,11 +79,14 @@ int ws_snapshot(char *buf, int cap) {
             CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)d[(id)kCGWindowBounds], &r);
             if (r.size.width < 60 || r.size.height < 60) continue;
             NSNumber *wid = d[(id)kCGWindowNumber];
-            CFArrayRef sps = SLSCopySpacesForWindows(cid, 7, (__bridge CFArrayRef) @[ wid ]);
             uint64_t sp = 0;
-            if (sps && CFArrayGetCount(sps) > 0)
-                sp = [(__bridge NSNumber *)CFArrayGetValueAtIndex(sps, 0) unsignedLongLongValue];
-            if (sps) CFRelease(sps);
+            if (spm) sp = [spm[wid] unsignedLongLongValue];
+            else {
+                CFArrayRef sps = SLSCopySpacesForWindows(cid, 7, (__bridge CFArrayRef) @[ wid ]);
+                if (sps && CFArrayGetCount(sps) > 0)
+                    sp = [(__bridge NSNumber *)CFArrayGetValueAtIndex(sps, 0) unsignedLongLongValue];
+                if (sps) CFRelease(sps);
+            }
             [o appendFormat:@"%@{\"wid\":%d,\"pid\":%d,\"owner\":%@,\"name\":%@,\"x\":%.1f,\"y\":%.1f,"
                              "\"w\":%.1f,\"h\":%.1f,\"on\":%d,\"space\":%llu}",
                             first ? @"" : @",", wid.intValue, [d[(id)kCGWindowOwnerPID] intValue],

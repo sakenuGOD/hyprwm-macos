@@ -1,8 +1,9 @@
 {
- "size": 16384,
- "vmsize": 16384,
+ "size": 32768,
+ "vmsize": 32768,
  "syms": {
-  "anim_frame": 6368,
-  "anim_tick": 712
+  "anim_frame": 20112,
+  "anim_tick": 4252,
+  "anim_will_release": 792
  }
 }

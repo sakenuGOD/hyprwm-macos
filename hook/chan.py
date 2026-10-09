@@ -14,11 +14,11 @@ PTR = DIR + "/chan_path"     # путь к текущему каналу. Каж
                              # так упала сессия 2026-10-08 20:27)
 LIB = os.path.join(HOOK, "build", "libhyprchan.dylib")
 
-CH_MAGIC = 0x3530574d52505948
+CH_MAGIC = 0x3531574d52505948
 CV_NONE, CV_BEZIER, CV_SPRING = 0, 1, 2
 OP_GEOM, OP_ALPHA, OP_FORGET, OP_WARP, OP_UNDER = 1, 2, 3, 4, 5
-F_FROM, F_MOVE, F_STRETCH = 1, 2, 4
-EV_GONE, EV_SETTLED, EV_DONE, EV_NEW = 1, 2, 3, 4
+F_FROM, F_MOVE, F_STRETCH, F_WAIT, F_HOLD = 1, 2, 4, 8, 16
+EV_GONE, EV_SETTLED, EV_DONE, EV_NEW, EV_MOVED, EV_REL, EV_CLONE = 1, 2, 3, 4, 5, 6, 7
 
 
 class Var(ctypes.Structure):
@@ -36,8 +36,26 @@ class Win(ctypes.Structure):
                 ("clip", ctypes.c_double * 4), ("stretch", ctypes.c_uint32), ("under", ctypes.c_uint32),
                 ("um", ctypes.c_double * 4), ("ualpha", ctypes.c_double),
                 ("radius", ctypes.c_double), ("pa", ctypes.c_double * 4),
-                ("stable", ctypes.c_uint32), ("pad3", ctypes.c_uint32),
-                ("a0", ctypes.c_double * 2), ("held", ctypes.c_uint32), ("needs", ctypes.c_uint32)]
+                ("stable", ctypes.c_uint32), ("rset", ctypes.c_uint32),
+                ("a0", ctypes.c_double * 2), ("held", ctypes.c_uint32), ("needs", ctypes.c_uint32),
+                ("geo", ctypes.c_uint32), ("moved", ctypes.c_uint32), ("ub", ctypes.c_double * 6),
+                ("wait", ctypes.c_uint32), ("fill", ctypes.c_uint32), ("wait_t", ctypes.c_double),
+                ("mask", ctypes.c_uint64), ("mrect", ctypes.c_double * 2),
+                ("mhost", ctypes.c_double * 2), ("act", Var), ("bl_in", ctypes.c_uint64), ("bl_act", ctypes.c_uint64),
+                ("bframe", ctypes.c_double * 4), ("bop", ctypes.c_double), ("sact", Var),
+                ("bl_sh", ctypes.c_uint64), ("sop", ctypes.c_double), ("bl_fill", ctypes.c_uint64),
+                ("fkey", ctypes.c_double * 5)]
+
+
+class Deco(ctypes.Structure):
+    _fields_ = [("on", ctypes.c_uint32), ("focus", ctypes.c_uint32), ("curve", ctypes.c_uint32),
+                ("ngrad", ctypes.c_uint32), ("dur", ctypes.c_double), ("width", ctypes.c_double),
+                ("radius", ctypes.c_double), ("grad", (ctypes.c_double * 4) * 8), ("inact", ctypes.c_double * 4),
+                ("start", ctypes.c_double * 2), ("end", ctypes.c_double * 2), ("nofull", ctypes.c_uint32),
+                ("only", ctypes.c_uint32), ("sh_on", ctypes.c_uint32), ("scurve", ctypes.c_uint32),
+                ("sdur", ctypes.c_double), ("srad", ctypes.c_double), ("soff", ctypes.c_double),
+                ("sop_act", ctypes.c_double), ("sop_in", ctypes.c_double), ("sys_off", ctypes.c_uint32),
+                ("inset10", ctypes.c_uint32), ("bez", ctypes.c_double * 4), ("sbez", ctypes.c_double * 4)]
 
 
 class Hdr(ctypes.Structure):
@@ -50,7 +68,19 @@ class Hdr(ctypes.Structure):
                 ("stop", ctypes.c_uint32), ("applied", ctypes.c_uint32), ("last_dt", ctypes.c_double),
                 ("phase", ctypes.c_double), ("period", ctypes.c_double), ("margin", ctypes.c_double),
                 ("te", ctypes.c_double), ("wid_max", ctypes.c_uint32), ("holding", ctypes.c_uint32),
-                ("hold_t", ctypes.c_double), ("hold_max", ctypes.c_double)]
+                ("hold_t", ctypes.c_double), ("hold_max", ctypes.c_double),
+                ("tick_us_last", ctypes.c_double), ("tick_us_max", ctypes.c_double),
+                ("ticks_late", ctypes.c_uint32), ("te_skips", ctypes.c_uint32),
+                ("traj_head", ctypes.c_uint32), ("pad_t", ctypes.c_uint32), ("te_prev", ctypes.c_double),
+                ("use_mask", ctypes.c_uint32), ("mask_only", ctypes.c_uint32),
+                ("mask_flip", ctypes.c_uint32), ("mask_errs", ctypes.c_uint32),
+                ("reserved", ctypes.c_uint64 * 5)]
+
+
+class Traj(ctypes.Structure):
+    _fields_ = [("te", ctypes.c_double), ("wid", ctypes.c_uint32), ("pad", ctypes.c_uint32),
+                ("bx", ctypes.c_double), ("by", ctypes.c_double), ("bw", ctypes.c_double), ("bh", ctypes.c_double),
+                ("alpha", ctypes.c_double)]
 
 
 class Evt(ctypes.Structure):
@@ -93,13 +123,16 @@ class Chan:
             tmp = PTR + ".tmp"
             open(tmp, "w").write(self.path)
             os.rename(tmp, PTR)
-        assert L.ch_off(0) == ctypes.sizeof(Win) and L.ch_off(3) == ctypes.sizeof(Var), "chan.h и chan.py разошлись"
+        assert (L.ch_off(0) == ctypes.sizeof(Win) and L.ch_off(3) == ctypes.sizeof(Var) and
+                L.ch_off(7) == ctypes.sizeof(Hdr)), "chan.h и chan.py разошлись"
         self.h = Hdr.from_address(self.base)
         self.win_off = L.ch_off(1)
 
     # ── команды ──────────────────────────────────────────────────────────
-    def geom(self, wid, to, cpos, csize, dpos=0.0, dsize=0.0, frm=None, move=True, warp=False, stretch=False):
-        fl = (F_FROM if frm else 0) | (F_MOVE if move else 0) | (F_STRETCH if stretch else 0)
+    def geom(self, wid, to, cpos, csize, dpos=0.0, dsize=0.0, frm=None, move=True, warp=False, stretch=False,
+             wait=False, hold=False):
+        fl = ((F_FROM if frm else 0) | (F_MOVE if move else 0) | (F_STRETCH if stretch else 0) | (F_WAIT if wait else 0) |
+              (F_HOLD if hold else 0))
         f = frm or (0, 0, 0, 0)
         r = self.L.ch_geom(OP_WARP if warp else OP_GEOM, wid, fl, *map(float, to), *map(float, f),
                            cpos, csize, float(dpos), float(dsize))
@@ -115,6 +148,23 @@ class Chan:
 
     def forget(self, wid):
         self.L.ch_forget(wid)
+
+    def raise_(self, wid, rel=0):
+        self.L.ch_raise(ctypes.c_uint(wid), ctypes.c_uint(rel))
+
+    def snap(self, wid):
+        self.L.ch_snap(ctypes.c_uint(wid))
+
+    def fill(self, wid, rgba):
+        self.L.ch_fill(ctypes.c_uint(wid), ctypes.c_uint(rgba))
+
+    def cfg(self, wid, to):
+        """Конечная рамка приложению уведомлением WS в тик старта пачки (модуль hyprforce применяет её)."""
+        if self.L.ch_cfg(ctypes.c_uint(wid), *(ctypes.c_double(float(v)) for v in to)):
+            raise RuntimeError("кольцо команд полно")
+
+    def space(self, wid, sid):
+        self.L.ch_space(ctypes.c_uint(wid), ctypes.c_ulonglong(int(sid)))
 
     def commit(self):
         self.L.ch_commit()
@@ -135,6 +185,21 @@ class Chan:
     def wins(self):
         arr = (Win * 64).from_address(self.base + self.win_off)
         return [w for w in arr if w.used]
+
+    def traj(self, since=0):
+        """Журнал траектории движка (кольцо 256): записи с номером >= since -> (новый since, [Traj])."""
+        head = self.h.traj_head
+        lo = max(since, head - 256)
+        arr = (Traj * 256).from_address(self.base + self.L.ch_off(6))
+        return head, [Traj.from_buffer_copy(arr[i % 256]) for i in range(lo, head)]
+
+    @property
+    def deco(self):
+        assert self.L.ch_off(10) == ctypes.sizeof(Deco), "chan.h и chan.py разошлись (deco)"
+        return Deco.from_address(self.base + self.L.ch_off(9))
+
+    def set_prehide(self, on):
+        ctypes.c_uint32.from_address(self.base + self.L.ch_off(8)).value = int(bool(on))
 
     def alive(self, wait=0.1):
         import time

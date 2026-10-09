@@ -11,6 +11,7 @@
 
 static struct ch *ch;
 static u32 pend;             // следующая свободная позиция (ещё не опубликована)
+static u32 pub;              // голова, которую опубликовали мы последней
 
 unsigned ch_abi(void) { return (unsigned)sizeof(struct ch); }
 unsigned ch_off(int what) {
@@ -21,6 +22,11 @@ unsigned ch_off(int what) {
     case 3: return (unsigned)sizeof(struct ch_var);
     case 4: return (unsigned)__builtin_offsetof(struct ch_win, pos);
     case 5: return (unsigned)__builtin_offsetof(struct ch_win, ax);
+    case 6: return (unsigned)__builtin_offsetof(struct ch, traj);
+    case 7: return (unsigned)sizeof(struct ch_hdr);
+    case 8: return (unsigned)__builtin_offsetof(struct ch, prehide);
+    case 9: return (unsigned)__builtin_offsetof(struct ch, deco);
+    case 10: return (unsigned)sizeof(struct ch_deco);
     }
     return 0;
 }
@@ -38,11 +44,11 @@ void *ch_open(const char *path, int create) {
     ch = p;
     if (create) {
         memset(ch, 0, sizeof *ch);
-        ch->h.version = 5; ch->h.size = (u32)sizeof *ch;
+        ch->h.version = 6; ch->h.size = (u32)sizeof *ch;
         ch->h.idle_poll = 0.008; ch->h.settle = 1.0; ch->h.settle_px = 3.0; ch->h.phase = 0.1; ch->h.margin = 0.002;
         __atomic_store_n(&ch->h.magic, CH_MAGIC, __ATOMIC_RELEASE);
     }
-    pend = __atomic_load_n(&ch->h.cmd_head, __ATOMIC_ACQUIRE);
+    pend = pub = __atomic_load_n(&ch->h.cmd_head, __ATOMIC_ACQUIRE);
     return ch;
 }
 
@@ -63,6 +69,9 @@ void ch_curve_spring(int id, double mass, double k, double d) {
 }
 
 static struct ch_cmd *next_cmd(void) {
+    // начало новой пачки: голову мог сдвинуть другой писатель (тестовый скрипт) — продолжить от неё,
+    // иначе наша публикация отодвинула бы голову назад и движок переприменил бы старые команды
+    if (pend == pub) pend = pub = __atomic_load_n(&ch->h.cmd_head, __ATOMIC_ACQUIRE);
     u32 tail = __atomic_load_n(&ch->h.cmd_tail, __ATOMIC_ACQUIRE);
     if (pend - tail >= CH_NCMD) return 0;       // кольцо полно: движок не забирает
     struct ch_cmd *k = &ch->cmd[pend % CH_NCMD];
@@ -104,8 +113,48 @@ int ch_under(unsigned wid, unsigned under) {
     return 0;
 }
 
+// Перенести окно на рабочий стол sid (исполняет движок внутри WS).
+int ch_space(unsigned wid, unsigned long long sid) {
+    struct ch_cmd *k = next_cmd();
+    if (!k) return -1;
+    k->op = OP_SPACE; k->wid = wid; k->x = (double)sid;
+    return 0;
+}
+
+// Конечная рамка окна приложению через WS (OP_CFG): движок шлёт её владельцу окна в тик старта пачки.
+int ch_cfg(unsigned wid, double x, double y, double w, double h) {
+    struct ch_cmd *k = next_cmd();
+    if (!k) return -1;
+    k->op = OP_CFG; k->wid = wid; k->x = x; k->y = y; k->w = w; k->h = h;
+    return 0;
+}
+
+// Цвет края окна (RGBA8, 0 — нет): им движок закрывает пустую полосу, пока буфер меньше видимой рамки.
+int ch_fill(unsigned wid, unsigned rgba) {
+    struct ch_cmd *k = next_cmd();
+    if (!k) return -1;
+    k->op = OP_FILL; k->wid = wid; k->flags = rgba;
+    return 0;
+}
+
+// Поднять окно над rel (0 — над всеми своего уровня) без активации приложения.
+int ch_raise(unsigned wid, unsigned rel) {
+    struct ch_cmd *k = next_cmd();
+    if (!k) return -1;
+    k->op = OP_RAISE; k->wid = wid; k->flags = rel;
+    return 0;
+}
+
+// Подкладка-снимок окна на время хода (движок снимет её сам по концу анимации окна).
+int ch_snap(unsigned wid) {
+    struct ch_cmd *k = next_cmd();
+    if (!k) return -1;
+    k->op = OP_SNAP; k->wid = wid;
+    return 0;
+}
+
 // Опубликовать всё записанное: движок применит это в одном тике.
-void ch_commit(void) { __atomic_store_n(&ch->h.cmd_head, pend, __ATOMIC_RELEASE); }
+void ch_commit(void) { __atomic_store_n(&ch->h.cmd_head, pend, __ATOMIC_RELEASE); pub = pend; }
 
 // Следующее событие от движка: 1 — есть (записано в *out), 0 — нет.
 int ch_event(struct ch_evt *out) {
