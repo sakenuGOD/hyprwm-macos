@@ -1,0 +1,287 @@
+@testable import HyprCore
+import XCTest
+
+final class LauncherTransferTests:XCTestCase {
+    func testSelectingOverlayAndModalFocusWaitWithoutReparkingActorOrConsumingIntent() throws {
+        let f=ProductionPolicyTests(),(wm,sys,eng,windows)=try f.world(f.pair())
+        wm.cfgSink=SnapshotHandoffTests.Recorder();wm.sp(1).tree=Node(leaf:2)
+        sys.front=101;sys.contexts[101]=(1,0);sys.transferCatalog=try PublicWorkspaceCatalog(PublicWorkspaceTests().raw(1))
+        let intent=LauncherIntent(sequence:1,space:1,frontPID:999,kind:1,started:sys.t)
+        wm.launcherIntent=intent;wm.launcherAreas[1]=f.area
+        XCTAssertTrue(wm.beginLauncherTransfer(intent,windows[0],1,windows[0].rect,false))
+        eng.ch.ops=[]
+        let snapshot=Snapshot(space:1,stable:true,area:f.area,windows:windows)
+        sys.overlay=true;sys.front=999;wm.pollLauncherTransfers(snapshot)
+        XCTAssertNotNil(wm.launcherTransfers[1]);XCTAssertNotNil(wm.launcherIntent);XCTAssertTrue(eng.ch.ops.isEmpty)
+        sys.overlay=false;sys.front=101;sys.contexts[101]=(33,NativeFocusFlags.modal|NativeFocusFlags.child)
+        wm.pollLauncherTransfers(snapshot)
+        XCTAssertNotNil(wm.launcherTransfers[1]);XCTAssertNotNil(wm.launcherIntent);XCTAssertTrue(eng.ch.ops.isEmpty)
+        XCTAssertTrue(sys.transferRequests.isEmpty)
+        sys.contexts[101]=(1,0);wm.workspaceSampleSequence=1;wm.pollLauncherTransfers(snapshot)
+        wm.workspaceSampleSequence=2;wm.pollLauncherTransfers(snapshot)
+        XCTAssertNotNil(wm.launcherTransfers[1]?.arrival)
+        XCTAssertTrue(sys.transferRequests.isEmpty)
+    }
+
+    func testProductionTickPreservesTransferWhenNativeMembershipBecomesVisibleBeforeFinalAck() throws {
+        let f=ProductionPolicyTests(),(wm,sys,eng,windows)=try f.world(f.pair())
+        wm.cfgSink=SnapshotHandoffTests.Recorder()
+        var moved=windows;moved[0].space=2;moved[0].on=false
+        wm.sp(1).tree=Node(leaf:2);wm.sp(2).tree=Node(leaf:1)
+        wm.rescued=true;wm.frontPid=101;wm.lastSpace=2
+        sys.front=101;sys.contexts[101]=(1,0);sys.activeSpaceID=2
+        sys.alphaM[1]=1;sys.alphaM[2]=1
+        sys.transferCatalog=try PublicWorkspaceCatalog(PublicWorkspaceTests().raw(2))
+        wm.launcherAreas[1]=f.area
+        sys.launch=LauncherIntent(sequence:1,space:1,frontPID:102,kind:1,started:sys.t)
+        sys.nativeSnapshot=Snapshot(space:2,stable:true,area:f.area,windows:moved)
+        wm.tick(socketReady:false)
+        XCTAssertNotNil(wm.launcherTransfers[1]);XCTAssertEqual(wm.launcherIntent?.sequence,1)
+        XCTAssertEqual(eng.ch.ops.filter{$0["op"] == .string("space")}.count,1)
+        moved[0].space=1;moved[0].on=true;moved[0].alpha=0;sys.alphaM[1]=0
+        sys.activeSpaceID=1;sys.transferCatalog=try PublicWorkspaceCatalog(PublicWorkspaceTests().raw(1))
+        sys.nativeSnapshot=Snapshot(space:1,stable:true,area:f.area,windows:moved)
+        eng.ch.ops=[]
+        sys.t+=0.02;wm.tick(socketReady:false)
+        // Before this guard, activateOnCurrentSpace consumed the launcher here,
+        // poll cancelled its transfer, and sync admitted an ordinary popin.
+        XCTAssertNotNil(wm.launcherTransfers[1]);XCTAssertEqual(wm.launcherIntent?.sequence,1)
+        XCTAssertEqual(wm.launcherStatus["disposition"],.string("awaiting-selection"))
+        XCTAssertTrue(wm.sp(2).tree?.contains(1)==true)
+        XCTAssertFalse(wm.sp(1).tree?.contains(1)==true)
+        XCTAssertFalse(eng.ch.ops.contains{$0["wid"] == .int(1) && $0["op"] != .string("space")})
+        sys.t+=0.02;wm.tick(socketReady:false)
+        XCTAssertNotNil(wm.launcherTransfers[1]?.arrival);XCTAssertTrue(sys.transferRequests.isEmpty)
+        XCTAssertTrue(wm.sp(2).tree?.contains(1)==true)
+        sys.t+=0.02;wm.tick(socketReady:false)
+        XCTAssertNotNil(wm.launcherTransfers[1]);XCTAssertNotNil(wm.launcherIntent)
+        XCTAssertFalse(wm.launcherTransfers[1]?.revealQueued==true)
+        _=try LauncherArrivalTests().acknowledge(wm,sys,eng,1)
+        sys.t+=0.02;wm.tick(socketReady:false)
+        XCTAssertTrue(wm.launcherTransfers[1]?.revealQueued==true)
+        XCTAssertTrue(sys.transferRequests.isEmpty);XCTAssertTrue(wm.sp(2).tree?.contains(1)==true)
+        moved[0].alpha=1;sys.alphaM[1]=1;eng.ch.eng[0].curAlpha=1
+        sys.nativeSnapshot=Snapshot(space:1,stable:true,area:f.area,windows:moved)
+        sys.t+=0.02;wm.tick(socketReady:false)
+        XCTAssertTrue(sys.transferRequests.isEmpty)
+        sys.t+=0.02;wm.tick(socketReady:false)
+        XCTAssertEqual(sys.transferRequests.count,1);XCTAssertNotNil(wm.launcherIntent)
+        sys.t+=0.02;wm.tick(socketReady:false)
+        XCTAssertTrue(wm.launcherTransfers.isEmpty);XCTAssertNil(wm.launcherIntent)
+        XCTAssertNil(wm.sp(2).tree);XCTAssertTrue(wm.sp(1).tree?.contains(1)==true)
+    }
+    func testHiddenLauncherWaitsForConsumedRevealAndTwoNewNativeSamplesBeforeFocus() throws {
+        let f=ProductionPolicyTests(),(wm,sys,eng,windows)=try f.world(f.pair())
+        wm.cfgSink=SnapshotHandoffTests.Recorder();wm.sp(1).tree=Node(leaf:2)
+        sys.front=101;sys.contexts[101]=(1,0);sys.births[101]="101:40:50";sys.alphaM[1]=0
+        sys.transferCatalog=try PublicWorkspaceCatalog(PublicWorkspaceTests().raw(1))
+        let hidden=Hidden(wid:1,pid:101,owner:"Fixture",space:1,rect:windows[0].rect.arr,extra:.object([("swift_birth",.string("101:40:50")),("tiled",.bool(true))]))
+        wm.hidden=[hidden];wm.launcherAreas[1]=f.area
+        let intent=LauncherIntent(sequence:1,space:1,frontPID:999,kind:1,started:sys.t);wm.launcherIntent=intent
+        var moved=windows;moved[0].on=false;moved[0].alpha=0
+        XCTAssertTrue(wm.beginLauncherTransfer(intent,moved[0],1,windows[0].rect,true))
+        func poll(_ sequence:Int){wm.workspaceSampleSequence=sequence;wm.pollLauncherTransfers(Snapshot(space:1,stable:true,area:f.area,windows:moved))}
+        poll(1);poll(2)
+        XCTAssertEqual(wm.hidden,[hidden]);XCTAssertTrue(sys.transferRequests.isEmpty)
+        XCTAssertNotNil(wm.launcherTransfers[1]?.arrival)
+        poll(3);XCTAssertFalse(wm.launcherTransfers[1]?.revealQueued==true)
+        _=try LauncherArrivalTests().acknowledge(wm,sys,eng,1);poll(4)
+        XCTAssertTrue(wm.launcherTransfers[1]?.revealQueued==true)
+        moved[0].alpha=1;sys.alphaM[1]=1;eng.ch.eng[0].curAlpha=1
+        eng.ch.ringPending=true;poll(5);XCTAssertTrue(sys.transferRequests.isEmpty)
+        eng.ch.ringPending=false;poll(6);poll(6);XCTAssertTrue(sys.transferRequests.isEmpty)
+        poll(7);XCTAssertEqual(sys.transferRequests.count,1)
+        XCTAssertEqual(wm.hidden,[hidden],"hidden intent retires only after real view/key ACK")
+    }
+    func testLauncherOriginKeySurvivesTicksBeforeSpotlightAndConsumesOnlyNewVisibleSelection() throws {
+        let f=ProductionPolicyTests(),(wm,sys,eng,windows)=try f.world(f.pair())
+        sys.front=101;sys.contexts[101]=(1,0);sys.contexts[102]=(2,0)
+        sys.launch=LauncherIntent(sequence:1,space:1,frontPID:101,kind:1,started:sys.t)
+        for _ in 0..<6 {
+            wm.observeLauncher(f.area,1,windows)
+            wm.activateOnCurrentSpace(f.area,1,windows,101)
+            XCTAssertEqual(wm.launcherIntent?.sequence,1)
+            XCTAssertEqual(wm.launcherStatus["observed_sequence"],.int(1))
+            XCTAssertEqual(wm.launcherStatus["disposition"],.string("awaiting-selection"))
+            XCTAssertTrue(eng.ch.ops.isEmpty)
+            sys.t+=0.03
+        }
+        sys.overlay=true;wm.activateOnCurrentSpace(f.area,1,windows,101)
+        XCTAssertNotNil(wm.launcherIntent)
+        sys.overlay=false;sys.front=102
+        wm.activateOnCurrentSpace(f.area,1,windows,102)
+        XCTAssertNil(wm.launcherIntent);XCTAssertNil(sys.launch)
+        XCTAssertEqual(wm.launcherStatus["observed"]?["front_pid"],.int(101))
+        XCTAssertEqual(wm.launcherStatus["disposition"],.string("selected-visible-window"))
+        XCTAssertTrue(eng.ch.ops.isEmpty)
+    }
+    func testRetainedOriginStillCancelsOnNativeEscapeAndExpiresWithoutMutation() throws {
+        let f=ProductionPolicyTests(),(wm,sys,eng,windows)=try f.world(f.pair())
+        sys.front=101;sys.contexts[101]=(1,0)
+        sys.launch=LauncherIntent(sequence:1,space:1,frontPID:101,kind:1,started:sys.t)
+        wm.observeLauncher(f.area,1,windows);wm.activateOnCurrentSpace(f.area,1,windows,101)
+        sys.launch=LauncherIntent(sequence:2,space:0,frontPID:101,kind:0,started:sys.t)
+        wm.observeLauncher(f.area,1,windows)
+        XCTAssertNil(wm.launcherIntent)
+        XCTAssertEqual(wm.launcherStatus["observed"]?["kind"],.int(0))
+        XCTAssertEqual(wm.launcherStatus["disposition"],.string("cancelled-or-invalid-origin"))
+        sys.launch=LauncherIntent(sequence:3,space:1,frontPID:101,kind:1,started:sys.t)
+        wm.observeLauncher(f.area,1,windows);sys.t+=15.01
+        wm.observeLauncher(f.area,1,windows)
+        XCTAssertNil(wm.launcherIntent);XCTAssertNil(sys.launch)
+        XCTAssertEqual(wm.launcherStatus["disposition"],.string("expired"))
+        XCTAssertTrue(eng.ch.ops.isEmpty)
+    }
+    func testOverviewInheritedParkReleaseIsAtomicAndWaitsForGeoZeroBeforePool() throws {
+        let f=ProductionPolicyTests(),(wm,sys,eng,windows)=try f.world(f.pair()),park=Rect(1430,43,400,500)
+        sys.births[101]="101:40:50";sys.bounds[1]=park;sys.alphaM[1]=0
+        wm.hidden=[Hidden(wid:1,pid:101,owner:"Fixture",space:1,rect:[14,43,400,500],extra:.object([("swift_birth",.string("101:40:50"))]))]
+        wm.last=(f.area,1,windows)
+        var slot=EngWin(wid:1,pos:(park.x,park.y),size:(park.w,park.h),curAlpha:0,a:park);slot.geo=1;eng.ch.eng=[slot]
+        XCTAssertTrue(wm.overviewRecords().isEmpty);XCTAssertTrue(eng.ch.ops.isEmpty)
+        sys.t+=0.02
+        XCTAssertTrue(wm.overviewRecords().isEmpty)
+        XCTAssertEqual(eng.ch.ops.map{$0["op"]?.string},["forget","alpha","commit"])
+        XCTAssertEqual(eng.ch.ops[1]["a"],.double(0))
+        slot.geo=0;eng.ch.eng=[slot];eng.ch.ops=[]
+        XCTAssertTrue(wm.overviewRecords().isEmpty)
+        sys.t+=0.02
+        XCTAssertEqual(wm.overviewRecords().map(\.wid),[1]);XCTAssertTrue(eng.ch.ops.isEmpty)
+        for _ in 0..<40 {sys.t+=0.025;XCTAssertEqual(wm.overviewDesiredPool()?.map(\.wid),[1])}
+        sys.births[101]="101:41:0";slot.geo=1;eng.ch.eng=[slot]
+        XCTAssertTrue(wm.overviewRecords().isEmpty);XCTAssertTrue(eng.ch.ops.isEmpty)
+    }
+    func testAllHiddenGeometryMustDrainWithActualSizeIndependentOfSavedTarget() throws {
+        let f=ProductionPolicyTests(),(wm,sys,eng,windows)=try f.world(f.pair())
+        wm.last=(f.area,1,windows)
+        for window in windows {sys.births[window.pid]="\(window.pid):40:50"}
+        wm.hidden=windows.map{Hidden(wid:$0.wid,pid:$0.pid,owner:$0.owner,space:1,rect:[14,43,362,446],extra:.object([("swift_birth",.string(sys.births[$0.pid]!))]))}
+        for window in windows {sys.bounds[window.wid]=Rect(1430,41,720,window.wid==1 ? 903:450);sys.alphaM[window.wid]=0}
+        var slots=windows.map{window -> EngWin in let frame=sys.bounds[window.wid]!;var slot=EngWin(wid:window.wid,pos:(frame.x,frame.y),size:(frame.w,frame.h),curAlpha:0,a:frame);slot.geo=1;slot.settling=true;return slot};eng.ch.eng=slots
+        XCTAssertTrue(wm.overviewRecords().isEmpty);XCTAssertTrue(eng.ch.ops.isEmpty)
+        sys.t+=0.02;XCTAssertTrue(wm.overviewRecords().isEmpty)
+        XCTAssertEqual(eng.ch.ops.map{$0["op"]?.string},["forget","alpha","forget","alpha","commit"])
+        slots[0].geo=0;eng.ch.eng=slots;eng.ch.ops=[]
+        XCTAssertTrue(wm.overviewRecords().isEmpty) // Never grant a partially cleared pool.
+        slots[1].geo=0;eng.ch.eng=slots
+        XCTAssertTrue(wm.overviewRecords().isEmpty)
+        sys.t+=0.02
+        XCTAssertEqual(wm.overviewRecords().map(\.wid),[1,2])
+        sys.bounds[1]=Rect(1430,41,40000,450);XCTAssertFalse(wm.overviewRecords().contains{$0.wid==1})
+    }
+    func testParkingClampAfterNativeReleaseRequiresNewStableActualBounds() throws {
+        let f=ProductionPolicyTests(),(wm,sys,eng,windows)=try f.world(f.pair()),proposed=Rect(1670,41,720,903),accepted=Rect(1430,41,720,903)
+        sys.births[101]="101:40:50";sys.bounds[1]=proposed;sys.alphaM[1]=0
+        wm.hidden=[Hidden(wid:1,pid:101,owner:"Fixture",space:1,rect:[14,43,400,500],extra:.object([("swift_birth",.string("101:40:50"))]))]
+        wm.last=(f.area,1,windows)
+        var slot=EngWin(wid:1,pos:(proposed.x,proposed.y),size:(proposed.w,proposed.h),curAlpha:0,a:proposed);slot.geo=1;eng.ch.eng=[slot]
+        XCTAssertTrue(wm.overviewRecords().isEmpty);sys.t+=0.02
+        XCTAssertTrue(wm.overviewRecords().isEmpty)
+        XCTAssertNil(wm.hiddenParkSamples[1])
+        slot.geo=0;eng.ch.eng=[slot];eng.ch.ops=[]
+        XCTAssertTrue(wm.overviewRecords().isEmpty) // Earlier retained geometry cannot authorize this read.
+        sys.bounds[1]=accepted;sys.t+=0.02
+        XCTAssertTrue(wm.overviewRecords().isEmpty) // A later native clamp starts a new witness pair.
+        sys.t+=0.02
+        let pool=wm.overviewRecords()
+        XCTAssertEqual(pool.count,1);XCTAssertEqual(pool.first?.parked,accepted)
+        XCTAssertTrue(eng.ch.ops.isEmpty)
+    }
+    func testOSFocusFallbackDoesNotRevealHiddenButSamePIDExplicitLauncherDoes() throws {
+        let f=ProductionPolicyTests(),(wm,sys,eng,windows)=try f.world(f.pair())
+        sys.births[101]="101:40:50";sys.front=101;sys.contexts[101]=(1,0)
+        let row=Hidden(wid:1,pid:101,owner:"Fixture",space:1,rect:windows[0].rect.arr,extra:.object([("swift_birth",.string("101:40:50")),("tiled",.bool(true))]))
+        wm.hidden=[row];wm.sp(1).tree=Node(leaf:2)
+        wm.activateOnCurrentSpace(f.area,1,windows,101)
+        XCTAssertEqual(wm.hidden,[row]);XCTAssertTrue(eng.ch.ops.isEmpty)
+        wm.launcherIntent=LauncherIntent(sequence:1,space:1,frontPID:101,kind:3,started:sys.t)
+        wm.activateOnCurrentSpace(f.area,1,windows,101)
+        XCTAssertTrue(wm.hidden.isEmpty);XCTAssertTrue(wm.restoring.contains(1))
+    }
+    func testLaunchMovesExactWindowBeforeViewAndRequiresTwoFreshMembershipWitnessesAndFinalViewKey() throws {
+        let fixture=ProductionPolicyTests(),(wm,sys,eng,windows)=try fixture.world(fixture.pair())
+        wm.cfgSink=SnapshotHandoffTests.Recorder()
+        var moved=windows;moved[0].space=2
+        let catalogue=PublicWorkspaceTests()
+        sys.transferCatalog=try PublicWorkspaceCatalog(catalogue.raw(2));sys.front=101;sys.contexts[101]=(1,0)
+        wm.launcherAreas[1]=fixture.area;wm.launcherIntent=LauncherIntent(sequence:1,space:1,frontPID:101,kind:1,started:sys.t)
+        wm.sp(2).tree=Node(leaf:1);wm.sp(1).tree=Node(leaf:2)
+        wm.activateOnCurrentSpace(fixture.area,2,moved,101)
+        XCTAssertEqual(eng.ch.ops.filter{$0["op"] == .string("space")}.map{$0["wid"]},[.int(1)])
+        XCTAssertNotNil(wm.launcherIntent);XCTAssertTrue(wm.sp(2).tree!.contains(1))
+        moved[0].space=1;moved[0].on=false
+        let census=Snapshot(space:2,stable:true,area:fixture.area,windows:moved)
+        wm.workspaceSampleSequence=1;wm.pollLauncherTransfers(census)
+        wm.pollLauncherTransfers(census);XCTAssertTrue(sys.transferRequests.isEmpty)
+        wm.workspaceSampleSequence=2;wm.pollLauncherTransfers(census);XCTAssertTrue(sys.transferRequests.isEmpty)
+        let target=try LauncherArrivalTests().acknowledge(wm,sys,eng,1)
+        wm.workspaceSampleSequence=3;wm.pollLauncherTransfers(census)
+        sys.alphaM[1]=1;eng.ch.eng[0].curAlpha=1;moved[0].alpha=1
+        for sequence in [4,5] {wm.workspaceSampleSequence=sequence;wm.pollLauncherTransfers(Snapshot(space:2,stable:true,area:fixture.area,windows:moved))}
+        XCTAssertEqual(sys.transferRequests.count,1)
+        XCTAssertTrue(wm.sp(2).tree!.contains(1));XCTAssertNotNil(wm.launcherIntent)
+        sys.transferCatalog=try PublicWorkspaceCatalog(catalogue.raw(1));moved[0].on=true
+        wm.workspaceSampleSequence=6;wm.pollLauncherTransfers(Snapshot(space:1,stable:true,area:fixture.area,windows:moved))
+        XCTAssertNil(wm.sp(2).tree);XCTAssertNil(wm.launcherIntent);XCTAssertFalse(wm.restoring.contains(1))
+        XCTAssertTrue(wm.sp(1).tree?.contains(1)==true);XCTAssertEqual(wm.target[1],target);XCTAssertNil(wm.restoreFrom[1])
+    }
+    func testNewLauncherOrDifferentSelectedTabCancelsWithoutSourceTreeMutation() throws {
+        for replace in [false,true] {
+            let f=ProductionPolicyTests(),(wm,sys,_,windows)=try f.world(f.pair());var moved=windows;moved[0].space=2
+            sys.transferCatalog=try PublicWorkspaceCatalog(PublicWorkspaceTests().raw(2));sys.front=101;sys.contexts[101]=(1,0)
+            wm.launcherAreas[1]=f.area;wm.launcherIntent=LauncherIntent(sequence:1,space:1,frontPID:999,kind:2,started:sys.t)
+            wm.sp(2).tree=Node(leaf:1);wm.activateOnCurrentSpace(f.area,2,moved,101)
+            if replace {wm.launcherIntent=LauncherIntent(sequence:2,space:1,frontPID:999,kind:2,started:sys.t)} else {sys.contexts[101]=(999,0)}
+            moved[0].space=1;wm.workspaceSampleSequence=1
+            wm.pollLauncherTransfers(Snapshot(space:2,stable:true,area:f.area,windows:moved))
+            XCTAssertTrue(wm.launcherTransfers.isEmpty);XCTAssertTrue(sys.transferRequests.isEmpty);XCTAssertTrue(wm.sp(2).tree!.contains(1))
+            if replace {XCTAssertEqual(wm.launcherIntent?.sequence,2)}
+        }
+    }
+    func testSilentSendUsesOnlyEngineAndTwoFreshMembershipACKsBeforeSourceDetach() throws {
+        let f=ProductionPolicyTests(),(wm,sys,eng,windows)=try f.world(f.pair())
+        sys.transferCatalog=try PublicWorkspaceCatalog(PublicWorkspaceTests().raw(1));sys.nativeSnapshot=Snapshot(space:1,stable:true,area:f.area,windows:windows)
+        wm.sp(1).tree=Node(split:"v",ratio:0.5,a:Node(leaf:1),b:Node(leaf:2))
+        XCTAssertEqual(try wm.command("sendws 2 1",f.area,1,windows),"sendws queued 1 -> 2")
+        XCTAssertEqual(eng.ch.ops.map{$0["op"]?.string},["space","commit"]);XCTAssertTrue(wm.sp(1).tree!.contains(1))
+        var moved=windows;moved[0].space=2;moved[0].on=false
+        let snapshot=Snapshot(space:1,stable:true,area:f.area,windows:moved)
+        wm.workspaceSampleSequence=1;wm.pollSilentSpaceMoves(snapshot);wm.pollSilentSpaceMoves(snapshot)
+        XCTAssertTrue(wm.sp(1).tree!.contains(1));XCTAssertEqual(wm.silentSpaceMoveStatus["last"]?["native_samples"],.int(1))
+        wm.workspaceSampleSequence=2;wm.pollSilentSpaceMoves(snapshot)
+        XCTAssertEqual(wm.sp(1).tree?.wid,2);XCTAssertTrue(wm.silentSpaceMoves.isEmpty)
+        XCTAssertEqual(wm.silentSpaceMoveStatus["last"]?["state"],.string("acknowledged"));XCTAssertTrue(sys.transferRequests.isEmpty)
+        XCTAssertEqual(eng.ch.ops.map{$0["op"]?.string},["space","commit"])
+    }
+    func testSilentSendRejectsHiddenAndCancelsPIDReuseWithoutGraphMutation() throws {
+        let f=ProductionPolicyTests(),(wm,sys,eng,windows)=try f.world(f.pair())
+        sys.transferCatalog=try PublicWorkspaceCatalog(PublicWorkspaceTests().raw(1));sys.nativeSnapshot=Snapshot(space:1,stable:true,area:f.area,windows:windows)
+        wm.sp(1).tree=Node(leaf:1);wm.hidden=[Hidden(wid:1,pid:101,owner:"Fixture",space:1,rect:windows[0].rect.arr)]
+        XCTAssertTrue(try wm.command("sendws 2 1",f.area,1,windows).hasPrefix("sendws refused"));XCTAssertTrue(eng.ch.ops.isEmpty)
+        wm.hidden=[];_=try wm.command("sendws 2 1",f.area,1,windows);sys.births[101]="101:999:0"
+        wm.pollSilentSpaceMoves(sys.nativeSnapshot!);XCTAssertTrue(wm.silentSpaceMoves.isEmpty);XCTAssertEqual(wm.sp(1).tree?.wid,1)
+        XCTAssertEqual(wm.silentSpaceMoveStatus["last"]?["state"],.string("cancelled"))
+    }
+    func testHiddenPruneNeedsProvenDepartureAndNeverWritesWindow() throws {
+        let f=ProductionPolicyTests(),(wm,sys,eng,_)=try f.world(f.pair())
+        let row=Hidden(wid:1,pid:101,owner:"Fixture",space:1,rect:[0,0,400,500],extra:.object([("swift_birth",.string("101:40:50"))]))
+        wm.hidden=[row];sys.pidlevel[1]=nil;sys.births[101]=nil
+        wm.pruneDepartedHidden();XCTAssertEqual(wm.hidden,[row]) // Unknown metadata does not authorize pruning.
+        sys.exitedPIDs.insert(101);wm.pruneDepartedHidden();XCTAssertTrue(wm.hidden.isEmpty);XCTAssertTrue(eng.ch.ops.isEmpty)
+        wm.hidden=[row];sys.exitedPIDs=[];sys.births[101]="101:41:0"
+        wm.pruneDepartedHidden();XCTAssertTrue(wm.hidden.isEmpty);XCTAssertTrue(eng.ch.ops.isEmpty)
+    }
+    func testAdoptedHiddenNativeAlphaDriftForcesNewSlotAndKeepsUnknownLedger() throws {
+        let f=ProductionPolicyTests(),(wm,sys,eng,windows)=try f.world(f.pair())
+        sys.births[101]="101:40:50";sys.alphaM[1]=1
+        let row=Hidden(wid:1,pid:101,owner:"Fixture",space:1,rect:windows[0].rect.arr,extra:.object([("swift_birth",.string("101:40:50"))]))
+        let unknown=Hidden(wid:99,pid:101,owner:"Fixture",space:1,rect:windows[0].rect.arr,extra:row.extra)
+        wm.hidden=[row,unknown];sys.pidlevel[99]=nil
+        eng.ch.eng=[EngWin(wid:1,pos:(100,100),size:(400,500),curAlpha:0,a:Rect(100,100,400,500))]
+        _=wm.rescue(f.area,1,windows,keepHidden:true)
+        let alpha=eng.ch.ops.firstIndex{$0["op"] == .string("alpha") && $0["wid"] == .int(1)}!
+        XCTAssertEqual(eng.ch.ops[alpha-1]["op"],.string("forget"));XCTAssertEqual(eng.ch.ops[alpha]["a"],.double(0))
+        XCTAssertEqual(wm.hidden,[row,unknown]);XCTAssertFalse(eng.ch.ops.contains{$0["wid"] == .int(99)})
+    }
+
+}
