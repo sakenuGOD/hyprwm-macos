@@ -33,9 +33,11 @@ public enum ForeignConfigImport {
         guard parsed.mappedCount > 0 else { throw CmdError("No supported settings were found; the existing configuration was preserved") }
         let current = try TextConfig.read(configDir: configDir).document
         let destination = TextConfig.url(configDir: configDir)
+        let merged = merge(current, parsed.document)
+        let base = try HyprConfig.load(configDir:configDir,rebuild:false,timeScale:1)
+        _ = try NativeRuntimeConfig.build(base:base,document:merged,environment:[:])
         let backup = destination.appendingPathExtension("backup-" + UUID().uuidString)
         try FileManager.default.copyItem(at: destination, to: backup)
-        let merged = merge(current, parsed.document)
         try TextConfig.write(merged, configDir: configDir)
         return Result(format: parsed.format, document: merged, issues: parsed.issues,
                       mappedCount: parsed.mappedCount, backupURL: backup)
@@ -81,15 +83,21 @@ public enum ForeignConfigImport {
                       }.count, backupURL: nil)
     }
 
-    private static func merge(_ original: JSON, _ patch: JSON) -> JSON {
+    static func merge(_ original: JSON, _ patch: JSON) -> JSON {
         guard let fields = patch.object else { return patch }
         var result = original
         for (key, value) in fields {
             if ["hotkeys", "window_rules"].contains(key), let additions = value.array {
                 var items = result[key]?.array ?? []
                 for item in additions {
-                    if key == "hotkeys", let command = item["command"], let index = items.firstIndex(where: { $0["command"] == command }) {
-                        items[index] = item
+                    if key == "hotkeys" {
+                        let index = item["command"].flatMap { command in items.firstIndex(where: { $0["command"] == command }) }
+                        let occupied = Set(items.enumerated().filter { $0.offset != index }.compactMap { $0.element["id"]?.int })
+                        let preferred = index.flatMap { items[$0]["id"]?.int } ?? item["id"]?.int ?? 0
+                        let identity = occupied.contains(preferred) ? (0...4095).first(where: { !occupied.contains($0) }) ?? preferred : preferred
+                        let incoming = item.setting("id",.int(identity))
+                        if let index { items[index] = incoming }
+                        else if !items.contains(incoming) { items.append(incoming) }
                     } else if !items.contains(item) { items.append(item) }
                 }
                 result = result.setting(key, .array(items))

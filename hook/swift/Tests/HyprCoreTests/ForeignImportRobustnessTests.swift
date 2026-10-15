@@ -19,6 +19,18 @@ final class ForeignImportRobustnessTests: XCTestCase {
         XCTAssertEqual(result.document["hotkeys"]?.array?.first?["command"],.array([.string("move"),.string("left")]))
         XCTAssertEqual(result.issues.map(\.line),[2])
     }
+    func testImportMergeKeepsExistingCommandIdentityAndAllocatesNonconflictingIDs() throws {
+        let existing=try JSON.parse(#"{"hotkeys":[{"id":0,"keycode":4,"modifiers":2048,"command":["focus","left"]}]}"#)
+        let incoming=try JSON.parse(#"{"hotkeys":[{"id":0,"keycode":37,"modifiers":2048,"command":["move","right"]}]}"#)
+        let merged=ForeignConfigImport.merge(existing,incoming)
+        XCTAssertEqual(merged["hotkeys"]?.array?.compactMap { $0["id"]?.int },[0,1])
+        _=try NativeRuntimeConfig.build(base:Fx.config(),document:merged,environment:[:])
+        let replacement=try JSON.parse(#"{"hotkeys":[{"id":9,"keycode":123,"modifiers":2048,"command":["focus","left"]}]}"#)
+        let replaced=ForeignConfigImport.merge(merged,replacement)
+        XCTAssertEqual(replaced["hotkeys"]?.array?.count,2)
+        XCTAssertEqual(replaced["hotkeys"]?.array?.first?["id"],.int(0))
+        XCTAssertEqual(replaced["hotkeys"]?.array?.first?["keycode"],.int(123))
+    }
     func testSupportedFormatSamplesKeepValidSettingsAlongsideWarnings() throws {
         let directory=try directory();defer{try? FileManager.default.removeItem(at:directory)}
         let cases:[(String,String,String)]=[
