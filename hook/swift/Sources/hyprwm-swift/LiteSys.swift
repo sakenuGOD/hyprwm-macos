@@ -117,10 +117,22 @@ final class LiteSys: SysAPI {
     func park(_ frame: Rect) -> Rect { let point = parkingPoint; return Rect(point.0, point.1, frame.w, frame.h) }
     func snapshot() throws -> Snapshot {
         guard let rows = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { throw CmdError("Lite public window census unavailable") }
+        // optionAll is not in receiver order on current macOS. The public
+        // on-screen query supplies front-to-back order; keep off-screen rows
+        // afterwards for lifetime/recovery bookkeeping.
+        let ordered = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        let frontOrder = Dictionary(uniqueKeysWithValues: ordered.enumerated().compactMap { index, row in
+            (row[kCGWindowNumber as String] as? Int).map { ($0, index) }
+        })
+        let censusRows = rows.enumerated().sorted { left, right in
+            let a = (left.element[kCGWindowNumber as String] as? Int).flatMap { frontOrder[$0] } ?? (ordered.count + left.offset)
+            let b = (right.element[kCGWindowNumber as String] as? Int).flatMap { frontOrder[$0] } ?? (ordered.count + right.offset)
+            return a < b
+        }.map(\.element)
         let ownPID = Int(getpid())
         var windows: [WinInfo] = []
         var physical: [WinInfo] = []
-        for row in rows.prefix(4096) {
+        for row in censusRows.prefix(4096) {
             guard let wid = row[kCGWindowNumber as String] as? Int,
                   let pid = row[kCGWindowOwnerPID as String] as? Int, pid != ownPID,
                   let bounds = row[kCGWindowBounds as String] as? [String: Any],
@@ -178,7 +190,11 @@ final class LiteSys: SysAPI {
     func mouseDown() -> Bool { (0..<3).contains { CGEventSource.buttonState(.combinedSessionState, button: CGMouseButton(rawValue: UInt32($0))!) } }
     func pointerHit() -> (wid: Int, pid: Int?)? {
         let point = mouse()
-        guard let window = rawWindows.first(where: { $0.on && $0.alpha > 0.01 && $0.rect.contains(point.0, point.1) }) else { return nil }
+        // CGWindowList includes the composited cursor itself. It is never an
+        // input receiver; menus and floating windows below that level remain
+        // positive barriers to tiled pointer focus.
+        let cursorLevel = Int(CGWindowLevelForKey(.cursorWindow))
+        guard let window = rawWindows.first(where: { $0.on && $0.layer < cursorLevel && $0.alpha > 0.01 && $0.rect.contains(point.0, point.1) }) else { return nil }
         return (window.wid, window.pid)
     }
     func axTileable(_ pid: Int, _ wid: Int) -> Int {

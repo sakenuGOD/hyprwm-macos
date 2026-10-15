@@ -38,9 +38,12 @@ final class LiteRuntime {
         if command == "status", !formattingStatus, let last = wm.last {
             formattingStatus = true; defer { formattingStatus = false }
             let original = try wm.command("status", last.area, last.space, last.wins)
+            let pid = sys.frontPid(), context = pid.map(sys.focusContext)
+            let focus = JSON.array([pid.map(JSON.int) ?? .null, context?.wid.map(JSON.int) ?? .null, context.map { .int($0.flags) } ?? .null])
+            let pointer = sys.pointerHit()
             return try RuntimeMode.decorate(original, mode: .lite)
                 .setting("hotkey_bindings", hotkeys?.metadata ?? .array([]))
-                .setting("lite", engine.channel.capabilityStatus.setting("recovery_count", .int(sys.recovery.records.count)).setting("recovery_error", sys.recovery.loadError.map(JSON.string) ?? .null).setting("hotkey_conflicts", .int(hotkeys?.conflicts ?? 0)))
+                .setting("lite", engine.channel.capabilityStatus.setting("focus_context", focus).setting("pointer_hit", pointer.map { .int($0.wid) } ?? .null).setting("recovery_count", .int(sys.recovery.records.count)).setting("recovery_error", sys.recovery.loadError.map(JSON.string) ?? .null).setting("hotkey_conflicts", .int(hotkeys?.conflicts ?? 0)))
                 .setting("workspace_public", workspaceStatus).dumps(ensureASCII: false)
         }
         if command == "reload" { try reload(); return "configuration reloaded" }
