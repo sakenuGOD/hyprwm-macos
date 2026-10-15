@@ -106,7 +106,7 @@ def install(root):
         subprocess.run(['iconutil', '--convert', 'icns', str(iconset), '--output', str(resources / 'AppIcon.icns')], check=True)
         info['CFBundleIconFile'] = 'AppIcon'
         (staged / 'Contents/Info.plist').write_bytes(plistlib.dumps(info))
-        receipt = dict(installer=MARKER, binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
+        receipt = dict(installer=MARKER, compiled_binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
                        version=version, mode='auto', engine_installed=False)
         (resources / 'InstallReceipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
         subprocess.run(['codesign', '--force', '--sign', '-', '--identifier', 'dev.hyprwm.HyprWM', str(staged)], check=True)
