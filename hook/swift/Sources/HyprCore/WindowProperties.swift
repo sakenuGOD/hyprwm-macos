@@ -54,7 +54,7 @@ enum WindowProperties {
         let allowed: Set<String>=["name","enabled","match","float","ignore","opacity","no_anim","no_follow_mouse"]
         for rule in array {
             guard let fields=rule.object, Set(fields.map(\.0)).isSubset(of:allowed), let match=rule["match"]?.object,
-                  !match.isEmpty, Set(match.map(\.0)).isSubset(of:["class","title"]) else { throw CmdError("window_rules: invalid keys or match") }
+                  !match.isEmpty, Set(match.map(\.0)).isSubset(of:["class","title","role","subrole"]) else { throw CmdError("window_rules: invalid keys or match") }
             for (key,pattern) in match {
                 guard let pattern=pattern.string, pattern.count <= 512 else { throw CmdError("window_rules.\(key): expected bounded regex") }
                 do { _=try regex(pattern) } catch { throw CmdError("window_rules.\(key): invalid regex") }
@@ -71,9 +71,17 @@ enum WindowProperties {
         if rule["enabled"]?.truthy == false { return false }
         guard let match=rule["match"]?.object, !match.isEmpty else { return false }
         for (key,value) in match {
-            guard ["class","title"].contains(key), let expression=value.string,
+            guard ["class","title","role","subrole"].contains(key), let expression=value.string,
                   let (regex,negative)=try? regex(expression) else { return false }
-            let text=key == "class" ? window.owner : window.name
+            let text: String
+            switch key {
+            case "class": text=window.owner
+            case "title": text=window.name
+            case "role": text=window.role
+            default: text=window.subrole
+            }
+            // Unknown AX metadata cannot satisfy a negative match either.
+            if (key == "role" || key == "subrole") && text.isEmpty { return false }
             if (regex.firstMatch(in:text,range:NSRange(text.startIndex...,in:text)) != nil) == negative { return false }
         }
         return true

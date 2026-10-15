@@ -6,6 +6,8 @@ import Foundation
 public struct WinInfo: Equatable {
     public var wid: Int, pid: Int
     public var owner: String, name: String
+    /// AX metadata, empty until verified by the live adapter.
+    public var role = "", subrole = ""
     public var x, y, w, h: Double
     public var on: Bool
     public var space: Int
@@ -24,6 +26,8 @@ public struct WinInfo: Equatable {
                 name: j["name"]?.string ?? "", x: j["x"]?.double ?? 0, y: j["y"]?.double ?? 0,
                 w: j["w"]?.double ?? 0, h: j["h"]?.double ?? 0, on: (j["on"] ?? .null).truthy,
                 space: j["space"]?.int ?? 0)
+        window.role = j["role"]?.string ?? ""
+        window.subrole = j["subrole"]?.string ?? ""
         window.layer = j["layer"]?.int ?? 0
         window.alpha = j["alpha"]?.double ?? 1
         window.nativeFullscreen = j["native_fullscreen"]?.truthy ?? false
