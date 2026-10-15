@@ -228,6 +228,22 @@ func stateJSON(_ wm: WM) -> JSON {
 }
 
 final class WMScenarioTests: XCTestCase {
+    // The frozen Python fixtures predate the user-facing English translation.
+    // Translate response prefixes only; channel jobs, calls and state stay exact.
+    private func englishReferenceResponse(_ response:String)->String {
+        let prefixes=[("всё видно","all visible"),("скрытых нет","no hidden windows"),
+            ("нет окна: ","no window: "),("нет окна","no window"),("не знаю команду: ","unknown command: "),
+            ("нечего запускать","nothing to launch"),("пусто","empty"),("закрываю ","closing "),
+            ("скрыто ","hidden "),("показаны ","shown "),("фокус -> ","focus -> "),
+            ("возвращено ","restored "),("завершить ","quit "),("спрятано снова ","hidden again "),
+            ("уже скрыто ","already hidden ")]
+        return response.components(separatedBy:"; ").map { part in
+            guard let (old,new)=prefixes.first(where:{part.hasPrefix($0.0)}) else{return part}
+            var translated=new+part.dropFirst(old.count)
+            if old=="закрываю ",translated.hasSuffix(" мс)") {translated=String(translated.dropLast(4))+" ms)"}
+            return translated
+        }.joined(separator:"; ")
+    }
     func testScenariosMatchPython() throws {
         let cfg = try Fx.config()
         let all = try Fx.load("wm_scenarios.json").array!
@@ -286,6 +302,7 @@ final class WMScenarioTests: XCTestCase {
                 }
                 let ctx = "scenario \(seed) step \(i) \(op.dumps(ensureASCII: false))"
                 var want = st["res"]!
+                if let response=want.string {want = .string(englishReferenceResponse(response))}
                 if kind == "cmd", let s = res.string, s.hasPrefix("{"), let w = want.string {
                     res = try JSON.parse(s)                       // status: compare as JSON
                     want = try JSON.parse(w)

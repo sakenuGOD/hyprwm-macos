@@ -409,10 +409,12 @@ public final class WM {
         for (wid, to) in rects {
             guard let cw = cur[wid] else { continue }
             // A forced reconciliation must not restart an unchanged motion.
-            if target[wid] == to && !opening.contains(wid) && !restoring.contains(wid) {
-                if !force || engW[wid]?.moving==true || cfgSink?.busy(wid)==true ||
-                    (real[wid] ?? cw.rect).maxDiff(to)<=1 {continue}
-            }
+            if options.production {
+                if target[wid] == to && !opening.contains(wid) && !restoring.contains(wid) {
+                    if !force || engW[wid]?.moving==true || cfgSink?.busy(wid)==true ||
+                        (real[wid] ?? cw.rect).maxDiff(to)<=1 {continue}
+                }
+            } else if !force && target[wid] == to {continue}
             if options.production,liveBufferShrinks.removeValue(forKey:wid) != nil {cfgSink?.cancel(wid)}
             let noAnimation = options.production && windowPolicy(cw).noAnimation
             let presentedOpening=presentedOpenings.contains(wid) && inOn && !noAnimation && !restoring.contains(wid)
