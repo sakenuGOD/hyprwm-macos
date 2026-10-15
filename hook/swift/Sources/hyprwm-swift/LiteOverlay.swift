@@ -161,11 +161,15 @@ final class LiteProxy {
     }
     func animate(frames: [Rect], duration: Double, started: Double, fromAlpha: Double = 1, toAlpha: Double = 1) {
         guard let last = frames.last else { return }; self.duration = duration; began = started
+        // Commit the final model and its presentation animations together.
+        // Publishing the model first can expose the target before motion starts.
+        CATransaction.begin(); CATransaction.setDisableActions(true)
         setModel(last)
+        let layerTime = imageLayer.convertTime(started, from: nil)
         let positions = frames.map { NSValue(point: point($0)) }
         func animation(_ key: String, _ values: [Any]) -> CAKeyframeAnimation {
             let value = CAKeyframeAnimation(keyPath: key); value.values = values; value.duration = duration
-            value.beginTime = started; value.calculationMode = .linear; value.fillMode = .backwards; return value
+            value.beginTime = layerTime; value.calculationMode = .linear; value.fillMode = .backwards; return value
         }
         imageLayer.add(animation("position", positions), forKey: "position")
         imageLayer.add(animation("bounds", frames.map { NSValue(rect: NSRect(x: 0, y: 0, width: $0.w, height: $0.h)) }), forKey: "bounds")
@@ -174,10 +178,11 @@ final class LiteProxy {
         mask.add(animation("path", frames.map(path)), forKey: "path")
         if fromAlpha != toAlpha {
             let fade = CABasicAnimation(keyPath: "opacity"); fade.fromValue = fromAlpha; fade.toValue = toAlpha
-            fade.duration = duration; fade.beginTime = started; fade.fillMode = .backwards
+            fade.duration = duration; fade.beginTime = layerTime; fade.fillMode = .backwards
             imageLayer.opacity = Float(toAlpha); border.opacity = Float(toAlpha)
             imageLayer.add(fade, forKey: "opacity"); border.add(fade, forKey: "opacity")
         }
+        CATransaction.commit()
     }
     var presented: Rect {
         let layer = imageLayer.presentation() ?? imageLayer, bounds = layer.bounds, position = layer.position
@@ -196,7 +201,7 @@ final class LiteProxy {
         backingImage = image; contentFade = (previous, started, duration)
         CATransaction.begin(); CATransaction.setDisableActions(true)
         let fade = CATransition(); fade.type = .fade; fade.duration = duration
-        fade.beginTime = started
+        fade.beginTime = imageLayer.convertTime(started, from: nil)
         fade.timingFunction = CAMediaTimingFunction(name: .linear)
         imageLayer.add(fade, forKey: "content")
         imageLayer.contents = image
