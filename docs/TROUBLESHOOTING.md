@@ -16,6 +16,8 @@ Screen capture animation needs **Screen & System Audio Recording** permission (c
 
 If you recently rebuilt or moved the app, verify that the granted item is the current copy. Avoid running an old companion and a new daemon from different checkouts. Close the old companion through its menu before opening another.
 
+If HyprWM is absent from the permission list, add the installed `~/Applications/HyprWM.app` with **+**. For capture permission, [Apple's instructions](https://support.apple.com/guide/mac-help/control-access-screen-system-audio-recording-mchld6aa7d23/mac) describe adding an app below the Screen & System Audio Recording list. The current Lite capture path checks permission before capturing; do not wait for an automatic capture prompt to appear.
+
 ## A window is invisible, hidden or parked
 
 Keep the app and checkout installed until recovery finishes:
