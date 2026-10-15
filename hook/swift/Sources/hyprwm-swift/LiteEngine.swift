@@ -33,6 +33,7 @@ final class LiteChannel: ChannelAPI {
         let wid: Int, pid: Int, birth: String
         var target: Rect, actual: Rect, presented: Rect
         var version = 0, busy = false, capturing = false, landing = false
+        var forgetVersion: Int?
         var proxy: LiteProxy?
         var alpha = 1.0
         var lastSample: (time: Double, frame: Rect)?
@@ -100,6 +101,12 @@ final class LiteChannel: ChannelAPI {
         focused = wid; self.fullscreen = fullscreen; refreshBorders()
     }
     func forget(_ wid: Int) {
+        if let slot = slots[wid], slot.busy, slot.proxy != nil {
+            // Pause can request forget before its queued AX frame is accepted.
+            // Bind the release to this configure, never to a future retarget.
+            slot.forgetVersion = slot.version + (commands[wid]?.geometry == nil ? 0 : 1)
+            return
+        }
         commands[wid] = nil
         if let slot = slots.removeValue(forKey: wid) {
             slot.version += 1; slot.proxy?.close()
@@ -163,6 +170,12 @@ final class LiteChannel: ChannelAPI {
             guard let self, let slot, self.current(slot, version) else { completion?(false); return }
             if result != 0 { self.counters.errors += 1 }
             slot.actual = self.sys.axGetFrame(slot.pid, slot.wid) ?? frame
+            if slot.proxy != nil, slot.actual.maxDiff(frame) > 8 {
+                // Keep a visible frozen proxy and the recovery record when AX
+                // refuses the landing. Never reveal a still-parked real body.
+                slot.proxy?.freeze(); slot.busy = false; slot.landing = false
+                self.counters.errors += 1; completion?(false); return
+            }
             slot.presented = concealed ? logical : slot.actual
             slot.busy = false; slot.landing = false
             slot.proxy?.close(); slot.proxy = nil
@@ -170,6 +183,7 @@ final class LiteChannel: ChannelAPI {
             self.queue.append(EngEvent(type: Ev.settled, wid: slot.wid, t: self.sys.now(), rect: slot.presented))
             self.updateBorder(slot)
             completion?(result == 0)
+            if slot.forgetVersion == version { self.forget(slot.wid) }
         }
     }
     private func animate(_ slot: Slot, geometry: Geometry, opening: Bool) {
@@ -234,6 +248,11 @@ final class LiteChannel: ChannelAPI {
                 guard let self, let slot, self.current(slot, version) else { return }
                 if result != 0 { self.counters.errors += 1 }
                 slot.actual = self.sys.axGetFrame(slot.pid, slot.wid) ?? slot.target
+                if slot.actual.maxDiff(slot.target) > 8 {
+                    slot.proxy?.freeze(); slot.busy = false; slot.landing = false
+                    self.counters.errors += 1
+                    return // Keep the visible proxy and exact recovery authority.
+                }
                 // Keep the exact target image for two display intervals so the
                 // application's newly sized backing surface can become visible.
                 DispatchQueue.main.asyncAfter(deadline: .now()+0.034) { [weak self, weak slot] in
@@ -243,6 +262,7 @@ final class LiteChannel: ChannelAPI {
                     self.sys.presentation[slot.wid] = nil
                     self.queue.append(EngEvent(type: Ev.settled, wid: slot.wid, t: self.sys.now(), rect: slot.actual))
                     self.updateBorder(slot)
+                    if slot.forgetVersion == version { self.forget(slot.wid) }
                 }
             }
         }
@@ -299,6 +319,18 @@ final class LiteChannel: ChannelAPI {
     func shutdown() {
         shuttingDown = true; commands.removeAll()
         cancelMotions()
+    }
+    func prepareRecovery() {
+        commands.removeAll()
+        for slot in slots.values {
+            slot.version += 1; slot.busy = false; slot.capturing = false; slot.landing = false
+            if let proxy = slot.proxy { proxy.freeze(); slot.presented = proxy.presented; sys.presentation[slot.wid] = slot.presented }
+        }
+        for (proxy, _) in departures { proxy.close() }; departures.removeAll(); borders.close()
+    }
+    func recovered(_ wid: Int) {
+        if let slot = slots.removeValue(forKey: wid) { slot.version += 1; slot.proxy?.close() }
+        sys.presentation[wid] = nil; borders.drop(wid)
     }
     func cancelMotions() {
         commands.removeAll()

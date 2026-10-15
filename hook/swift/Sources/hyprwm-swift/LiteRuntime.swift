@@ -6,7 +6,7 @@ final class LiteRuntime {
     let hook: String, controlPath: String, stateDir: String
     let environment: [String: String]
     let sys: LiteSys, engine: LiteEngine, wm: WM
-    private var formattingStatus = false, stopping = false
+    private var formattingStatus = false, stopping = false, recovering = false
     private var timer: DispatchSourceTimer?, socketSource: DispatchSourceRead?
     private var signals: [DispatchSourceSignal] = []
     private var menu: MenuBarController?, watcher: ConfigFileWatcher?, hotkeys: LiteHotkeys?
@@ -39,15 +39,18 @@ final class LiteRuntime {
             let original = try wm.command("status", last.area, last.space, last.wins)
             return try RuntimeMode.decorate(original, mode: .lite)
                 .setting("hotkey_bindings", hotkeys?.metadata ?? .array([]))
-                .setting("lite", engine.channel.capabilityStatus.setting("recovery_count", .int(sys.recovery.records.count)).setting("hotkey_conflicts", .int(hotkeys?.conflicts ?? 0)))
+                .setting("lite", engine.channel.capabilityStatus.setting("recovery_count", .int(sys.recovery.records.count)).setting("recovery_error", sys.recovery.loadError.map(JSON.string) ?? .null).setting("hotkey_conflicts", .int(hotkeys?.conflicts ?? 0)))
                 .setting("workspace_public", workspaceStatus).dumps(ensureASCII: false)
         }
         if command == "reload" { try reload(); return "configuration reloaded" }
+        if command == "resume", recovering { throw CmdError("resume refused: complete restore-all before resuming Lite tiling") }
         if command == "restore-all" {
-            wm.setEnabled(false); configure?.cancelAll(); engine.channel.cancelMotions()
+            if let error = sys.recovery.loadError { throw CmdError("restore-all: \(error)") }
+            recovering = true; wm.setEnabled(false); configure?.cancelAll(); engine.channel.prepareRecovery()
             wm.hidden.removeAll(); wm.save()
             let remaining = restoreRecords()
             guard remaining == 0 else { throw CmdError("restore-all: \(remaining) exact lifetime records still need AX permission or a responsive app; recovery ledger preserved") }
+            recovering = false; engine.channel.cancelMotions()
             sys.membership.removeAll(); sys.concealed.removeAll(); wm.spaces.removeAll(); wm.target.removeAll(); wm.save()
             return "restored every Lite window; tiling paused"
         }
@@ -109,26 +112,29 @@ final class LiteRuntime {
         let tile = next.makeDwindle()
         wm.tile.gapsIn = tile.gapsIn; wm.tile.gapsOut = tile.gapsOut; wm.tile.defaultRatio = tile.defaultRatio
         wm.tile.splitWidthMult = tile.splitWidthMult; wm.tile.minimumPolicy = tile.minimumPolicy
-        if configuredEnabledChanged { wm.setEnabled(options.tilingEnabled) }
+        if configuredEnabledChanged, !recovering { wm.setEnabled(options.tilingEnabled) }
         if geometryChanged, wm.enabled, let last = wm.last { wm.apply(last.area, last.space, last.wins) }
     }
     /// Returns unresolved exact lifetimes; records are deleted only after AX ACK.
     @discardableResult private func restoreRecords() -> Int {
+        if sys.recovery.loadError != nil { return max(1, sys.recovery.records.count) }
         _ = try? sys.snapshot()
         for record in Array(sys.recovery.records.values) {
             if sys.processExited(record.pid) || sys.processBirth(record.pid).map({ $0 != record.birth }) == true ||
-                sys.winPidLevel(record.wid).pid.map({ $0 != record.pid }) == true { sys.recovery.remove(record.wid); continue }
-            if sys.winPidLevel(record.wid).pid == nil, sys.ax.enumerated(record.pid), sys.ax.window(record.pid, record.wid) == nil { sys.recovery.remove(record.wid); continue }
+                sys.winPidLevel(record.wid).pid.map({ $0 != record.pid }) == true { sys.recovery.remove(record.wid); engine.channel.recovered(record.wid); continue }
+            if sys.winPidLevel(record.wid).pid == nil, sys.ax.enumerated(record.pid), sys.ax.window(record.pid, record.wid) == nil { sys.recovery.remove(record.wid); engine.channel.recovered(record.wid); continue }
             guard sys.processBirth(record.pid) == record.birth, sys.winPidLevel(record.wid).pid == record.pid,
                   let frame = Rect(record.frame), sys.ax.window(record.pid, record.wid) != nil else { continue }
             if sys.axFrame(record.pid, record.wid, frame) == 0,
                sys.axGetFrame(record.pid, record.wid).map({ $0.maxDiff(frame) <= 8 }) == true {
                 sys.recovery.remove(record.wid); sys.concealed.remove(record.wid); sys.presentation[record.wid] = nil
+                engine.channel.recovered(record.wid)
             }
         }
         return sys.recovery.records.count
     }
     private func recoverBeforeStart(_ ready: @escaping () -> Void) {
+        if let error = sys.recovery.loadError { log("Lite recovery:", error, "; tiling stays paused"); return }
         let deadline = sys.now()+3
         func attempt() {
             let remaining = self.restoreRecords()
@@ -148,7 +154,7 @@ final class LiteRuntime {
         ecosystem = try? EcosystemAPI(path: environment["HYPRWM_EVENTS"] ?? controlPath+".events")
         do { hotkeys = try LiteHotkeys(configDir: hook+"/config") { [weak self] command in
             guard let self else { return }
-            if command == "panic-toggle" { self.wm.setEnabled(!self.wm.enabled); return }
+            if command == "panic-toggle" { if !self.recovering { self.wm.setEnabled(!self.wm.enabled) }; return }
             guard let last = self.wm.last else { return }
             do { _ = try self.wm.command(command, last.area, last.space, last.wins) } catch { log("Lite hotkey:", error.localizedDescription) }
         }} catch { log("Lite hotkeys:", error.localizedDescription) }
@@ -201,8 +207,8 @@ final class LiteRuntime {
         application.run(); exit(0)
     }
     private func shutdown(_ completion: @escaping (Bool) -> Void) {
-        guard !stopping else { completion(false); return }; stopping = true
-        pendingReload?.cancel(); wm.setEnabled(false); configure?.cancelAll(); engine.channel.cancelMotions()
+        guard !stopping else { completion(false); return }; stopping = true; recovering = true
+        pendingReload?.cancel(); wm.setEnabled(false); configure?.cancelAll(); engine.channel.prepareRecovery()
         wm.hidden.removeAll(); wm.save()
         let deadline = sys.now()+3
         func attempt() {
@@ -219,8 +225,11 @@ final class LiteRuntime {
     }
     /// A dead daemon's recovery path requires no engine, hotkeys, or full WM.
     static func restoreOnly(stateDir: String) -> Never {
+        let sys = LiteSys(stateDir: stateDir)
+        if let error = sys.recovery.loadError { die("restore-all: \(error)") }
+        if sys.recovery.records.isEmpty { print("no outstanding Lite recovery records"); exit(0) }
         guard AXIsProcessTrusted() else { die("restore-all needs Accessibility: System Settings → Privacy & Security → Accessibility") }
-        let sys = LiteSys(stateDir: stateDir), application = NSApplication.shared
+        let application = NSApplication.shared
         application.setActivationPolicy(.accessory)
         let deadline = sys.now()+4
         let timer = DispatchSource.makeTimerSource(queue: .main)

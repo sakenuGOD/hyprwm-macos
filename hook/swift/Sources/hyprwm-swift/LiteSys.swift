@@ -14,28 +14,43 @@ final class LiteRecovery {
         let frame: [Double]
     }
     let url: URL
-    private let safeStorage: Bool
+    private var safeStorage: Bool
+    private(set) var loadError: String?
     private var warned = false
     private(set) var records: [Int: Record] = [:]
     init(directory: String) {
         url = URL(fileURLWithPath: directory).appendingPathComponent("lite-recovery.json")
         var parent = stat()
-        safeStorage = lstat(directory, &parent) == 0 && parent.st_mode & S_IFMT == S_IFDIR && parent.st_uid == getuid() && parent.st_mode & 0o022 == 0
-        guard safeStorage else { return }
+        let parentResult = lstat(directory, &parent)
+        safeStorage = parentResult == 0 && parent.st_mode & S_IFMT == S_IFDIR && parent.st_uid == getuid() && parent.st_mode & 0o022 == 0
+        func refuse(_ reason: String) { safeStorage = false; loadError = reason }
+        if !safeStorage {
+            // A genuinely missing parent also means no recovery file exists.
+            // Daemon startup creates its directory before constructing this type.
+            if parentResult == 0 || errno != ENOENT { refuse("unsafe or unreadable Lite recovery directory") }
+            return
+        }
+        var existing = stat()
+        if lstat(url.path, &existing) != 0 {
+            if errno != ENOENT { refuse("unreadable existing Lite recovery ledger") }
+            return
+        }
         let descriptor = Darwin.open(url.path, O_RDONLY | O_NOFOLLOW)
-        guard descriptor >= 0 else { return }
+        guard descriptor >= 0 else { refuse("cannot safely open existing Lite recovery ledger"); return }
         let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         var info = stat()
         guard fstat(descriptor, &info) == 0, info.st_uid == getuid(), info.st_mode & S_IFMT == S_IFREG,
-              info.st_mode & 0o022 == 0, info.st_size >= 0, info.st_size <= 262_144 else { return }
+              info.st_mode & 0o022 == 0, info.st_size >= 0, info.st_size <= 262_144 else { refuse("unsafe or oversized existing Lite recovery ledger"); return }
         if let data = try? file.read(upToCount: 262_145), data.count <= 262_144,
            let rows = try? JSONDecoder().decode([Record].self, from: data) {
-            records = Dictionary(rows.prefix(1024).filter { record in
+            let valid = rows.filter { record in
                 record.wid > 0 && record.wid <= Int(UInt32.max) && record.pid > 0 && record.birth.hasPrefix("\(record.pid):") &&
                 record.frame.count == 4 && record.frame.allSatisfy(\.isFinite) && abs(record.frame[0]) <= 1_048_576 && abs(record.frame[1]) <= 1_048_576 &&
                 record.frame[2] > 0 && record.frame[2] <= 32768 && record.frame[3] > 0 && record.frame[3] <= 32768
-            }.map { ($0.wid, $0) }, uniquingKeysWith: { first, _ in first })
-        }
+            }
+            guard rows.count <= 1024, valid.count == rows.count, Set(rows.map(\.wid)).count == rows.count else { refuse("invalid or ambiguous Lite recovery records"); return }
+            records = Dictionary(rows.map { ($0.wid, $0) }, uniquingKeysWith: { first, _ in first })
+        } else { refuse("cannot decode existing Lite recovery ledger; file preserved") }
     }
     @discardableResult func remember(_ window: WinInfo) -> Bool {
         guard let birth = LiteAX.birth(window.pid) else { return false }
@@ -145,7 +160,9 @@ final class LiteSys: SysAPI {
     }
     func frontPid() -> Int? { NSWorkspace.shared.frontmostApplication.map { Int($0.processIdentifier) } }
     func winBounds(_ wid: Int) -> Rect? {
-        if let virtual = presentation[wid] { return virtual }
+        // SysAPI bounds are physical acknowledgement, including the core's
+        // mid-motion pause barrier. Proxy rectangles live only in Snapshot and
+        // EngWin.visible; returning them here could release a still-parked body.
         guard let rows = CGWindowListCopyWindowInfo(.optionIncludingWindow, CGWindowID(wid)) as? [[String: Any]],
               let row = rows.first, let bounds = row[kCGWindowBounds as String] as? [String: Any],
               let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return nil }

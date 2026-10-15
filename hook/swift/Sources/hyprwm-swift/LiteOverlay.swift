@@ -169,6 +169,11 @@ final class LiteProxy {
         let layer = imageLayer.presentation() ?? imageLayer, bounds = layer.bounds, position = layer.position
         return Rect(canvas.x+position.x-bounds.width/2, canvas.y+canvas.h-position.y-bounds.height/2, bounds.width, bounds.height)
     }
+    func freeze() {
+        let frame = presented
+        imageLayer.removeAllAnimations(); border.removeAllAnimations(); mask.removeAllAnimations()
+        setModel(frame)
+    }
     func close() { window.orderOut(nil); window.close() }
 }
 
