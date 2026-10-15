@@ -18,7 +18,7 @@ Building does not launch a daemon, install a native engine or alter the running 
 dist/HyprWM.app/Contents/MacOS/hyprwm-swift --menu-only
 ```
 
-Quit an older companion normally before opening another, to avoid duplicate menu icons. Do not run multiple daemons to test packaging.
+Quit an older companion normally before opening another, to avoid duplicate menu icons. Do not run multiple daemons to test packaging. The companion’s **Quit HyprWM** action depends on the matching checkout’s `hook/lifecycle.py` and its process-ownership records. If those are missing or shutdown is not confirmed, it refuses to quit rather than assume restoration succeeded. A clean public clone may lack that development helper. The installed daemon app uses its own restoration-aware shutdown coordinator.
 
 ## Distribution limits
 
