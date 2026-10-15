@@ -23,7 +23,7 @@ final class LiteAX {
         var windows: [Int: Window] = [:]
         var closed = Set<Int>()
         var focused: Int?, flags = NativeFocusFlags.unknown
-        var refreshed = 0.0, refreshing = false, enumerated = false
+        var refreshed = 0.0, censusBegan = 0.0, refreshing = false, enumerated = false
         var cursor = 0, complete = false
         init(pid: Int, birth: String) {
             queue = DispatchQueue(label: "hyprwm.lite.ax.\(pid)", qos: .userInteractive)
@@ -207,6 +207,16 @@ final class LiteAX {
         guard let client = client(pid) else { return false }
         lock.lock(); defer { lock.unlock() }; return client.closed.contains(wid) || client.complete && client.windows[wid] == nil
     }
+    /// Public AXWindows existence after a native-unmap observation. A CG row
+    /// can outlive a closed document; old/incomplete AX reads stay unknown.
+    func presence(_ pid: Int, _ wid: Int, after began: Double) -> Int {
+        guard let client = client(pid) else { return -1 }
+        lock.lock(); defer { lock.unlock() }
+        guard client.censusBegan >= began, !client.refreshing else { return -1 }
+        if client.closed.contains(wid) { return 0 }
+        if client.windows[wid] != nil { return 1 }
+        return client.complete ? 0 : -1
+    }
     func context(_ pid: Int) -> (wid: Int?, flags: Int) {
         guard let client = client(pid) else { return (nil, NativeFocusFlags.unknown) }
         lock.lock(); defer { lock.unlock() }; return (client.focused, client.flags)
@@ -278,6 +288,7 @@ final class LiteAX {
             client.complete = !failed && processed >= elements.count
             client.windows = windows; client.focused = focused; client.flags = flags
             client.cursor = elements.isEmpty ? 0 : (cursor+processed)%elements.count
+            client.censusBegan = began
             client.refreshed = ProcessInfo.processInfo.systemUptime; client.refreshing = false; client.enumerated = true
             self.lock.unlock()
         }

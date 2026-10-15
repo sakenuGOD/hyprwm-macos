@@ -76,6 +76,23 @@ final class LiteRecovery {
 
 /// Lite uses public CG census, public AX control, and logical workspace IDs.
 /// It never calls SkyLight, the native engine channel, or the launcher injector.
+struct LiteUnmapAdmission {
+    enum Decision { case ordinary, pending, closed }
+    private var probes: [Int: (pid: Int, birth: String, began: Double)] = [:]
+    mutating func retain(_ ids: Set<Int>) { probes = probes.filter { ids.contains($0.key) } }
+    mutating func observe(_ wid: Int, pid: Int, birth: String, eligible: Bool, now: Double,
+                          presence: (Double) -> Int) -> Decision {
+        guard eligible else { probes[wid] = nil; return .ordinary }
+        if probes[wid].map({ $0.pid != pid || $0.birth != birth }) ?? true { probes[wid] = (pid, birth, now) }
+        let began = probes[wid]!.began
+        switch presence(began) {
+        case 0: return .closed
+        case 1: return .ordinary
+        default: return now-began < 0.18 ? .pending : .ordinary
+        }
+    }
+}
+
 final class LiteSys: SysAPI {
     let ax = LiteAX()
     let recovery: LiteRecovery
@@ -87,6 +104,7 @@ final class LiteSys: SysAPI {
     private(set) var rawWindows: [WinInfo] = []
     private var physicalWindows: [WinInfo] = []
     private var hiddenApplications = Set<Int>()
+    private var unmapAdmission = LiteUnmapAdmission()
     private var locked = false
     private let sessionLock = NSLock(), focusLock = NSLock(), censusLock = NSLock()
     private var focusEpoch = 0, focusing = 0, closing = 0
@@ -178,6 +196,7 @@ final class LiteSys: SysAPI {
         let ownPID = Int(getpid())
         var windows: [WinInfo] = []
         var physical: [WinInfo] = []
+        var uncertainUnmap = false, refreshUnmapPIDs = Set<Int>()
         for row in censusRows.prefix(4096) {
             guard let wid = row[kCGWindowNumber as String] as? Int,
                   let pid = row[kCGWindowOwnerPID as String] as? Int, pid != ownPID,
@@ -190,6 +209,16 @@ final class LiteSys: SysAPI {
             window.layer = row[kCGWindowLayer as String] as? Int ?? 0
             window.alpha = row[kCGWindowAlpha as String] as? Double ?? 1
             physical.append(window)
+            let record = recovery.records[wid]
+            let birth = processBirth(pid) ?? ""
+            let eligible = !nativeOn && membership[wid] == workspace && !concealed.contains(wid) &&
+                presentation[wid] == nil && !hiddenApplications.contains(pid) && !sessionLocked() &&
+                record?.pid == pid && record?.birth == birth && !birth.isEmpty
+            let unmap = unmapAdmission.observe(wid, pid: pid, birth: birth, eligible: eligible, now: now()) { began in
+                ax.presence(pid, wid, after: began)
+            }
+            if unmap == .pending { uncertainUnmap = true; refreshUnmapPIDs.insert(pid) }
+            if unmap == .closed { continue }
             if ax.confirmedClosed(pid, wid), !hiddenApplications.contains(pid) { continue }
             if let sid = membership[wid] {
                 window.space = sid
@@ -203,6 +232,7 @@ final class LiteSys: SysAPI {
             }
             windows.append(window)
         }
+        unmapAdmission.retain(Set(physical.map(\.wid)))
         for (wid, created) in createdWindows {
             if now()-created.received >= 0.25 || processBirth(created.window.pid) != created.birth || Self.publicOwner(wid) != created.window.pid {
                 createdWindows[wid] = nil
@@ -218,11 +248,11 @@ final class LiteSys: SysAPI {
         physicalWindows = physical
         let refreshPIDs = Set(physical.filter { $0.layer == 0 && !protectedProcess($0.pid) }.map(\.pid)).union(recovery.records.values.map(\.pid))
         for pid in refreshPIDs where !protectedProcess(pid) {
-            ax.refresh(pid, rows: physical.filter { $0.pid == pid })
+            ax.refresh(pid, rows: physical.filter { $0.pid == pid }, force: refreshUnmapPIDs.contains(pid))
         }
-        var result = Snapshot(space: workspace, stable: true, area: area, windows: windows)
+        var result = Snapshot(space: workspace, stable: !uncertainUnmap, area: area, windows: windows)
         result.locked = sessionLocked()
-        result.nativeMetadata = .object([("workspace_kind", .string("virtual")), ("space", .int(workspace)), ("space_type", .int(0)), ("stable", .bool(true))])
+        result.nativeMetadata = .object([("workspace_kind", .string("virtual")), ("space", .int(workspace)), ("space_type", .int(0)), ("stable", .bool(!uncertainUnmap))])
         return result
     }
     func applicationHidden(_ pid: Int) -> Bool { hiddenApplications.contains(pid) }
@@ -431,7 +461,8 @@ final class LiteSys: SysAPI {
     func processExited(_ pid: Int) -> Bool { kill(pid_t(pid), 0) != 0 && errno == ESRCH }
     func windowPresence(_ pid: Int, _ wid: Int) -> Int {
         guard !processExited(pid) else { return 0 }
-        return rawWindows.contains { $0.pid == pid && $0.wid == wid } ? 1 : 0
+        if ax.confirmedClosed(pid, wid), !applicationHidden(pid) { return 0 }
+        return ax.presence(pid, wid, after: 0)
     }
     private func setLocked(_ value: Bool) { sessionLock.lock(); locked = value; sessionLock.unlock() }
     func sessionLocked() -> Bool { sessionLock.lock(); defer { sessionLock.unlock() }; return locked }
