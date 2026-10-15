@@ -1,6 +1,6 @@
-// Канал демон -> движок — порт chan.py поверх hook/src/chanlib.c (тот же код, что грузит Python через
-// ctypes). Структуры — из hook/src/chan.h через модуль CChan, вручную не дублируются.
-// ВНИМАНИЕ: chanlib.c держит один канал на процесс (static ch) — как и в Python.
+// Daemon -> engine channel: port of chan.py over hook/src/chanlib.c (the same code Python loads through
+// ctypes). Structures come from hook/src/chan.h via CChan; no manual duplicates.
+// WARNING: chanlib.c keeps one channel per process (static ch), as in Python.
 import CChan
 import Foundation
 
@@ -16,16 +16,16 @@ public final class LiveChannel: ChannelAPI {
     let winArr: UnsafeMutablePointer<ch_win>
     private var fullLogged = false
 
-    /// create=true — НОВЫЙ файл (O_EXCL внутри ch_open); иначе подключиться к существующему.
+    /// create=true creates a NEW file (O_EXCL inside ch_open); otherwise attach to an existing file.
     public init(path: String, create: Bool) throws {
         guard let p = ch_open(path, create ? 1 : 0) else {
-            throw CmdError("не открыть \(path)")
+            throw CmdError("cannot open \(path)")
         }
-        // chan.py: assert, что Python-структуры совпали с chan.h; здесь структуры и есть chan.h — сверяем
-        // только, что Swift видит те же размеры, что компилятор C.
+        // chan.py asserts that Python structures match chan.h; here the structures ARE chan.h, so verify
+        // only that Swift sees the same sizes as the C compiler.
         guard MemoryLayout<ch_win>.stride == Int(ch_off(0)), MemoryLayout<ch_var>.stride == Int(ch_off(3)),
               MemoryLayout<ch_hdr>.stride == Int(ch_off(7)) else {
-            throw CmdError("chan.h: размеры структур в Swift и C разошлись")
+            throw CmdError("chan.h: Swift and C structure sizes differ")
         }
         self.path = path
         base = p
@@ -55,11 +55,11 @@ public final class LiveChannel: ChannelAPI {
     }
 
     private func full() {
-        if !fullLogged { log("кольцо команд полно (движок не забирает)") }
+        if !fullLogged { log("command ring full (engine is not consuming)") }
         fullLogged = true
     }
 
-    // ── команды ──────────────────────────────────────────────────────────
+    // Commands
     public var terminalGeometrySupported:Bool {hdr.pointee.version & UInt32(CH_CAP_TERMINAL_MOVE) != 0}
     public func geomTerminal(_ wid:Int,to:Rect,curves:(Int,Int),durations:(Double,Double),from:Rect?) -> Bool {
         guard terminalGeometrySupported else{return false}
@@ -73,8 +73,8 @@ public final class LiveChannel: ChannelAPI {
                      move: Bool, warp: Bool, stretch: Bool) {
         let fl = (frm != nil ? UInt32(F_FROM) : 0) | (move ? UInt32(F_MOVE) : 0) | (stretch ? UInt32(F_STRETCH) : 0)
         let f = frm ?? Rect(0, 0, 0, 0)
-        // ОТЛИЧИЕ: Python бросал RuntimeError при полном кольце (в главном цикле — падение демона);
-        // здесь — запись в лог, команда теряется (движок всё равно мёртв, сторож alive() его переставит).
+        // DIFFERENCE: Python raised RuntimeError when the ring was full (crashing the daemon in the main loop);
+        // here we log and drop the command (the engine is dead anyway; the alive() watchdog reinstalls it).
         if ch_geom(Int32(warp ? OP_WARP : OP_GEOM), UInt32(wid), fl, to.x, to.y, to.w, to.h, f.x, f.y, f.w, f.h,
                    UInt32(cpos), UInt32(csize), dpos, dsize) != 0 { full() } else { fullLogged = false }
     }
@@ -104,13 +104,13 @@ public final class LiveChannel: ChannelAPI {
     public func forget(_ wid: Int) { _ = ch_forget(UInt32(wid)) }
     public func commit() { ch_commit() }
 
-    // ── кривые ───────────────────────────────────────────────────────────
+    // Curves
     public func bezier(_ i: Int, _ p1: (Double, Double), _ p2: (Double, Double)) {
         ch_curve_bezier(Int32(i), Float(p1.0), Float(p1.1), Float(p2.0), Float(p2.1))
     }
     public func spring(_ i: Int, _ mass: Double, _ k: Double, _ d: Double) { ch_curve_spring(Int32(i), mass, k, d) }
 
-    // ── состояние ────────────────────────────────────────────────────────
+    // State
     public func events() -> [EngEvent] {
         var out: [EngEvent] = []
         var e = ch_evt()
@@ -147,7 +147,7 @@ public final class LiveChannel: ChannelAPI {
     static let offTail = MemoryLayout<ch_hdr>.offset(of: \ch_hdr.cmd_tail)!
     static let offHead = MemoryLayout<ch_hdr>.offset(of: \ch_hdr.cmd_head)!
     public var pending: Bool {
-        // cmd_tail пишет движок, cmd_head — мы; чтение из общей памяти при каждом вызове
+        // The engine writes cmd_tail; we write cmd_head. Read shared memory on every call.
         base.load(fromByteOffset: LiveChannel.offTail, as: UInt32.self) !=
             base.load(fromByteOffset: LiveChannel.offHead, as: UInt32.self)
     }

@@ -7,7 +7,7 @@ public enum TextConfig {
     public struct Issue: CustomStringConvertible {
         public let line: Int
         public let message: String
-        public var description: String { "Строка \(line): \(message)" }
+        public var description: String { "Line \(line): \(message)" }
     }
     public struct Result {
         public let document: JSON
@@ -36,7 +36,7 @@ public enum TextConfig {
             try Data(render(initial, configDir: configDir).utf8).write(to: file, options: .atomic)
         }
         let data = try Data(contentsOf: file)
-        guard data.count <= 262144, let text = String(data: data, encoding: .utf8) else { throw CmdError("hyprwm.conf: ожидается UTF-8, не больше 256 КБ") }
+        guard data.count <= 262144, let text = String(data: data, encoding: .utf8) else { throw CmdError("hyprwm.conf: expected UTF-8, at most 256 KB") }
         return try parse(text, configDir: configDir)
     }
     public static func parse(_ text: String, configDir: String) throws -> Result {
@@ -48,15 +48,15 @@ public enum TextConfig {
             let line = offset + 1, source = stripComment(raw).trimmingCharacters(in: .whitespaces)
             if source.isEmpty { continue }
             if source == "}" {
-                if sections.isEmpty { issues.append(.init(line: line, message: "лишняя закрывающая скобка")) } else { sections.removeLast() }
+                if sections.isEmpty { issues.append(.init(line: line, message: "unexpected closing brace")) } else { sections.removeLast() }
                 continue
             }
             if source.hasSuffix("{"), !source.contains("=") {
                 let name = String(source.dropLast()).trimmingCharacters(in: .whitespaces)
-                guard name.range(of: "^[A-Za-z_][A-Za-z0-9_.-]*$", options: .regularExpression) != nil else { issues.append(.init(line: line, message: "неверное имя раздела")); continue }
+                guard name.range(of: "^[A-Za-z_][A-Za-z0-9_.-]*$", options: .regularExpression) != nil else { issues.append(.init(line: line, message: "invalid section name")); continue }
                 sections.append(name); continue
             }
-            guard let separator = source.firstIndex(of: "=") else { issues.append(.init(line: line, message: "ожидается key = value")); continue }
+            guard let separator = source.firstIndex(of: "=") else { issues.append(.init(line: line, message: "expected key = value")); continue }
             let key = source[..<separator].trimmingCharacters(in: .whitespaces)
             let rawValue = source[source.index(after: separator)...].trimmingCharacters(in: .whitespaces)
             let path = (sections + [key]).joined(separator: ".")
@@ -64,20 +64,20 @@ public enum TextConfig {
                 if sections.isEmpty && (key == "bind" || key == "windowrule") {
                     let target = key == "bind" ? "hotkeys" : "window_rules"
                     let value = rawValue.hasPrefix("{") ? try parseValue(rawValue) : try readableRecord(key, rawValue, ordinal:result[target]?.array?.count ?? 0)
-                    guard value.object != nil else { throw CmdError("\(key): ожидается объект {…}") }
+                    guard value.object != nil else { throw CmdError("\(key): expected object {…}") }
                     let itemSchema = schema["properties"]?[target]?["items"] ?? .object([])
                     try validate(value, schema: itemSchema, root: schema, path: key)
                     let entries = (result[target]?.array ?? []) + [value]
                     result = result.setting(target, .array(entries)); origins[target] = line; rowOrigins[target,default:[]].append(line); continue
                 }
                 let components = path.split(separator: ".").map(String.init)
-                guard let field = fieldSchema(components, schema: schema, root: schema) else { throw CmdError("неизвестный параметр \(path)") }
+                guard let field = fieldSchema(components, schema: schema, root: schema) else { throw CmdError("unknown setting \(path)") }
                 let value = try parseValue(rawValue)
                 try validate(value, schema: field, root: schema, path: path)
                 result = set(result, components, value); origins[path] = line
             } catch { issues.append(.init(line: line, message: String(describing: error))) }
         }
-        if !sections.isEmpty { issues.append(.init(line: max(1,text.components(separatedBy:.newlines).count), message: "раздел не закрыт скобкой }")) }
+        if !sections.isEmpty { issues.append(.init(line: max(1,text.components(separatedBy:.newlines).count), message: "section missing closing brace }")) }
         // Semantic dependencies are checked as independent groups so one bad animation
         // or rule cannot discard unrelated valid gap, focus or border edits.
         let base = try HyprConfig.load(configDir: configDir, rebuild: false, timeScale: 1)
@@ -276,7 +276,7 @@ public enum TextConfig {
         return result
     }
     private static func parseValue(_ source: String) throws -> JSON {
-        guard !source.isEmpty else { throw CmdError("пустое значение") }
+        guard !source.isEmpty else { throw CmdError("empty value") }
         if let value = try? JSON.parse(source) { return value }
         if ["yes","on"].contains(source.lowercased()) { return .bool(true) }
         if ["no","off"].contains(source.lowercased()) { return .bool(false) }
@@ -331,7 +331,7 @@ public enum TextConfig {
     }
     private static func validate(_ value: JSON, schema: JSON, root: JSON, path: String) throws {
         let node = resolved(schema,root:root)
-        func invalid() -> CmdError { CmdError("\(path): недопустимое значение") }
+        func invalid() -> CmdError { CmdError("\(path): invalid value") }
         if let choices = node["oneOf"]?.array { guard choices.contains(where: { (try? validate(value,schema:$0,root:root,path:path)) != nil }) else { throw invalid() }; return }
         if let choices = node["enum"]?.array, !choices.contains(value) { throw invalid() }
         if let constant = node["const"], constant != value { throw invalid() }
@@ -346,7 +346,7 @@ public enum TextConfig {
             guard let fields = value.object else { throw invalid() }
             for key in node["required"]?.array?.compactMap(\.string) ?? [] where value[key] == nil { throw invalid() }
             for (key,child) in fields {
-                guard let childSchema = fieldSchema([key],schema:node,root:root) else { throw CmdError("неизвестный параметр \(path).\(key)") }
+                guard let childSchema = fieldSchema([key],schema:node,root:root) else { throw CmdError("unknown setting \(path).\(key)") }
                 try validate(child,schema:childSchema,root:root,path:path+"."+key)
             }
         case "array":
@@ -372,7 +372,7 @@ public final class ConfigFileWatcher {
     public init(url: URL, onChange: @escaping () -> Void) throws {
         file = url; accepted = try? Data(contentsOf:url)
         let fd = open(url.deletingLastPathComponent().path,O_EVTONLY)
-        guard fd >= 0 else { throw CmdError("Не удалось наблюдать папку настроек") }
+        guard fd >= 0 else { throw CmdError("Cannot watch settings directory") }
         source = DispatchSource.makeFileSystemObjectSource(fileDescriptor:fd,eventMask:[.write,.rename,.delete,.attrib],queue:queue)
         source.setCancelHandler { close(fd) }
         source.setEventHandler { [weak self] in self?.observe(onChange) }

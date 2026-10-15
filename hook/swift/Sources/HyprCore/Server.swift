@@ -1,13 +1,13 @@
-// Сокет команд /tmp/hyprwm.ctl — протокол тот же, что у Python-демона (keys/hyprkeys, ctl.sh, stop.sh):
-// клиент подключается, пишет одну строку, читает одну строку ответа, соединение закрывается.
-// Ошибка в команде — в лог «команда упала», ответа нет (клиент видит закрытое соединение) — как в Python.
+// Command socket /tmp/hyprwm.ctl: same protocol as the Python daemon (keys/hyprkeys, ctl.sh, stop.sh):
+// the client connects, writes one line, reads one response line, and the connection closes.
+// Command errors log "command failed" with no response (the client sees a closed connection), as in Python.
 import Foundation
 
 public final class CommandServer {
     public let path: String
     public let fd: Int32
 
-    /// Отвечает ли уже кто-то на этом сокете (второй демон не запускается поверх живого).
+    /// Does anyone already answer on this socket? Do not start a second daemon over a live one.
     public static func isAlive(_ path: String) -> Bool {
         let s = socket(AF_UNIX, SOCK_STREAM, 0)
         guard s >= 0 else { return false }
@@ -129,10 +129,10 @@ public final class CommandServer {
 
 }
 
-/// configure приложениям: последняя цель окна побеждает (серийный номер); одна последовательная очередь
-/// на приложение (AX приложения всё равно сериализуется его главным потоком) — поздний ответ со старой
-/// целью не перетирает новую (P6/S3). Ответ (что окно реально приняло) уходит в deliver — живой демон
-/// кладёт его на главную очередь и сразу делает такт (событие вместо опроса cfg_q).
+/// App configure: the latest window target wins (sequence number); one serial queue
+/// per app (its main thread serializes AX anyway). A late response for an old
+/// target cannot overwrite a new one (P6/S3). The actual accepted frame goes to deliver; the live daemon
+/// posts it on the main queue and ticks immediately (event delivery instead of polling cfg_q).
 public final class Configurer: ConfigureSink {
     final class Want {
         let job: CfgJob
@@ -190,7 +190,7 @@ public final class Configurer: ConfigureSink {
 
     func work(_ wid: Int) {
         lock.lock()
-        guard let w = want[wid], !w.taken else { lock.unlock(); return }   // уже сделано более новым заданием
+        guard let w = want[wid], !w.taken else { lock.unlock(); return }   // already handled by a newer job
         w.taken = true
         let j = w.job
         lock.unlock()
@@ -203,7 +203,7 @@ public final class Configurer: ConfigureSink {
         return want[wid]?.job.seq == seq
     }
 
-    /// _cfg_one: поставить рамку и дождаться, что окно реально приняло.
+    /// _cfg_one: set the frame and wait for the frame the window actually accepts.
     func cfgOne(_ j: CfgJob) {
         let (wid, seq, pid, to) = (j.wid, j.seq, j.pid, j.to)
         func owned() -> Bool { !j.requireOwnership || (!sys.sessionLocked() && !sys.protectedProcess(pid) && sys.winPidLevel(wid).pid == pid && sys.processBirth(pid) == j.birth && j.birth != nil) }
@@ -218,7 +218,7 @@ public final class Configurer: ConfigureSink {
         var same = 0
         let t0 = sys.now()
         while e == 0 && !unchanged && sys.now() - t0 < 0.6 {
-            if !latest(wid, seq) || !owned() { return }                       // пришла новая цель — этот ответ не нужен
+            if !latest(wid, seq) || !owned() { return }                       // a newer target arrived; this response is obsolete
             guard let cur = sys.axGetFrame(pid, wid) else {sys.sleep(0.03);continue}
             if abs(cur.w - to.w) <= TOL && abs(cur.h - to.h) <= TOL {
                 got = cur
@@ -226,8 +226,8 @@ public final class Configurer: ConfigureSink {
             }
             same = cur == got ? same + 1 : 0
             got = cur
-            // окно встало, где смогло: 90 мс без изменений; если так и не сдвинулось с прежнего размера —
-            // ждать дольше (Ghostty/Telegram применяют размер асинхронно)
+            // The window settled where it could: 90 ms without changes. If its size never changed,
+            // wait longer (Ghostty/Telegram apply sizes asynchronously).
             if same >= 3 && (pre == nil || max(abs(cur.w - pre!.w), abs(cur.h - pre!.h)) > 1 || sys.now() - t0 > 0.35) {
                 break
             }

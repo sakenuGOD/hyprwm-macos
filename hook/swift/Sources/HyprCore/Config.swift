@@ -1,6 +1,6 @@
-// Конфиг Hyprland пользователя — порт hook/config/hyprcfg.py (чтение) + номера кривых/длительности
-// из hook/engine.py (setup/anim). Сам Lua-шим остаётся внешним: как и Python, при устаревшем кэше
-// (какой-то .lua в дотфайлах новее hypr_cfg.json) запускается `lua hypr_shim.lua HOME CACHE`.
+// User Hyprland config: port of hook/config/hyprcfg.py (reading) plus curve IDs/durations
+// from hook/engine.py (setup/anim). The Lua shim remains external: like Python, a stale cache
+// (a dotfile .lua newer than hypr_cfg.json) triggers `lua hypr_shim.lua HOME CACHE`.
 import Foundation
 
 public struct AnimSetting: Equatable {
@@ -38,34 +38,34 @@ public final class HyprConfig {
         "specialWorkspace": "workspaces", "specialWorkspaceIn": "specialWorkspace",
         "specialWorkspaceOut": "specialWorkspace",
     ]
-    // умолчания hyprutils/Hyprland (AnimationTree.cpp): global = (1, 8, "default"); *angle выключены
+    // hyprutils/Hyprland defaults (AnimationTree.cpp): global = (1, 8, "default"); *angle disabled
     static let defaults: [String: JSON] = [
         "global": .object([("enabled", .bool(true)), ("speed", .int(8)), ("bezier", .string("default"))]),
         "borderangle": .object([("enabled", .bool(false)), ("speed", .int(1)), ("bezier", .string("default"))]),
         "shadowangle": .object([("enabled", .bool(false)), ("speed", .int(1)), ("bezier", .string("default"))]),
         "glowangle": .object([("enabled", .bool(false)), ("speed", .int(1)), ("bezier", .string("default"))]),
     ]
-    /// Листья, к которым применяется TIME_SCALE (engine.py GEOM_LEAVES).
+    /// Leaves to which TIME_SCALE applies (engine.py GEOM_LEAVES).
     public static let geomLeaves: Set<String> = ["windows", "windowsIn", "windowsOut", "windowsMove", "workspaces",
                                                  "workspacesIn", "workspacesOut", "specialWorkspace",
                                                  "specialWorkspaceIn", "specialWorkspaceOut"]
 
     public let raw: JSON
     public let timeScale: Double
-    public private(set) var curveIDs: [String: Int] = [:]   // имя кривой -> номер в канале (engine.setup)
+    public private(set) var curveIDs: [String: Int] = [:]   // curve name -> channel ID (engine.setup)
 
     public init(json: JSON, timeScale: Double = 1.2) throws {
         raw = json
         self.timeScale = timeScale
         guard json["load_ok"]?.truthy == true else {
             throw NSError(domain: "hyprcfg", code: 1, userInfo: [NSLocalizedDescriptionKey:
-                "конфиг Hyprland не загрузился: \(json["load_error"].map { $0.dumps() } ?? "None")"])
+                "Hyprland config failed to load: \(json["load_error"].map { $0.dumps() } ?? "None")"])
         }
         for (i, (name, _)) in sortedCurves().enumerated() where i < 16 { curveIDs[name] = i }
     }
 
-    /// hyprcfg.load(): кэш hypr_cfg.json; если он старше самого нового .lua в дотфайлах — пересобрать
-    /// Lua-шимом (rebuild=false — только читать, для тестов и сухих режимов).
+    /// hyprcfg.load(): rebuild hypr_cfg.json through the Lua shim when older than the newest dotfile .lua.
+    /// rebuild=false only reads, for tests and dry runs.
     public static func load(configDir: String, rebuild: Bool = true, timeScale: Double = 1.2) throws -> HyprConfig {
         let cache = configDir + "/hypr_cfg.json"
         let personal = NSHomeDirectory() + "/arch-nebula/dotfiles/home"
@@ -84,7 +84,7 @@ public final class HyprConfig {
                 p.waitUntilExit()
                 if p.terminationStatus != 0 {
                     throw NSError(domain: "hyprcfg", code: 2, userInfo: [NSLocalizedDescriptionKey:
-                        "lua hypr_shim.lua завершился с кодом \(p.terminationStatus)"])
+                        "lua hypr_shim.lua exited with code \(p.terminationStatus)"])
                 }
             }
         }
@@ -129,12 +129,12 @@ public final class HyprConfig {
         return tile
     }
 
-    /// hyprcfg.animation(leaf): узел, заданный в конфиге, переопределяет всё; не заданный лист берёт
-    /// значения ближайшего заданного предка.
+    /// hyprcfg.animation(leaf): an explicitly configured node overrides everything; an unspecified leaf takes
+    /// values from its nearest configured ancestor.
     public func animation(_ leaf: String) -> AnimSetting {
         var anims: [String: JSON] = [:]
         for a in raw["animations"]?.array ?? [] {
-            anims[a["leaf"]?.string ?? "None"] = a        // dict-компрехеншен: последний побеждает
+            anims[a["leaf"]?.string ?? "None"] = a        // dict comprehension: last value wins
         }
         var node: String? = leaf
         var found: JSON?
@@ -156,7 +156,7 @@ public final class HyprConfig {
                            kind: kind, curve: curve, style: a["style"]?.string ?? "", node: nodeName)
     }
 
-    /// hyprcfg.curves(): все кривые вкл. встроенную default.
+    /// hyprcfg.curves(): all curves, including the built-in default.
     public func curves() -> [String: Curve] {
         var out: [String: Curve] = ["default": .bezier(p1: (0, 0.75), p2: (0.15, 1.0))]
         for (name, c) in raw["curves"]?.object ?? [] {
@@ -176,21 +176,21 @@ public final class HyprConfig {
         return out
     }
 
-    /// sorted(curves().items()) — по кодовым точкам имени, как сортирует Python.
+    /// sorted(curves().items()): sort names by code point, as Python does.
     public func sortedCurves() -> [(String, Curve)] {
         let selected = raw["runtime_curve_names"]?.array.map { Set($0.compactMap(\.string)) }
         return curves().filter { selected == nil || selected!.contains($0.key) }.sorted { Array($0.key.unicodeScalars.map(\.value)).lexicographicallyPrecedes($1.key.unicodeScalars.map(\.value)) }
             .map { ($0.key, $0.value) }
     }
 
-    /// engine.anim(leaf): (номер кривой, длительность безье в с, включено). TIME_SCALE — только геометрии.
+    /// engine.anim(leaf): (curve ID, Bezier duration in seconds, enabled). TIME_SCALE affects geometry only.
     public func anim(_ leaf: String) -> (curve: Int, dur: Double, on: Bool) {
         let a = animation(leaf)
         let s = HyprConfig.geomLeaves.contains(leaf) ? timeScale : 1.0
         return (curveIDs[a.curve] ?? curveIDs["default"] ?? 0, a.speed * 0.1 * s, a.enabled && (config["animations"]?["enabled"]?.truthy ?? true))
     }
 
-    /// popin N% из style листа (re.search(r"popin\s+(\d+)", style)) -> N/100 или nil.
+    /// popin N% from the leaf style (re.search(r"popin\s+(\d+)", style)) -> N/100 or nil.
     public func popin(_ leaf: String) -> Double? {
         let style = animation(leaf).style
         guard let re = try? NSRegularExpression(pattern: "popin\\s+(\\d+)"),
@@ -199,7 +199,7 @@ public final class HyprConfig {
         return v / 100
     }
 
-    /// Правила с float (WM.float_rules).
+    /// Rules containing float (WM.float_rules).
     public var floatRules: [JSON] {
         (raw["window_rules"]?.array ?? []).filter { ($0["float"] ?? .null).truthy }
     }
