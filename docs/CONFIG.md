@@ -188,13 +188,15 @@ bind = CTRL ALT, H, focus, left
 | `match.class` | absent | `WindowProperties.matches` against owner name; `"^Calculator$"`. |
 | `match.title` | absent | `WindowProperties.matches` against title; `".*Preview.*"`. |
 | `match.role`, `match.subrole` | absent | `WindowProperties.matches` against AX role/subrole, e.g. `"^AXWindow$"` / `"^AXDialog$"`. Unknown/empty metadata never satisfies either a positive or negative match. |
-| `float` | unchanged | WM classification; `true` floats, `false` tiles when otherwise eligible. |
+| `float` | unchanged | WM classification; `true` floats, `false` permits tiling when otherwise eligible. A matched float classification is latched for that observed window lifetime in the running daemon; see below. |
 | `ignore` | `false` | `WM.ignored`/`releaseIgnored` excludes a window from management. |
 | `no_anim` | `false` | `WM.windowPolicy` suppresses core-managed move/open/hide/restore/focus animation. The Lite external-close proxy path does not currently consult this rule. |
 | `no_follow_mouse` | `false` | `WM.windowPolicy` suppresses pointer focus for that window. |
 | `opacity` | no override | `WindowProperties.opacity` → WM alpha. Number `0…1`, or up to three values for active/inactive/fullscreen, e.g. `"1 0.9 1"`; suffix a value with `override` to replace rather than multiply the global opacity. Transparency is unfinished. |
 
 At most 128 rules are accepted, each with at least one condition and regex length at most 512. Later matching rules replace earlier values for each action they specify.
+
+**Float rules are currently lifetime-latched.** Once a live window matches a float rule, changing/removing that rule or setting `float = false` does not clear its cached classification through hot reload. The explicit float toggle also does not clear this rule cache. Restarting HyprWM re-evaluates rules; separately saved explicit floating state still applies. This exception is distinct from appearance-only rule changes and other hot-reloaded values.
 
 Readable `bind` syntax uses `SUPER`/`CMD`/`COMMAND` = **Command**, `ALT`/`OPTION` = **Option**, `CTRL`/`CONTROL` = **Control**, plus `SHIFT`. At least Command, Option or Control is required. This differs from the legacy Lua baseline's modifier translation; use the actual macOS key names when editing text. Supported named keys include letters, digits, arrows, punctuation, Return, Tab, Space, Escape, Backspace and F1–F12; `code:0…127` selects a Carbon keycode.
 

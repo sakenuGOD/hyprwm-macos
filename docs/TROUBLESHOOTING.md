@@ -63,6 +63,8 @@ Use the shared text file, not a generated cache or an old JSON input. `HYPRWM_CO
 
 One invalid assignment should not discard an independent valid gap edit. Save one valid change and compare the effective value. The watcher handles atomic replacement and coalesces rapid saves. Appearance-only changes should not trigger layout geometry. If they do, include the smallest edit and the before/after rects in your report. Preserve the original file and a backup; do not repeatedly reset all preferences to diagnose one line.
 
+Float-rule classification is currently latched for an observed window lifetime in the running daemon. Removing/changing a float rule does not automatically retile an already classified window, and the float toggle does not clear that cache. See [the rule limitation](CONFIG.md#rules-and-shortcuts); restarting HyprWM re-evaluates rules, while separately saved explicit floating remains in effect.
+
 ## A shortcut does nothing
 
 Settings → Hotkeys is the effective binding list. Check duplicate chords, imported modifier translation and whether the watcher is running. Carbon runtime bindings do not require Input Monitoring; check that permission if the settings shortcut recorder cannot observe keys. Readable text bindings map `SUPER` to Command, `ALT` to Option and `CTRL` to Control. The legacy Lua defaults use a separate translation; the README lists the actual macOS keys.
