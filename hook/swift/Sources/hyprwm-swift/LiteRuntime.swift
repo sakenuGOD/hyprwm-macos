@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Darwin
 import HyprCore
 
 final class LiteRuntime {
@@ -249,6 +250,23 @@ final class LiteRuntime {
     }
     /// A dead daemon's recovery path requires no engine, hotkeys, or full WM.
     static func restoreOnly(stateDir: String) -> Never {
+        // An offline Lite restore cannot recover native Engine alpha/Space
+        // ownership. Refuse a false global success when that ledger needs work.
+        let enginePath = stateDir+"/hyprwm.state.json"
+        var engineInfo = stat()
+        if lstat(enginePath, &engineInfo) == 0 {
+            let descriptor = Darwin.open(enginePath, O_RDONLY | O_NOFOLLOW)
+            guard descriptor >= 0 else { die("restore-all: cannot safely inspect existing Engine state; start Engine mode and run restore-all") }
+            let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+            guard fstat(descriptor, &engineInfo) == 0, engineInfo.st_uid == getuid(),
+                  engineInfo.st_mode & S_IFMT == S_IFREG, engineInfo.st_mode & 0o022 == 0,
+                  engineInfo.st_size >= 0, engineInfo.st_size <= 2_097_152,
+                  let data = try? file.read(upToCount: 2_097_153), data.count <= 2_097_152,
+                  let state = try? JSON.parse(data), let hidden = state["hidden"]?.array else {
+                die("restore-all: unreadable or invalid Engine state; start Engine mode and run restore-all")
+            }
+            guard hidden.isEmpty else { die("restore-all: Engine has hidden-window records; start HYPRWM_MODE=engine and run restore-all before offline Lite recovery") }
+        } else if errno != ENOENT { die("restore-all: cannot inspect Engine recovery state") }
         let sys = LiteSys(stateDir: stateDir)
         if let error = sys.recovery.loadError { die("restore-all: \(error)") }
         if sys.recovery.records.isEmpty { print("no outstanding Lite recovery records"); exit(0) }
