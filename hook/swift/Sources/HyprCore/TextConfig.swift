@@ -35,7 +35,9 @@ public enum TextConfig {
             try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
             try Data(render(initial, configDir: configDir).utf8).write(to: file, options: .atomic)
         }
-        let data = try Data(contentsOf: file)
+        let handle = try FileHandle(forReadingFrom:file)
+        defer { try? handle.close() }
+        let data = try handle.read(upToCount:262145) ?? Data()
         guard data.count <= 262144, let text = String(data: data, encoding: .utf8) else { throw CmdError("hyprwm.conf: expected UTF-8, at most 256 KB") }
         return try parse(text, configDir: configDir)
     }
@@ -370,7 +372,7 @@ public final class ConfigFileWatcher {
     private var work: DispatchWorkItem?
     private let queue = DispatchQueue(label:"hyprwm.config.watch",qos:.userInitiated)
     public init(url: URL, onChange: @escaping () -> Void) throws {
-        file = url; accepted = try? Data(contentsOf:url)
+        file = url; accepted = Self.content(url)
         let fd = open(url.deletingLastPathComponent().path,O_EVTONLY)
         guard fd >= 0 else { throw CmdError("Cannot watch settings directory") }
         source = DispatchSource.makeFileSystemObjectSource(fileDescriptor:fd,eventMask:[.write,.rename,.delete,.attrib],queue:queue)
@@ -378,6 +380,11 @@ public final class ConfigFileWatcher {
         source.setEventHandler { [weak self] in self?.observe(onChange) }
         armFile(onChange)
         source.resume()
+    }
+    private static func content(_ url:URL) -> Data? {
+        guard let handle=try? FileHandle(forReadingFrom:url) else { return nil }
+        defer { try? handle.close() }
+        return try? handle.read(upToCount:262145)
     }
     private func armFile(_ callback: @escaping () -> Void) {
         fileSource?.cancel()
@@ -393,7 +400,7 @@ public final class ConfigFileWatcher {
         let next=DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.armFile(callback)
-            guard let data=try? Data(contentsOf:self.file),data != self.accepted else { return }
+            guard let data=Self.content(self.file),data != self.accepted else { return }
             self.accepted=data; callback()
         }
         work=next;queue.asyncAfter(deadline:.now()+0.065,execute:next)
