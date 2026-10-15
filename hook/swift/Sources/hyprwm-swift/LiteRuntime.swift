@@ -185,9 +185,24 @@ final class LiteRuntime {
             guard let self, !self.stopping else { return }
             if self.sys.now()-self.censusAt >= 0.05 {
                 self.censusAt = self.sys.now()
-                if let snapshot = try? self.sys.snapshot() { self.engine.channel.observe(snapshot) }
+                if let snapshot = try? self.sys.snapshot() {
+                    self.engine.channel.observe(snapshot)
+                    if !self.wm.enabled { self.wm.last = (snapshot.area, snapshot.space, snapshot.windows) }
+                }
             }
             self.engine.channel.advance(); self.configure?.drain(); self.wm.tick(socketReady: false)
+            // Persisted tree leaves predate this process's empty channel. Once
+            // their public AX metadata arrives, establish the missing ownership
+            // even when no layout change is needed to trigger core apply.
+            if self.wm.enabled, let last = self.wm.last {
+                let owned = Set(self.engine.channel.wins().map(\.wid))
+                let leaves = Set(Dwindle.leaves(self.wm.sp(last.space).tree).compactMap(\.wid))
+                let missing = last.wins.filter { leaves.contains($0.wid) && !owned.contains($0.wid) && $0.on && $0.space == last.space && self.wm.tileable($0) }
+                if !missing.isEmpty {
+                    for window in missing { self.wm.target[window.wid] = nil }
+                    self.wm.apply(last.area, last.space, last.wins)
+                }
+            }
             if let last = self.wm.last { self.ecosystem?.observe(windows: last.wins, space: last.space, focusedWindow: self.wm.sp(last.space).focus) }
         }
         self.timer = timer; timer.resume()
