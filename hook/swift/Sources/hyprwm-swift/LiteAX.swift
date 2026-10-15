@@ -218,10 +218,11 @@ final class LiteAX {
         return moved == .success && resized == .success ? 0 : Int((moved == .success ? resized : moved).rawValue)
     }
     func setFrame(_ pid: Int, _ wid: Int, _ frame: Rect) -> Int { perform(pid, wid) { Self.setFrame($0, $1, frame) } }
-    func setFrameAsync(_ pid: Int, _ wid: Int, _ frame: Rect, completion: @escaping (Int, Rect?) -> Void) {
+    func setFrameAsync(_ pid: Int, _ wid: Int, _ frame: Rect, deadline: Double = .infinity, completion: @escaping (Int, Rect?) -> Void) {
         guard let client = client(pid), let window = window(pid, wid) else { completion(-1, nil); return }
         client.queue.async {
-            guard Self.birth(pid) == client.birth else { DispatchQueue.main.async { completion(-1, nil) }; return }
+            guard ProcessInfo.processInfo.systemUptime < deadline,
+                  Self.birth(pid) == client.birth else { DispatchQueue.main.async { completion(-1, nil) }; return }
             let result = Self.setFrame(client.application, window.element, frame)
             let accepted = Self.frame(window.element)
             DispatchQueue.main.async { completion(result, accepted) }

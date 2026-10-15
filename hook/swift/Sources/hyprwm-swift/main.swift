@@ -101,8 +101,13 @@ if args == ["--init-config"] {
 if args == ["restore-all"] {
     let path = env["HYPRWM_CTL"] ?? "/tmp/hyprwm.ctl"
     if CommandServer.isAlive(path) {
-        do { print(try ControlClient(path: path).request("restore-all")); exit(0) }
-        catch { die("restore-all: \(error)") }
+        let deadline = ProcessInfo.processInfo.systemUptime+4
+        while true {
+            do { print(try ControlClient(path: path).request("restore-all")); exit(0) }
+            catch let error as CmdError where error.description.hasPrefix("Lite restoration pending:") && ProcessInfo.processInfo.systemUptime < deadline {
+                Thread.sleep(forTimeInterval: 0.1)
+            } catch { die("restore-all: \(error)") }
+        }
     }
     LiteRuntime.restoreOnly(stateDir: env["HYPRWM_STATE_DIR"] ?? "/tmp/hyprwm-swift")
 }

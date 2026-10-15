@@ -10,6 +10,8 @@ final class LiteRuntime {
     let sys: LiteSys, engine: LiteEngine, wm: WM
     private var formattingStatus = false, stopping = false, recovering = true
     private var recoveryEpoch = 0
+    private var restoringAll = false, restoreAllDeadline = 0.0
+    private lazy var restorePump = LiteRestorePump(sys: sys) { [weak self] wid in self?.engine.channel.recovered(wid) }
     private var timer: DispatchSourceTimer?, socketSource: DispatchSourceRead?
     private var signals: [DispatchSourceSignal] = []
     private var menu: MenuBarController?, watcher: ConfigFileWatcher?, hotkeys: LiteHotkeys?
@@ -55,12 +57,12 @@ final class LiteRuntime {
             if let error = engineRecoveryIssue { throw CmdError("restore-all: \(error)") }
             if let error = sys.recovery.loadError { throw CmdError("restore-all: \(error)") }
             recoveryEpoch += 1 // An explicit restore cancels the startup-enable callback.
-            recovering = true; wm.setEnabled(false); configure?.cancelAll(); engine.channel.prepareRecovery()
+            recovering = true; restoringAll = true; restoreAllDeadline = sys.now()+4
+            wm.setEnabled(false); configure?.cancelAll(); engine.channel.prepareRecovery()
             wm.hidden.removeAll(); wm.save()
             let remaining = restoreRecords()
-            guard remaining == 0 else { throw CmdError("restore-all: \(remaining) exact lifetime records still need AX permission or a responsive app; recovery ledger preserved") }
-            recovering = false; engine.channel.cancelMotions()
-            sys.membership.removeAll(); sys.concealed.removeAll(); wm.spaces.removeAll(); wm.target.removeAll(); wm.save()
+            guard remaining == 0 else { throw CmdError("Lite restoration pending: \(remaining) records awaiting AX acknowledgement; recovery ledger preserved") }
+            finishRestoreAll()
             return "restored every Lite window; tiling paused"
         }
         let words = try CommandArguments.parse(command)
@@ -125,24 +127,12 @@ final class LiteRuntime {
         if configuredEnabledChanged, !recovering { wm.setEnabled(options.tilingEnabled) }
         if geometryChanged, wm.enabled, let last = wm.last { wm.apply(last.area, last.space, last.wins) }
     }
-    /// Returns unresolved exact lifetimes; records are deleted only after AX ACK.
-    @discardableResult private func restoreRecords() -> Int {
-        if sys.recovery.loadError != nil { return max(1, sys.recovery.records.count) }
-        guard (try? sys.snapshot()) != nil else { return sys.recovery.records.count }
-        for record in Array(sys.recovery.records.values) {
-            if sys.processExited(record.pid) || sys.processBirth(record.pid).map({ $0 != record.birth }) == true ||
-                sys.winPidLevel(record.wid).pid.map({ $0 != record.pid }) == true { sys.recovery.remove(record.wid); engine.channel.recovered(record.wid); continue }
-            if sys.ax.confirmedClosed(record.pid, record.wid) { sys.recovery.remove(record.wid); engine.channel.recovered(record.wid); continue }
-            guard sys.processBirth(record.pid) == record.birth, sys.winPidLevel(record.wid).pid == record.pid,
-                  let frame = Rect(record.frame), sys.ax.window(record.pid, record.wid) != nil else { continue }
-            if sys.axFrame(record.pid, record.wid, frame) == 0,
-               sys.axGetFrame(record.pid, record.wid).map({ $0.maxDiff(frame) <= 8 }) == true {
-                sys.recovery.remove(record.wid); sys.concealed.remove(record.wid); sys.presentation[record.wid] = nil
-                engine.channel.recovered(record.wid)
-            }
-        }
-        return sys.recovery.records.count
+    private func finishRestoreAll() {
+        restoringAll = false; recovering = false; engine.channel.cancelMotions()
+        sys.membership.removeAll(); sys.concealed.removeAll(); wm.spaces.removeAll(); wm.target.removeAll(); wm.save()
     }
+    /// AX work is asynchronous; a bounded batch keeps paused IPC responsive.
+    @discardableResult private func restoreRecords() -> Int { restorePump.step() }
     private func recoverBeforeStart(_ ready: @escaping () -> Void) {
         recoveryEpoch += 1; let epoch = recoveryEpoch; recovering = true
         if let error = engineRecoveryIssue ?? sys.recovery.loadError { log("Lite recovery:", error, "; tiling stays paused"); return }
@@ -190,6 +180,10 @@ final class LiteRuntime {
             guard let self, !self.stopping else { return }
             if self.sys.now()-self.censusAt >= 0.05 {
                 self.censusAt = self.sys.now()
+                if self.restoringAll {
+                    if self.sys.now() >= self.restoreAllDeadline { self.restoringAll = false }
+                    else if self.restoreRecords() == 0 { self.finishRestoreAll() }
+                }
                 if let snapshot = try? self.sys.snapshot() {
                     self.engine.channel.observe(snapshot)
                     if !self.wm.enabled { self.wm.last = (snapshot.area, snapshot.space, snapshot.windows) }
@@ -235,7 +229,7 @@ final class LiteRuntime {
         application.run(); exit(0)
     }
     private func shutdown(_ completion: @escaping (Bool) -> Void) {
-        guard !stopping else { completion(false); return }; stopping = true; recovering = true; recoveryEpoch += 1
+        guard !stopping else { completion(false); return }; stopping = true; recovering = true; restoringAll = false; recoveryEpoch += 1
         pendingReload?.cancel(); wm.setEnabled(false); configure?.cancelAll(); engine.channel.prepareRecovery()
         wm.hidden.removeAll(); wm.save()
         let deadline = sys.now()+3
@@ -281,17 +275,11 @@ final class LiteRuntime {
         let application = NSApplication.shared
         application.setActivationPolicy(.accessory)
         let deadline = sys.now()+4
+        let restorePump = LiteRestorePump(sys: sys)
         let timer = DispatchSource.makeTimerSource(queue: .main)
         timer.schedule(deadline: .now(), repeating: .milliseconds(80))
         timer.setEventHandler {
-            _ = try? sys.snapshot()
-            for record in Array(sys.recovery.records.values) {
-                if sys.processExited(record.pid) || sys.processBirth(record.pid).map({ $0 != record.birth }) == true { sys.recovery.remove(record.wid); continue }
-                if sys.winPidLevel(record.wid).pid.map({ $0 != record.pid }) == true || sys.ax.confirmedClosed(record.pid, record.wid) { sys.recovery.remove(record.wid); continue }
-                guard sys.processBirth(record.pid) == record.birth, sys.winPidLevel(record.wid).pid == record.pid,
-                      let frame = Rect(record.frame), sys.ax.window(record.pid, record.wid) != nil else { continue }
-                if sys.axFrame(record.pid, record.wid, frame) == 0, sys.axGetFrame(record.pid, record.wid).map({ $0.maxDiff(frame) <= 8 }) == true { sys.recovery.remove(record.wid) }
-            }
+            _ = restorePump.step()
             if sys.recovery.records.isEmpty { print("restored every Lite recovery record"); exit(0) }
             if sys.now() >= deadline { die("restore-all: \(sys.recovery.records.count) unresolved Lite records; ledger and application preserved") }
         }
