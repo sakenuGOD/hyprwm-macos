@@ -295,8 +295,8 @@ final class LiteChannel: ChannelAPI {
         census = live
         refreshBorders()
         // A bounded in-memory image cache makes an external Cmd+W animatable.
-        for slot in slots.values.sorted(by: { $0.capturedAt < $1.capturedAt }).prefix(1)
-            where !slot.busy && slot.alpha > 0 && sys.membership[slot.wid] == sys.workspace && sys.now()-slot.capturedAt > 0.75 && capturePending.count < 2 {
+        for slot in slots.values.filter({ !$0.busy && $0.alpha > 0 && sys.membership[$0.wid] == sys.workspace && sys.now()-$0.capturedAt > 0.75 && capturePending.count < 2 })
+            .sorted(by: { $0.capturedAt < $1.capturedAt }).prefix(1) {
             guard capturePending.insert(slot.wid).inserted else { continue }
             slot.capturedAt = sys.now()
             captures.image(slot.wid, pid: slot.pid, frame: slot.presented) { [weak self, weak slot] image in
