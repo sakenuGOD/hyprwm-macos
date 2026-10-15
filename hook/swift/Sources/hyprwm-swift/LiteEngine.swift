@@ -56,6 +56,7 @@ final class LiteChannel: ChannelAPI {
     private var counters = EngStats()
     private var capturePending = Set<Int>()
     private var shuttingDown = false
+    private var releasing = Set<Int>()
     private(set) var proxyMotions = 0, directPlacements = 0, captureFailures = 0
     var widMax = 1
     init(sys: LiteSys, config: HyprConfig) throws {
@@ -100,7 +101,15 @@ final class LiteChannel: ChannelAPI {
         guard focused != wid || self.fullscreen != fullscreen else { return }
         focused = wid; self.fullscreen = fullscreen; refreshBorders()
     }
+    func prepareRelease(_ wid: Int) {
+        releasing.insert(wid); commands[wid] = nil; borders.drop(wid)
+        if let slot = slots[wid] {
+            slot.version += 1; slot.busy = false; slot.capturing = false; slot.landing = false
+            slot.forgetVersion = nil; slot.proxy?.freeze()
+        }
+    }
     func forget(_ wid: Int) {
+        guard !releasing.contains(wid) else { return }
         if let slot = slots[wid], slot.busy, slot.proxy != nil {
             // Pause can request forget before its queued AX frame is accepted.
             // Bind the release to this configure, never to a future retarget.
@@ -146,6 +155,7 @@ final class LiteChannel: ChannelAPI {
     func commit() {
         let batch = commands; commands.removeAll(keepingCapacity: true)
         for (wid, command) in batch {
+            guard !releasing.contains(wid) else { continue }
             guard let window = sys.window(wid), !sys.protectedProcess(window.pid), let birth = sys.processBirth(window.pid) else { continue }
             let fresh = slots[wid] == nil
             // Opacity refresh alone never grants workspace ownership.
@@ -310,6 +320,10 @@ final class LiteChannel: ChannelAPI {
         let live = windows.mapValues(\.rect)
         for slot in slots.values {
             if let window = windows[slot.wid] { slot.visible = window.on }
+            if releasing.contains(slot.wid) {
+                if sys.applicationHidden(slot.pid) { slot.proxy?.close(); slot.proxy = nil; sys.presentation[slot.wid] = nil }
+                continue
+            }
             if sys.applicationHidden(slot.pid), slot.proxy != nil || slot.capturing {
                 slot.proxy?.close(); slot.proxy = nil; sys.presentation[slot.wid] = nil
                 // Native app hide owns visibility. Restore the parked client
@@ -320,18 +334,23 @@ final class LiteChannel: ChannelAPI {
         for (wid, frame) in live where census[wid] == nil || census[wid]!.maxDiff(frame) > 1 && slots[wid]?.busy != true {
             queue.append(EngEvent(type: census[wid] == nil ? Ev.new : Ev.moved, wid: wid, t: sys.now(), rect: frame))
         }
-        for wid in census.keys where live[wid] == nil {
+        for wid in Set(census.keys).union(slots.keys) where live[wid] == nil {
             if let slot = slots[wid] {
+                if releasing.contains(wid) { continue } // The shared recovery callback owns this release.
+                let owner = sys.winPidLevel(wid).pid
+                let departed = sys.processExited(slot.pid) || sys.processBirth(slot.pid).map({ $0 != slot.birth }) == true ||
+                    owner.map({ $0 != slot.pid }) == true || sys.ax.confirmedClosed(slot.pid, wid) && !sys.applicationHidden(slot.pid)
+                guard departed else { borders.hide(wid); continue }
                 closeDeparture(slot)
                 slots[wid] = nil; sys.presentation[wid] = nil; sys.membership[wid] = nil; sys.concealed.remove(wid)
                 sys.recovery.remove(wid)
             }
-            queue.append(EngEvent(type: Ev.gone, wid: wid, t: sys.now(), rect: census[wid]!))
+            if let previous = census[wid] { queue.append(EngEvent(type: Ev.gone, wid: wid, t: sys.now(), rect: previous)) }
         }
         census = live
         refreshBorders()
         // A bounded in-memory image cache makes an external Cmd+W animatable.
-        for slot in slots.values.filter({ !capturePending.contains($0.wid) && $0.visible && !$0.busy && $0.alpha > 0 && sys.membership[$0.wid] == sys.workspace && sys.now()-$0.capturedAt > 0.75 && capturePending.count < 2 })
+        for slot in slots.values.filter({ census[$0.wid] != nil && !releasing.contains($0.wid) && !capturePending.contains($0.wid) && $0.visible && !$0.busy && $0.alpha > 0 && sys.membership[$0.wid] == sys.workspace && sys.now()-$0.capturedAt > 0.75 && capturePending.count < 2 })
             .sorted(by: { $0.capturedAt < $1.capturedAt }).prefix(1) {
             guard capturePending.insert(slot.wid).inserted else { continue }
             slot.capturedAt = sys.now()
@@ -345,7 +364,7 @@ final class LiteChannel: ChannelAPI {
     private func closeDeparture(_ slot: Slot) {
         let image = slot.proxy?.image ?? slot.cached, from = slot.proxy?.presented ?? slot.presented
         slot.version += 1; slot.proxy?.close(); borders.drop(slot.wid)
-        guard slot.visible, slot.alpha > 0, sys.membership[slot.wid] == sys.workspace,
+        guard !releasing.contains(slot.wid), slot.visible, slot.alpha > 0, sys.membership[slot.wid] == sys.workspace,
               !sys.concealed.contains(slot.wid), !sys.applicationHidden(slot.pid),
               let image, config.anim("windowsOut").on else { return }
         let animation = config.anim("windowsOut"), scale = config.popin("windowsOut") ?? 0.92
@@ -359,7 +378,7 @@ final class LiteChannel: ChannelAPI {
         departures.append((proxy, start+duration, slot.pid, slot.birth, sys.workspace)); proxyMotions += 1
     }
     private func updateBorder(_ slot: Slot) {
-        let visible = slot.visible && !slot.busy && slot.alpha > 0 && sys.membership[slot.wid] == sys.workspace && !sys.concealed.contains(slot.wid) && (fullscreen == 0 || fullscreen == slot.wid)
+        let visible = census[slot.wid] != nil && !releasing.contains(slot.wid) && slot.visible && !slot.busy && slot.alpha > 0 && sys.membership[slot.wid] == sys.workspace && !sys.concealed.contains(slot.wid) && (fullscreen == 0 || fullscreen == slot.wid)
         borders.update(slot.wid, frame: sys.winBounds(slot.wid) ?? slot.presented, focused: focused == slot.wid, visible: visible,
                        duration: config.anim("border").on ? config.anim("border").dur : 0)
     }
@@ -382,6 +401,7 @@ final class LiteChannel: ChannelAPI {
         for departure in departures { departure.proxy.close() }; departures.removeAll(); borders.close()
     }
     func recovered(_ wid: Int) {
+        releasing.remove(wid)
         if let slot = slots.removeValue(forKey: wid) { slot.version += 1; slot.proxy?.close() }
         sys.presentation[wid] = nil; borders.drop(wid)
     }
@@ -390,7 +410,7 @@ final class LiteChannel: ChannelAPI {
         for slot in slots.values { slot.version += 1; slot.proxy?.close() }
         for departure in departures { departure.proxy.close() }; departures.removeAll(); borders.close()
         sys.presentation.removeAll()
-        slots.removeAll()
+        slots.removeAll(); releasing.removeAll()
     }
     var capabilityStatus: JSON {
         .object([("capture", .string(captures.permitted ? "public-screencapturekit" : "permission-missing")),

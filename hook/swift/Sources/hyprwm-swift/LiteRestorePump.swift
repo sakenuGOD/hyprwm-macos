@@ -15,10 +15,11 @@ final class LiteRestorePump {
     }
     /// A rotating 16-record/8ms batch prevents one unresolved lifetime from
     /// starving others. At most two writes can be outstanding across all apps.
-    @discardableResult func step() -> Int {
+    @discardableResult func step(only selected: Set<Int>? = nil) -> Int {
         if sys.recovery.loadError != nil { return max(1, sys.recovery.records.count) }
-        guard (try? sys.snapshot()) != nil else { return sys.recovery.records.count }
-        let rows = sys.recovery.records.values.sorted { $0.wid < $1.wid }
+        func remaining() -> Int { selected.map { ids in sys.recovery.records.keys.filter(ids.contains).count } ?? sys.recovery.records.count }
+        guard (try? sys.snapshot()) != nil else { return remaining() }
+        let rows = sys.recovery.records.values.filter { selected?.contains($0.wid) ?? true }.sorted { $0.wid < $1.wid }
         guard !rows.isEmpty else { return 0 }
         let began = sys.now()
         var scanned = 0
@@ -49,6 +50,6 @@ final class LiteRestorePump {
             }
         }
         cursor = (cursor+scanned)%rows.count
-        return sys.recovery.records.count
+        return remaining()
     }
 }

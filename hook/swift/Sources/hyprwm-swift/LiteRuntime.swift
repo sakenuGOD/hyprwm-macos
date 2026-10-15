@@ -11,7 +11,19 @@ final class LiteRuntime {
     private var formattingStatus = false, stopping = false, recovering = true
     private var recoveryEpoch = 0
     private var restoringAll = false, restoreAllDeadline = 0.0
-    private lazy var restorePump = LiteRestorePump(sys: sys) { [weak self] wid in self?.engine.channel.recovered(wid) }
+    private var ignoredReleases: [Int: (record: LiteRecovery.Record, hidden: Hidden?)] = [:]
+    private lazy var restorePump = LiteRestorePump(sys: sys) { [weak self] wid in
+        guard let self else { return }
+        self.engine.channel.recovered(wid)
+        if let release = self.ignoredReleases.removeValue(forKey: wid) {
+            self.sys.membership[wid] = nil
+            if let hidden = release.hidden {
+                self.wm.hidden.removeAll { $0 == hidden }
+                if !self.wm.hidden.contains(where: { $0.wid == wid }) { self.wm.restoring.remove(wid) }
+                self.wm.save()
+            }
+        }
+    }
     private var timer: DispatchSourceTimer?, socketSource: DispatchSourceRead?
     private var signals: [DispatchSourceSignal] = []
     private var menu: MenuBarController?, watcher: ConfigFileWatcher?, hotkeys: LiteHotkeys?
@@ -48,7 +60,7 @@ final class LiteRuntime {
             let pointer = sys.pointerHit()
             return try RuntimeMode.decorate(original, mode: .lite)
                 .setting("hotkey_bindings", hotkeys?.metadata ?? .array([]))
-                .setting("lite", engine.channel.capabilityStatus.setting("focus_context", focus).setting("pointer_hit", pointer.map { .int($0.wid) } ?? .null).setting("recovery_count", .int(sys.recovery.records.count)).setting("recovery_error", (engineRecoveryIssue ?? sys.recovery.loadError).map(JSON.string) ?? .null).setting("hotkey_conflicts", .int(hotkeys?.conflicts ?? 0)))
+                .setting("lite", engine.channel.capabilityStatus.setting("focus_context", focus).setting("pointer_hit", pointer.map { .int($0.wid) } ?? .null).setting("ignored_release_count", .int(ignoredReleases.count)).setting("recovery_count", .int(sys.recovery.records.count)).setting("recovery_error", (engineRecoveryIssue ?? sys.recovery.loadError).map(JSON.string) ?? .null).setting("hotkey_conflicts", .int(hotkeys?.conflicts ?? 0)))
                 .setting("workspace_public", workspaceStatus).dumps(ensureASCII: false)
         }
         if command == "reload" { try reload(); return "configuration reloaded" }
@@ -154,11 +166,23 @@ final class LiteRuntime {
         try engine.replaceConfig(next)
         try hotkeys?.reload(configDir: hook+"/config")
         wm.cfg = next; wm.options = options; wm.floatRules = next.floatRules
+        releaseIgnoredMembers(sys.rawWindows)
         let tile = next.makeDwindle()
         wm.tile.gapsIn = tile.gapsIn; wm.tile.gapsOut = tile.gapsOut; wm.tile.defaultRatio = tile.defaultRatio
         wm.tile.splitWidthMult = tile.splitWidthMult; wm.tile.minimumPolicy = tile.minimumPolicy
         if configuredEnabledChanged, !recovering { wm.setEnabled(options.tilingEnabled) }
         if geometryChanged, wm.enabled, let last = wm.last { wm.apply(last.area, last.space, last.wins) }
+    }
+    private func releaseIgnoredMembers(_ windows: [WinInfo]) {
+        for window in windows where sys.membership[window.wid] != nil && wm.ignored(window) && ignoredReleases[window.wid] == nil {
+            guard let record = sys.recovery.records[window.wid], record.pid == window.pid,
+                  sys.processBirth(window.pid) == record.birth else { continue }
+            let hidden = wm.hidden.first { $0.wid == window.wid && $0.pid == record.pid && $0.extra["swift_birth"]?.string == record.birth }
+            ignoredReleases[window.wid] = (record, hidden); configure?.cancel(window.wid)
+            wm.target[window.wid] = nil; wm.newbies[window.wid] = nil; wm.optimistic[window.wid] = nil
+            wm.restoring.remove(window.wid); engine.channel.prepareRelease(window.wid)
+        }
+        if !ignoredReleases.isEmpty, !restoringAll, !recovering { restorePump.step(only: Set(ignoredReleases.keys)) }
     }
     private func finishRestoreAll() {
         restoringAll = false; recovering = false; engine.channel.cancelMotions()
@@ -218,6 +242,7 @@ final class LiteRuntime {
                     else if self.restoreRecords() == 0 { self.finishRestoreAll() }
                 }
                 if let snapshot = try? self.sys.snapshot() {
+                    self.releaseIgnoredMembers(snapshot.windows)
                     self.engine.channel.observe(snapshot)
                     if !self.wm.enabled { self.wm.last = (snapshot.area, snapshot.space, snapshot.windows) }
                 }

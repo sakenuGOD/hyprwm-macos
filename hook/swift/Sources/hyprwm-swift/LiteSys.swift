@@ -173,7 +173,8 @@ final class LiteSys: SysAPI {
         }
         censusLock.lock(); rawWindows = windows; censusLock.unlock()
         physicalWindows = physical
-        for pid in Set(physical.filter { $0.layer == 0 && !protectedProcess($0.pid) }.map(\.pid)) {
+        let refreshPIDs = Set(physical.filter { $0.layer == 0 && !protectedProcess($0.pid) }.map(\.pid)).union(recovery.records.values.map(\.pid))
+        for pid in refreshPIDs where !protectedProcess(pid) {
             ax.refresh(pid, rows: physical.filter { $0.pid == pid })
         }
         var result = Snapshot(space: workspace, stable: true, area: area, windows: windows)
