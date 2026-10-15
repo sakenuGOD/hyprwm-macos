@@ -19,7 +19,7 @@ func doctor(hook: String, controlPath: String) -> String {
     }
     let requested = ProcessInfo.processInfo.environment["HYPRWM_MODE"] ?? "auto"
     let mode = status?["mode"]?.string ?? status?["daemon"]?["mode"]?.string ?? status?["engine"]?["mode"]?.string
-    lines.append("Mode: \(mode ?? (status == nil ? "not running (requested: \(requested))" : "engine"))")
+    lines.append("Mode: \(mode ?? (status == nil ? "unknown (requested: \(requested); daemon status unavailable)" : "engine"))")
     lines.append("Socket: \(controlPath) — \(status == nil ? "unavailable or invalid response" : "responding")")
     func permission(_ name: String, _ granted: Bool, _ pane: String, _ purpose: String) {
         lines.append("\(name): \(granted ? "granted" : "missing") — System Settings → Privacy & Security → \(pane) (\(purpose))")
