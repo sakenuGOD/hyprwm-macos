@@ -38,6 +38,7 @@ extension WM {
     /// Internal manager migration: quiesce without revealing/forgetting any owned source.
     public func prepareHandover() -> String {
         admission?.suspend()
+        guard !engineRecoveryActive, !startupRecoveryPending else { return "handover pending: Engine recovery is active" }
         guard !sys.sessionLocked(),!sys.interactionOverlay(),overviewFrozen?() != true,
               eng.c.stats.nactive==0,eng.c.stats.holding==0,!eng.c.pending,snapshotLeases.isEmpty,liveBufferShrinks.isEmpty,
               !sys.closeBusy,silentSpaceMoves.isEmpty,restorePending.isEmpty,restoring.isEmpty else{return "handover pending: native work is active"}
@@ -46,7 +47,9 @@ extension WM {
         guard cfgSink?.idle != false,!sys.focusBusy,workspaceBusy?() != true else{return "handover pending: workers are draining"}
         dragSession=nil;activationIntent=nil;launcherIntent=nil
         activationMoves.removeAll();snapshotConfigures.removeAll();liveBufferShrinks.removeAll();later.removeAll()
+        do { try armHiddenHandover() } catch { return "handover refused: \(error)" }
         save()
+        guard recoveryStateSaved() else { hiddenHandover = nil; return "handover refused: state was not saved" }
         return "handover ready: state preserved; terminate this exact process with SIGHUP"
     }
     func hiddenRecordLive(_ record: Hidden) -> Bool {
@@ -62,7 +65,12 @@ extension WM {
 
     /// Pause keeps the current presentation until the client accepts that frame.
     public func setEnabled(_ on: Bool) {
+        if !on { engineRecoveryResume = false }
         guard enabled != on else { return }
+        if on {
+            guard !engineRecoveryActive else { return }
+            guard disarmHiddenHandover() else { log("resume: handover state was not saved"); return }
+        }
         pauseEpoch+=1
         enabled=on
         if !on {
@@ -75,6 +83,7 @@ extension WM {
             dragSession = nil
             activationIntent = nil; activationMoves.removeAll(); silentSpaceMoves.removeAll(); restorePending.removeAll()
             cancelLauncherTransfers()
+            pauseLandingWitnesses.removeAll()
             let c = eng.c
             let hiddenIDs=Set(hidden.map(\.wid)),slots=Dictionary(c.wins().map{($0.wid,$0)},uniquingKeysWith:{first,_ in first})
             var jobs:[CfgJob]=[]
@@ -84,6 +93,7 @@ extension WM {
                     c.alpha(wid,1,0,0);c.forget(wid);continue
                 }
                 let frame=slot.visible
+                pauseLandingWitnesses[wid] = PauseLandingWitness(pid:pid,birth:birth,frame:frame)
                 c.geom(wid,frame,16,16,dpos:0,dsize:0,frm:frame,move:true,warp:true,stretch:false)
                 c.alpha(wid,1,16,0)
                 if slot.real.maxDiff(frame)<=1 {c.forget(wid);continue}
@@ -97,6 +107,7 @@ extension WM {
             cfgSink?.submit(jobs)
             save()
         } else {
+            pauseLandingWitnesses.removeAll()
             cfgSink?.cancelAll()
             lastSnap = 0; rescued = false
         }
@@ -107,6 +118,9 @@ extension WM {
             guard let self,!self.enabled,self.pauseEpoch==epoch,!self.sys.sessionLocked(),
                   self.sys.processBirth(pid)==birth,self.sys.winPidLevel(wid).pid==pid else{return}
             let actual=self.sys.winBounds(wid)
+            if self.engineRecoveryActive && actual.map({$0.maxDiff(frame)<=TOL}) != true && self.sys.now()>=deadline {
+                return // Recovery retains B until physical A ACK; never timeout-forget.
+            }
             if actual.map({$0.maxDiff(frame)<=TOL})==true || self.sys.now()>=deadline {
                 self.cfgSink?.cancel(wid)
                 self.eng.c.forget(wid);self.eng.c.commit()

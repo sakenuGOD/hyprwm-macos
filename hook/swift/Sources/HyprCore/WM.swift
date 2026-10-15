@@ -206,6 +206,12 @@ public final class WM {
     var lastEng: Double
     var wasDown = false
     var rescued = false
+    var hiddenHandover: JSON?
+    var startupRecoveryPending = false, startupKeepHidden = false
+    var engineRecoveryActive = false, engineRecoveryResume = false
+    var engineRecoveryDeadline = 0.0, engineRecoveryCursor = 0
+    var engineRecoveryWork: [Int: EngineRecoveryWork] = [:]
+    var pauseLandingWitnesses: [Int: PauseLandingWitness] = [:]
     var lastGuard = 0.0
     public var last: (area: Rect, space: Int, wins: [WinInfo])?
     var lastSnap = 0.0
@@ -219,6 +225,7 @@ public final class WM {
         self.statePath = statePath; self.minsizePath = minsizePath; self.cfgSink = cfgSink
         lastEng = sys.now()
         if let d = FileManager.default.contents(atPath: statePath), let st = try? JSON.parse(d) {
+            hiddenHandover = st["handover"].flatMap { $0.isNull ? nil : $0 }
             for (k, v) in st["spaces"]?.object ?? [] { spaces[k] = SpaceState.from(v) }
             floating = Set((st["floating"]?.array ?? []).compactMap(\.int))
             for hj in st["hidden"]?.array ?? [] {                  // deduplicate (old bug: hiding already-hidden windows)
@@ -226,6 +233,7 @@ public final class WM {
                 if hidden.allSatisfy({ $0.wid != h.wid }) { hidden.append(h) }
             }
         }
+        startupRecoveryPending = !hidden.isEmpty || hiddenHandover != nil
         if let d = FileManager.default.contents(atPath: minsizePath), let m = try? JSON.parse(d) {
             for (k, v) in m.object ?? [] { mins[k] = v.array ?? [.int(0), .int(0)] }
         }
@@ -239,9 +247,10 @@ public final class WM {
 
     // State
     public var stateJSON: JSON {
-        .object([("spaces", .object(spaces.map { ($0.0, $0.1.json) })),
+        let state = JSON.object([("spaces", .object(spaces.map { ($0.0, $0.1.json) })),
                  ("floating", .array(floating.sorted().map { .int($0) })),
                  ("hidden", .array(hidden.map(\.json)))])
+        return hiddenHandover.map { state.setting("handover", $0) } ?? state
     }
     public var minsJSON: JSON { .object(mins.map { ($0.0, .array($0.1)) }) }
 
@@ -757,7 +766,16 @@ public final class WM {
             return result
         }
         if cmd == "pause" { setEnabled(false); return "paused" }
-        if cmd == "resume" { setEnabled(true); return "enabled" }
+        if cmd == "restore-all" {
+            guard a.count == 1 else { throw CmdError("restore-all: no arguments expected") }
+            return options.production ? try engineRestoreAll() : rescue(area, space, wins)
+        }
+        if cmd == "resume" {
+            guard !engineRecoveryActive else { throw CmdError("Engine restoration pending: retry restore-all") }
+            setEnabled(true)
+            guard enabled else { throw CmdError("resume: handover state was not saved") }
+            return "enabled"
+        }
         if cmd == "handover" { return prepareHandover() }
         guard enabled else { return "paused: use resume" }
         if options.production,["ws","workspace","wsstep"].contains(cmd) {return workspaceCommand(a,space)}
@@ -855,7 +873,7 @@ public final class WM {
         ])
         return options.production ? result.setting("overview",overviewStatus?() ?? .object([("bound",.bool(false))])).setting("enabled", .bool(enabled)).setting("runtime", .string("swift"))
             .setting("daemon",.object([("pid",.int(Int(getpid()))),("runtime",.string("swift")),("version",.string("swift-native-20261014.1"))]))
-            .setting("visibility", .object([("restore_pending",.array(restorePending.keys.sorted().map(JSON.int))), ("restoring",.array(restoring.sorted().map(JSON.int)))]))
+            .setting("visibility", .object([("restore_pending",.array(Set(restorePending.keys).union(engineRecoveryWork.keys).union(pauseLandingWitnesses.keys).sorted().map(JSON.int))), ("restoring",.array(restoring.sorted().map(JSON.int))), ("engine_recovery_active",.bool(engineRecoveryActive))]))
             .setting("close",closeMetrics.setting("pending",.array(closeRequests.keys.sorted().map(JSON.int))).setting("worker_busy",.bool(sys.closeBusy)))
             .setting("first_map",admission?.status ?? .object([("published",.bool(false))]))
             .setting("launcher",launcherStatus)
@@ -950,23 +968,31 @@ public final class WM {
         let birth=options.production ? sys.processBirth(w.pid):nil
         let parts=birth?.split(separator:":").compactMap{Int($0)} ?? []
         if options.production && (parts.count != 3 || parts[0] != w.pid || parts[1]<=0 || !(0..<1_000_000).contains(parts[2])) {return "hide refused: exact native birth unavailable"}
-        if options.production { cfgSink?.cancel(w.wid) }
-        if options.production {revokeSnapshotLease(w.wid);if focusPending?.wid==w.wid{cancelFocusRecovery()}}
         let wid = w.wid
         if hidden.contains(where: { $0.wid == wid }) { return "already hidden \(wid)" }
-        restoring.remove(wid)
         let s = sp(space)
         let rect = eng.real()[wid] ?? w.rect
         let wasTiled = s.tree?.contains(wid) == true
-        s.tree = options.production ? tile.removeReorientingPromoted(s.tree,wid,in:area) : Dwindle.remove(s.tree,wid)
-        if s.full == wid { s.full = nil }
-        target[wid] = nil
         var record = Hidden(wid: wid, pid: w.pid, owner: w.owner, space: space, rect: rect.arr)
         if options.production, let birth {
             record.extra = .object([("swift_birth",.string(birth)),("generation",.array([.int(w.pid),.int(Int(getuid())),.int(parts[1]),.int(parts[2])])),
                 ("hidden_at",.double(Date().timeIntervalSince1970)),("tiled",.bool(wasTiled))])
         }
         hidden.append(record)
+        // The durable identity-bound intent precedes any invisible native publication.
+        if options.production && saveEnabled {
+            save()
+            guard recoveryStateSaved() else {
+                hidden.removeAll { $0 == record }
+                return "hide refused: hidden ledger was not saved"
+            }
+        }
+        restoring.remove(wid)
+        if options.production { cfgSink?.cancel(w.wid) }
+        if options.production {revokeSnapshotLease(w.wid);if focusPending?.wid==w.wid{cancelFocusRecovery()}}
+        s.tree = options.production ? tile.removeReorientingPromoted(s.tree,wid,in:area) : Dwindle.remove(s.tree,wid)
+        if s.full == wid { s.full = nil }
+        target[wid] = nil
         let (foC, foD, foOn) = eng.anim("fadeOut")
         let fadeHide = foOn && (!options.production || !windowPolicy(w).noAnimation)
         eng.c.alpha(wid, 0.0, fadeHide ? foC : (options.production ? 16 : foC), fadeHide ? foD : 0.0)
@@ -1419,7 +1445,11 @@ public final class WM {
     /// socketReady: a command arrived on the socket (Python: select returned the socket).
     public func tick(socketReady r: Bool) {
         if (r || options.production), let l = last { server?.drain { try self.command($0, l.area, l.space, l.wins) } }   // commands run immediately, before the snapshot
-        if options.production {pruneDepartedHidden()}
+        if options.production {
+            pruneDepartedHidden()
+            pollEngineRecovery()
+            if engineRecoveryActive { admission?.suspend(); return }
+        }
         if enabled {overviewRefresh?()}
         let overviewActive=overviewFrozen?() == true
         if options.production {updateOverviewOwnership(active:overviewActive)}

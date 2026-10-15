@@ -34,7 +34,7 @@ extension WM {
         }
     }
     public var shutdownDrained:Bool {
-        !enabled && hidden.isEmpty && restorePending.isEmpty && restoring.isEmpty && cfgQ.isEmpty &&
+        !enabled && !engineRecoveryActive && pauseLandingWitnesses.isEmpty && hidden.isEmpty && restorePending.isEmpty && restoring.isEmpty && cfgQ.isEmpty &&
             cfgSink?.idle != false && !sys.closeBusy && !sys.focusBusy && !sys.transferFocusBusy && workspaceBusy?() != true && !eng.c.pending && eng.c.stats.holding == 0
     }
     func restoreHidden(_ area: Rect, _ destination: Int?, _ windows: [WinInfo]?, everything: Bool, which: HiddenPick?) -> String {

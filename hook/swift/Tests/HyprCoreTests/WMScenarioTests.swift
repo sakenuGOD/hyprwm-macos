@@ -126,6 +126,7 @@ final class FakeChannel: ChannelAPI {
     func snapshotGeometry(_ wid:Int,to:Rect,curves:(Int,Int),durations:(Double,Double),from:Rect?) -> Bool {
         guard snapshotEnabled else{return false};snapshotRequests.append(wid);if let batchAfterEnqueue {batchTime=batchAfterEnqueue};return true
     }
+    var beforeAlpha: ((Int,Double)->Void)?
     var ops: [JSON] = []
     var eng: [EngWin] = []
     var evs: [EngEvent] = []
@@ -146,7 +147,7 @@ final class FakeChannel: ChannelAPI {
                             ("dpos", .double(dpos)), ("dsize", .double(dsize)), ("move", .bool(move)),
                             ("stretch", .bool(stretch))]))
     }
-    func alpha(_ wid: Int, _ a: Double, _ curve: Int, _ dur: Double, frm: Double?) {
+    func alpha(_ wid: Int, _ a: Double, _ curve: Int, _ dur: Double, frm: Double?) { beforeAlpha?(wid,a);
         ops.append(.object([("op", .string("alpha")), ("wid", .int(wid)), ("a", .double(a)), ("curve", .int(curve)),
                             ("dur", .double(dur)), ("frm", frm.map { .double($0) } ?? .null)]))
     }

@@ -152,7 +152,7 @@ def restore_all():
     deadline = time.monotonic() + 4
     while True:
         response = request('restore-all')
-        if not response.startswith('error: Lite restoration pending:') or time.monotonic() >= deadline:
+        if not response.startswith(('error: Lite restoration pending:', 'error: Engine restoration pending:')) or time.monotonic() >= deadline:
             return response
         time.sleep(0.1)
 
@@ -184,7 +184,7 @@ def uninstall(offline):
             current = status()
             if current is None:
                 raise RuntimeError('Daemon disconnected before restoration was confirmed; installation preserved')
-            if current.get('hidden') == [] and current.get('engine', {}).get('holding', 0) == 0:
+            if current.get('hidden') == [] and current.get('engine', {}).get('holding', 0) == 0 and current.get('visibility', {}).get('engine_recovery_active') is not True:
                 break
             time.sleep(0.05)
         else:

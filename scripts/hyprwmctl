@@ -44,7 +44,7 @@ while :; do
     response=$(printf '%s\n' "$command" | /usr/bin/nc -U -w 5 "$socket") || fail "daemon connection failed"
     [ -n "$response" ] || fail "daemon returned no response"
     case "$operation:$response" in
-        restore-all:'error: Lite restoration pending:'*)
+        restore-all:'error: Lite restoration pending:'*|restore-all:'error: Engine restoration pending:'*)
             [ "$(date +%s)" -lt "$restore_deadline" ] || break
             sleep 0.1 ;;
         *) break ;;

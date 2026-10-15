@@ -37,7 +37,7 @@ final class ShutdownCoordinator {
                 guard self.timer != nil, self.epoch == expectedEpoch else { return }
                 guard ready else { return };self.overviewReady=true
                 self.witnesses=self.wm.shutdownWitnesses()
-                self.wm.setEnabled(false);self.wm.save()
+                self.wm.requestEngineRecovery();self.wm.save()
             }
             return
         }

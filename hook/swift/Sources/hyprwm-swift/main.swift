@@ -206,9 +206,11 @@ if env["HYPRWM_NO_DECO"] == "1" {
 } else {
     do { deco = try Deco(hook: hook) } catch { log("decoration helper unavailable:", error); deco = NullDeco() }
 }
+do { try EngineStatePreflight.check(stateDir + "/hyprwm.state.json") } catch { die("Engine state: \(error)") }
 let wm = WM(sys: sys, eng: eng, deco: deco, cfg: cfg, statePath: stateDir + "/hyprwm.state.json",
             minsizePath: stateDir + "/minsize_app.json")
 do { wm.options = try RuntimeOptions.load(configDir: hook + "/config") } catch { die("Swift configuration: \(error)") }
+do { try wm.prepareStartupRecovery() } catch { die("startup recovery: \(error)") }
 wm.controlHandler = { command in
     guard command == "reload" else { return nil }
     let base = try HyprConfig.load(configDir: hook + "/config", rebuild: false, timeScale: timeScale)
