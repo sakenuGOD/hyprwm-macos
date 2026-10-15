@@ -81,7 +81,7 @@ struct SettingsRootView: View {
     private var general: some View {
         Group {
             Section {
-                HStack { VStack(alignment:.leading,spacing:5) {Text("Tiling").font(.headline);Text("Arrange windows automatically.").foregroundStyle(.secondary)};Spacer();Toggle("",isOn:Binding(get:{store.enabled},set:{store.set("runtime.enabled",$0)})).labelsHidden().toggleStyle(.switch).disabled(!store.connected) }
+                HStack { VStack(alignment:.leading,spacing:5) {Text("Tiling").font(.headline);Text("Arrange windows automatically.").foregroundStyle(.secondary)};Spacer();Toggle("",isOn:Binding(get:{store.enabled},set:{store.setTiling($0)})).labelsHidden().toggleStyle(.switch).disabled(!store.connected) }
                 HStack {Label("Accessibility",systemImage:store.trusted ? "checkmark.shield.fill":"hand.raised.fill").foregroundStyle(store.trusted ? .green:.primary);Spacer();Text(store.trusted ? "Granted":"Permission Required").foregroundStyle(.secondary);if !store.trusted {Button("Grant Access"){store.requestAccess()}}}
             }
             Section("System") {
