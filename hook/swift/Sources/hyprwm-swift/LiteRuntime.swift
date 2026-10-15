@@ -6,6 +6,7 @@ import HyprCore
 final class LiteRuntime {
     let hook: String, controlPath: String, stateDir: String
     let environment: [String: String]
+    let engineRecoveryIssue: String?
     let sys: LiteSys, engine: LiteEngine, wm: WM
     private var formattingStatus = false, stopping = false, recovering = true
     private var recoveryEpoch = 0
@@ -18,6 +19,7 @@ final class LiteRuntime {
     private var observer: NSObjectProtocol?
     init(hook: String, config: HyprConfig, controlPath: String, stateDir: String, environment: [String: String]) throws {
         self.hook = hook; self.controlPath = controlPath; self.stateDir = stateDir; self.environment = environment
+        engineRecoveryIssue = Self.engineRecoveryProblem(stateDir: stateDir)
         sys = LiteSys(stateDir: stateDir); engine = try LiteEngine(sys: sys, config: config)
         wm = WM(sys: sys, eng: engine, deco: NullDeco(), cfg: config, statePath: stateDir+"/lite.state.json", minsizePath: stateDir+"/lite-minsize.json")
         wm.options = try RuntimeOptions.load(configDir: hook+"/config", environment: environment)
@@ -44,12 +46,13 @@ final class LiteRuntime {
             let pointer = sys.pointerHit()
             return try RuntimeMode.decorate(original, mode: .lite)
                 .setting("hotkey_bindings", hotkeys?.metadata ?? .array([]))
-                .setting("lite", engine.channel.capabilityStatus.setting("focus_context", focus).setting("pointer_hit", pointer.map { .int($0.wid) } ?? .null).setting("recovery_count", .int(sys.recovery.records.count)).setting("recovery_error", sys.recovery.loadError.map(JSON.string) ?? .null).setting("hotkey_conflicts", .int(hotkeys?.conflicts ?? 0)))
+                .setting("lite", engine.channel.capabilityStatus.setting("focus_context", focus).setting("pointer_hit", pointer.map { .int($0.wid) } ?? .null).setting("recovery_count", .int(sys.recovery.records.count)).setting("recovery_error", (engineRecoveryIssue ?? sys.recovery.loadError).map(JSON.string) ?? .null).setting("hotkey_conflicts", .int(hotkeys?.conflicts ?? 0)))
                 .setting("workspace_public", workspaceStatus).dumps(ensureASCII: false)
         }
         if command == "reload" { try reload(); return "configuration reloaded" }
         if command == "resume", recovering { throw CmdError("resume refused: complete restore-all before resuming Lite tiling") }
         if command == "restore-all" {
+            if let error = engineRecoveryIssue { throw CmdError("restore-all: \(error)") }
             if let error = sys.recovery.loadError { throw CmdError("restore-all: \(error)") }
             recoveryEpoch += 1 // An explicit restore cancels the startup-enable callback.
             recovering = true; wm.setEnabled(false); configure?.cancelAll(); engine.channel.prepareRecovery()
@@ -142,7 +145,7 @@ final class LiteRuntime {
     }
     private func recoverBeforeStart(_ ready: @escaping () -> Void) {
         recoveryEpoch += 1; let epoch = recoveryEpoch; recovering = true
-        if let error = sys.recovery.loadError { log("Lite recovery:", error, "; tiling stays paused"); return }
+        if let error = engineRecoveryIssue ?? sys.recovery.loadError { log("Lite recovery:", error, "; tiling stays paused"); return }
         let deadline = sys.now()+3
         func attempt() {
             guard self.recoveryEpoch == epoch, !self.stopping else { return }
@@ -248,25 +251,29 @@ final class LiteRuntime {
         }
         attempt()
     }
-    /// A dead daemon's recovery path requires no engine, hotkeys, or full WM.
-    static func restoreOnly(stateDir: String) -> Never {
-        // An offline Lite restore cannot recover native Engine alpha/Space
-        // ownership. Refuse a false global success when that ledger needs work.
+    /// A mode switch cannot adopt native alpha/Space ownership through AX.
+    /// Inspect only bounded, owner-controlled state; never rewrite its ledger.
+    static func engineRecoveryProblem(stateDir: String) -> String? {
         let enginePath = stateDir+"/hyprwm.state.json"
         var engineInfo = stat()
         if lstat(enginePath, &engineInfo) == 0 {
             let descriptor = Darwin.open(enginePath, O_RDONLY | O_NOFOLLOW)
-            guard descriptor >= 0 else { die("restore-all: cannot safely inspect existing Engine state; start Engine mode and run restore-all") }
+            guard descriptor >= 0 else { return "cannot safely inspect existing Engine state; start Engine mode and run restore-all" }
             let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
             guard fstat(descriptor, &engineInfo) == 0, engineInfo.st_uid == getuid(),
                   engineInfo.st_mode & S_IFMT == S_IFREG, engineInfo.st_mode & 0o022 == 0,
                   engineInfo.st_size >= 0, engineInfo.st_size <= 2_097_152,
                   let data = try? file.read(upToCount: 2_097_153), data.count <= 2_097_152,
                   let state = try? JSON.parse(data), let hidden = state["hidden"]?.array else {
-                die("restore-all: unreadable or invalid Engine state; start Engine mode and run restore-all")
+                return "unreadable or invalid Engine state; start Engine mode and run restore-all"
             }
-            guard hidden.isEmpty else { die("restore-all: Engine has hidden-window records; start HYPRWM_MODE=engine and run restore-all before offline Lite recovery") }
-        } else if errno != ENOENT { die("restore-all: cannot inspect Engine recovery state") }
+            guard hidden.isEmpty else { return "Engine has hidden-window records; start HYPRWM_MODE=engine and run restore-all before selecting Lite" }
+        } else if errno != ENOENT { return "cannot inspect Engine recovery state; start Engine mode and run restore-all" }
+        return nil
+    }
+    /// A dead daemon's recovery path requires no engine, hotkeys, or full WM.
+    static func restoreOnly(stateDir: String) -> Never {
+        if let error = engineRecoveryProblem(stateDir: stateDir) { die("restore-all: \(error)") }
         let sys = LiteSys(stateDir: stateDir)
         if let error = sys.recovery.loadError { die("restore-all: \(error)") }
         if sys.recovery.records.isEmpty { print("no outstanding Lite recovery records"); exit(0) }
