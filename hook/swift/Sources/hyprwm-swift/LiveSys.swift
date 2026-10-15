@@ -34,6 +34,7 @@ final class LiveSys: SysAPI {
     private var presencePending:[Int:UInt64]=[:]
     private var presenceSequence:UInt64=0
     private var focusSequence=0,focusWorkers=0
+    private var floatRestackPending=false,floatRestackAt=0.0
     private var focusCovers:[Int:FocusCoverStamp]=[:]
     func setFocusCover(_ value:FocusCoverStamp?,wid:Int) {focusLock.lock();focusCovers[wid]=value;focusLock.unlock()}
     private func focusCover(_ request:FocusRequest) -> FocusCoverStamp? {
@@ -75,6 +76,52 @@ final class LiveSys: SysAPI {
         guard size>0,size<=buffer.count else{throw CmdError("bounded independent focus census unavailable")}
         return try buffer.withUnsafeBufferPointer{pointer in Snapshot.parse(try JSON.parse(Array(UnsafeRawBufferPointer(start:pointer.baseAddress,count:Int(size))))) }
     }
+    // AXRaise only restores stacking; it must never select the floating window as key.
+    private func raiseAppFloats(_ tile:WinInfo,space:Int,windows:[WinInfo],birth:String,current:()->Bool) {
+        func valid() -> Bool {current() && activeSpace()==UInt64(space) && !sessionLocked() && !interactionOverlay() &&
+            !mouseDown() && frontPid()==tile.pid && processBirth(tile.pid)==birth && winPidLevel(tile.wid).pid==tile.pid}
+        guard space>0,valid(),nativeFocusContext(tile.pid).wid==tile.wid,
+              let fresh=try? focusSnapshot(),fresh.stable,!fresh.locked,fresh.spaceType==0,fresh.space==space,
+              fresh.windows.contains(where:{$0.wid==tile.wid && $0.pid==tile.pid && $0.on && $0.space==space}) else{return}
+        let liveIDs=Set(fresh.windows.filter{$0.on && $0.space==space && $0.pid==tile.pid && $0.alpha>=0.05}.map(\.wid))
+        // Reverse census order preserves the relative order of sibling floats.
+        for window in windows.reversed() where window.pid==tile.pid && window.wid != tile.wid && window.on &&
+            window.space==space && window.layer==0 && window.alpha>=0.05 && !window.nativeFullscreen && liveIDs.contains(window.wid) {
+            let flags=Int(ax_window_flags(Int32(window.pid),UInt32(window.wid)))
+            // Only positive AX float evidence qualifies. Missing AX is never permission to raise.
+            guard flags>=0,flags & (1<<7)==0,
+                  flags & ((1<<3)|(1<<4)|(1<<5)|(1<<6)) != 0 || flags & (1<<0) != 0 && flags & (1<<2)==0 else{continue}
+            guard valid(),winPidLevel(window.wid).pid==tile.pid else{return}
+            let context=nativeFocusContext(tile.pid)
+            guard context.wid==tile.wid,context.flags & (NativeFocusFlags.menu|NativeFocusFlags.unknown|NativeFocusFlags.fullscreen)==0 else{return}
+            _=ax_raise(Int32(tile.pid),UInt32(window.wid))
+        }
+    }
+    func preserveAppFloats(_ tile:WinInfo,space:Int,windows:[WinInfo]) {
+        guard space>0,let birth=processBirth(tile.pid),!protectedProcess(tile.pid) else{return}
+        focusLock.lock()
+        guard !floatRestackPending,now()-floatRestackAt>=0.1 else{focusLock.unlock();return}
+        floatRestackPending=true;floatRestackAt=now();let sequence=focusSequence;focusLock.unlock()
+        focusQueue.async {[weak self] in
+            guard let self else{return}
+            defer{self.focusLock.lock();self.floatRestackPending=false;self.focusLock.unlock()}
+            self.raiseAppFloats(tile,space:space,windows:windows,birth:birth) {
+                self.focusLock.lock();defer{self.focusLock.unlock()};return self.focusSequence==sequence
+            }
+        }
+    }
+    private func redirectTargetModal(_ request:FocusRequest,context:(wid:Int?,flags:Int),source:Int?,allowed:()->Bool) throws {
+        guard request.reason == .keyboard,context.flags & (NativeFocusFlags.menu|NativeFocusFlags.unknown|NativeFocusFlags.fullscreen)==0,
+              context.flags & (NativeFocusFlags.modal|NativeFocusFlags.child) != 0,let wid=context.wid,wid != request.wid,
+              let window=try focusSnapshot().windows.first(where:{$0.wid==wid && $0.pid==request.pid && $0.on &&
+                  $0.space==request.space && $0.layer==0 && $0.alpha>=0.05 && !$0.nativeFullscreen}) else{return}
+        let flags=Int(ax_window_flags(Int32(request.pid),UInt32(wid)))
+        guard flags>=0,flags & ((1<<3)|(1<<4)|(1<<5)|(1<<6)) != 0,allowed(),
+              activeSpace()==UInt64(request.space),frontPid()==source,winPidLevel(wid).pid==request.pid else{return}
+        let fresh=nativeFocusContext(request.pid)
+        guard fresh.wid==context.wid,fresh.flags==context.flags,allowed() else{return}
+        _=axFocus(window.pid,window.wid,raise:true)
+    }
     func requestFocus(_ request:FocusRequest,completion:@escaping(Bool)->Void) {
         focusLock.lock();focusSequence+=1;let sequence=focusSequence;focusWorkers+=1;focusLock.unlock()
         focusQueue.async {[weak self] in
@@ -98,7 +145,11 @@ final class LiveSys: SysAPI {
                 guard context.flags&NativeFocusFlags.positive==0 else{return}
                 let sourcePrimary=context.wid.map{key in source.map{self.axTileable($0,key)==1} ?? false} ?? true
                 let targetContext=source==request.pid ? context:self.nativeFocusContext(request.pid)
-                guard request.targetAllows(targetContext),self.axTileable(request.pid,request.wid)==1,allowed() else{return}
+                guard request.targetAllows(targetContext) else {
+                    try self.redirectTargetModal(request,context:targetContext,source:source,allowed:allowed)
+                    return
+                }
+                guard self.axTileable(request.pid,request.wid)==1,allowed() else{return}
                 var first=try self.focusSnapshot(),cover=self.focusCover(request)
                 // A close fallback may be queued just before its final-layout
                 // snapshot ACQUIRED receipt. Wait briefly for real authority.
@@ -128,6 +179,9 @@ final class LiveSys: SysAPI {
                     self.focusLock.lock()
                     self.contextCache[request.pid]=(request.birth,self.now(),actual.wid,actual.flags)
                     self.focusLock.unlock()
+                    if let tile=second.windows.first(where:{$0.wid==request.wid && $0.pid==request.pid}) {
+                        self.raiseAppFloats(tile,space:request.space,windows:second.windows,birth:request.birth,current:current)
+                    }
                 }
             }catch{return}
         }

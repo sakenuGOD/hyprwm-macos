@@ -146,7 +146,9 @@ static unsigned focus_window_context(AXUIElementRef el) {
     AXUIElementSetMessagingTimeout(el, 0.05f);
     copy_attrs(el, keys, 6, values);
     unsigned context = 0;
-    if (!value_is(values[0], kAXWindowRole) || !value_is(values[1], kAXStandardWindowSubrole))
+    if (!values[0]) context |= AXWM_FOCUS_UNKNOWN;
+    else if (!value_is(values[0], kAXWindowRole) ||
+             (values[1] && !value_is(values[1], kAXStandardWindowSubrole)))
         context |= AXWM_FOCUS_TRANSIENT;
     if (value_is(values[2], kCFBooleanTrue)) context |= AXWM_FOCUS_MODAL;
     if (values[3]) {
@@ -170,7 +172,9 @@ static unsigned element_flags(AXUIElementRef el, int include_resize) {
     CFTypeRef role = copy_attr(el, kAXRoleAttribute), subrole = copy_attr(el, kAXSubroleAttribute);
     if (value_is(role, kAXWindowRole)) flags |= AXWM_WINDOW;
     if (value_is(role, kAXSheetRole)) flags |= AXWM_SHEET | AXWM_TRANSIENT;
+    if (value_is(role, CFSTR("AXDialog"))) flags |= AXWM_DIALOG | AXWM_TRANSIENT;
     if (value_is(subrole, kAXStandardWindowSubrole)) flags |= AXWM_STANDARD;
+    else if (subrole && (flags & AXWM_WINDOW)) flags |= AXWM_TRANSIENT;
     if (value_is(subrole, kAXDialogSubrole) || value_is(subrole, kAXSystemDialogSubrole))
         flags |= AXWM_DIALOG | AXWM_TRANSIENT;
     if (role) CFRelease(role);
@@ -187,6 +191,16 @@ static unsigned element_flags(AXUIElementRef el, int include_resize) {
         if (parent_role) CFRelease(parent_role);
         CFRelease(parent);
     }
+    // Some AX providers attach a dialog through AXWindow rather than AXParent.
+    // A top-level window refers to itself; only a distinct owning window is transient evidence.
+    CFTypeRef owning = copy_attr(el, kAXWindowAttribute);
+    if (owning && CFGetTypeID(owning) == AXUIElementGetTypeID() && !CFEqual(owning, el)) {
+        CGWindowID own_id = 0, self_id = 0;
+        _AXUIElementGetWindow((AXUIElementRef)owning, &own_id);
+        _AXUIElementGetWindow(el, &self_id);
+        if (own_id && own_id != self_id) flags |= AXWM_TRANSIENT;
+    }
+    if (owning) CFRelease(owning);
     Boolean settable = false;
     if (include_resize && AXUIElementIsAttributeSettable(el, kAXSizeAttribute, &settable) == kAXErrorSuccess && settable)
         flags |= AXWM_RESIZABLE;
@@ -333,6 +347,16 @@ void ax_forget(unsigned wid) {
 extern CGError _SLPSSetFrontProcessWithOptions(ProcessSerialNumber *psn, uint32_t wid, uint32_t mode);
 extern CGError SLPSPostEventRecordTo(ProcessSerialNumber *psn, uint8_t *bytes);
 extern OSStatus GetProcessForPID(pid_t pid, ProcessSerialNumber *psn);
+
+// Raising preserves the application's key/main selection: no activation or focus setter.
+int ax_raise(int pid, unsigned wid) {
+    AXUIElementRef el = lookup(pid, wid, 0);
+    if (!el) return -1;
+    AXUIElementSetMessagingTimeout(el, 0.05f);
+    AXError error = AXUIElementPerformAction(el, kAXRaiseAction);
+    CFRelease(el);
+    return error;
+}
 
 int ax_focus(int pid, unsigned wid, int raise) {
     ProcessSerialNumber psn = {0, 0};
