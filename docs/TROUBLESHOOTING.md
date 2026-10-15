@@ -30,6 +30,8 @@ This is the recovery entry point for HyprWM-owned hidden/parked windows. Read an
 
 Do not kill WindowServer, Dock or the affected application to recover a HyprWM window. Do not delete the state ledger, force a window alpha globally, or overwrite the configuration while diagnosing ownership. If recovery refuses a stale or reused window identity, report the exact refusal and keep the state for inspection.
 
+If Lite starts paused with `lite.recovery_error` reporting Engine hidden-window records, its public AX recovery cannot restore the native Engine's alpha/Space ownership. Start the matching Engine runtime and finish `restore-all` there before selecting Lite. Keep the Engine resources and state until that succeeds. New installations without Engine records do not need this step. A successful Lite recovery does not establish global recovery of another mode's records.
+
 ## Focus does not follow the mouse
 
 Confirm the session is enabled and `focus.follow_mouse = 1` in the effective configuration:

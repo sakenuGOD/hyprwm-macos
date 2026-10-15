@@ -83,7 +83,9 @@ Engine changes the system's security posture and loads code into WindowServer th
 
 ### Returning from Engine to Lite
 
-First restore managed windows and quit HyprWM normally. Stop any engine auto-injection helper installed by your development setup. A loaded WindowServer library is removed by a normal reboot; do not kill WindowServer to unload it. Restore the saved pre-Engine boot-argument value, removing only the changes you made for Engine and preserving unrelated arguments. If you did not record that value, inspect the existing arguments rather than deleting the whole variable. Re-enable SIP from macOS Recovery with `csrutil enable`, then reboot and verify `csrutil status`, following [Apple’s Recovery procedure](https://developer.apple.com/documentation/security/disabling-and-enabling-system-integrity-protection). Start Lite explicitly and confirm its reported mode. App uninstall does not perform these system changes for you.
+First run `~/.local/bin/hyprwm restore-all` while Engine is still available, confirm managed windows are visible, and quit HyprWM normally. Lite cannot restore native Engine alpha/Space ownership: unresolved Engine hidden-window records leave Lite paused with `lite.recovery_error`. Preserve that state and finish recovery in the matching Engine runtime before switching.
+
+Stop any engine auto-injection helper installed by your development setup. A loaded WindowServer library is removed by a normal reboot; do not kill WindowServer to unload it. Restore the saved pre-Engine boot-argument value, removing only the changes you made for Engine and preserving unrelated arguments. If you did not record that value, inspect the existing arguments rather than deleting the whole variable. Re-enable SIP from macOS Recovery with `csrutil enable`, then reboot and verify `csrutil status`, following [Apple’s Recovery procedure](https://developer.apple.com/documentation/security/disabling-and-enabling-system-integrity-protection). Start Lite explicitly and confirm its reported mode. App uninstall does not perform these system changes for you.
 
 ## How it compares
 
