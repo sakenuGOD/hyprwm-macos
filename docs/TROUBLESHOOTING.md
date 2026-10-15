@@ -105,6 +105,10 @@ For a motion bug, provide a short real recording with the first frame, retarget 
 
 Lite's current discovery path does not guarantee placement before the first displayed frame; a brief TextEdit entrance flash has been observed. Apple's [window-created notification](https://developer.apple.com/documentation/applicationservices/kaxwindowcreatednotification) does not specify ordering before presentation; faster notification-based discovery remains a timing hypothesis. Captured proxies also contain a static image during motion. Distinguish these limits from a client that remains parked after landing, which needs recovery.
 
+## Mission Control cards are missing
+
+The current Engine build has shown missing cards for ordinary visible managed windows even with the hidden-window pool disabled. Keeping that pool off does not resolve this known limitation. Exit Mission Control normally and check the actual desktop windows; working focus after exit does not prove the cards were present. If a window remains invisible on the desktop, follow the restoration steps above. Keep the state and matching Engine resources until visibility is confirmed.
+
 ## Installation or removal fails
 
 Read the first error rather than repeatedly rebuilding. Check the macOS/Swift requirements and command-line tools, writable `~/Applications`, the existing configuration and the selected checkout. The installed app bundles base configuration resources; Engine still needs its matching external native resources. Keep the checkout for the matching uninstaller; a separately built development menu companion still depends on its checkout. See [packaging](../hook/swift/PACKAGING.md) for the difference between the local menu bundle and a standalone installer.
