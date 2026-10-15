@@ -135,7 +135,7 @@ public enum TextConfig {
         var focus = JSON.object([])
         for key in ["follow_mouse","focus_on_close"] { if let value = config["input"]?[key] { focus = focus.setting(key,value) } }
         focus = focus.setting("no_focus_fallback",general["no_focus_fallback"] ?? .bool(false))
-        return .object([("version",.int(1)),("time_scale",.int(1)),("runtime",.object([("enabled",.bool(true)),("menu_bar",.bool(true)),("startup_animation",.bool(false)),("window_resize_mode",.string("native")),("overview_hidden_windows",.bool(false)),("prehide",.bool(false)),("hold_max_ms",.int(200)),("pointer_focus_pause_ms",.int(0)),("capture_sampling",.bool(false))])),("layout",layout),("appearance",appearance),("focus",focus),("drag",.object([("mode",.string("swap")),("throw_distance_pt",.int(32)),("direction_ratio",.double(1.25))])),("curves",raw["curves"] ?? .object([])),("animations",animations)])
+        return .object([("version",.int(1)),("time_scale",.int(1)),("runtime",.object([("enabled",.bool(true)),("menu_bar",.bool(true)),("startup_animation",.bool(false)),("window_resize_mode",.string("native")),("overview_hidden_windows",.bool(false)),("prehide",.bool(false)),("hold_max_ms",.int(200)),("pointer_focus_pause_ms",.int(100)),("capture_sampling",.bool(false))])),("layout",layout),("appearance",appearance),("focus",focus),("drag",.object([("mode",.string("swap")),("throw_distance_pt",.int(32)),("direction_ratio",.double(1.25))])),("curves",raw["curves"] ?? .object([])),("animations",animations)])
     }
     public static func render(_ document: JSON, configDir: String) -> String {
         let schema = (try? schemaDocument(configDir)) ?? .object([])

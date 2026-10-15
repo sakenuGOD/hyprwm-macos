@@ -1295,7 +1295,7 @@ public final class WM {
         }
         let p = sys.mouse()
         let retry=options.production && pointerFocusRetryPoint.map{$0==p} == true
-        let pointerPause=options.production ? (cfg.raw["runtime"]?["pointer_focus_pause_ms"]?.double ?? 0)/1000 : 0
+        let pointerPause=options.production ? (cfg.raw["runtime"]?["pointer_focus_pause_ms"]?.double ?? 100)/1000 : 0
         if let m = mp, m == p, pointerPause <= 0,!nativeNoKey,!retry { return }
         if retry && sys.now()<pointerFocusRetryAt{return}
         if !retry {pointerFocusRetryPoint=nil}
@@ -1330,7 +1330,11 @@ public final class WM {
         if options.production {
             // AX key is focus authority. A remembered request or CG stacking
             // order does not prove the hovered window actually has focus.
-            if nativeKey==top.wid {pointerFocusRetryPoint=nil;return}
+            if nativeKey==top.wid {
+                pointerFocusRetryPoint=nil
+                sys.preserveAppFloats(top,space:space,windows:wins)
+                return
+            }
             if !queueFocus(top,space:space,reason:.pointer,pointer:p),sys.now()-pointerMovedAt<pointerPause+0.3 {
                 pointerFocusRetryPoint=p;pointerFocusRetryAt=sys.now()+0.016
             }

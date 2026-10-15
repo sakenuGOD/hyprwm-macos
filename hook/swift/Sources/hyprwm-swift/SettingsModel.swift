@@ -75,7 +75,7 @@ let settingSpecs: [SettingSpec] = [
     .init("drag.mode","Tile Dragging",.focus,"Dragging",.choice([("swap","Swap"),("insert","Insert Beside")]),"swap",source:"config.input.drag_mode"),
     .init("drag.throw_distance_pt","Drag Threshold",.focus,"Dragging",.number(8...400,1,"pt"),32,source:"config.input.drag_throw_distance"),
     .init("drag.direction_ratio","Direction Bias",.focus,"Dragging",.number(1...4,0.05,"×"),1.25,source:"config.input.drag_direction_ratio"),
-    .init("runtime.pointer_focus_pause_ms","Pointer Focus Delay",.focus,"Focus",.number(0...2000,10,"ms"),0),
+    .init("runtime.pointer_focus_pause_ms","Pointer Focus Delay",.focus,"Focus",.number(0...2000,10,"ms"),100),
     .init("runtime.overview_hidden_windows","Hidden Windows in Mission Control · Beta",.advanced,"Window Behavior",.toggle,false,note:"Experimental. Hidden windows may appear incorrectly in the overview. Off by default."),
     .init("runtime.prehide","Prepare New Windows",.advanced,"Window Behavior",.toggle,false),
     .init("runtime.hold_max_ms","First Frame Timeout",.advanced,"Window Behavior",.number(0...2000,10,"ms"),200),
