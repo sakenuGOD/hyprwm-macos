@@ -105,7 +105,7 @@ request. Each line is a JSON object. The first line is
 | `window_opened` | A layer-zero window first appears in the existing window census. |
 | `window_closed` | A previously observed window disappears, or its owning PID changes. |
 | `window_focused` | The WM's recorded focus changes; `window` can be null. |
-| `space_changed` | The WM observes another current Space. |
+| `space_changed` | The WM observes another current workspace; its ID is native in Engine and virtual in Lite. |
 
 ```bash
 scripts/hyprwmctl subscribe
@@ -160,7 +160,7 @@ After the source installer has bundled the base configuration:
 
 `hyprwm --init-config` explicitly creates commented defaults only when the selected config is absent, and preserves an existing file. The source installer uses this entry point with the portable bundled baseline.
 
-`hyprwm restore-all` routes to a responding daemon or, where supported, the stopped Lite runtime's persisted recovery ledger. It restores verified window lifetimes and preserves unresolved records. Success is distinct from a command being queued; confirm native visibility. Lite replies with a specific pending error while asynchronous AX restoration runs; the `hyprwm` CLI retries that marker for up to four seconds, while a raw control client must handle pending responses itself. Restoring outstanding stopped-runtime records needs Accessibility and is a runtime operation, not an offline config check. An empty ledger can be checked without starting a window manager. Both Lite startup and offline recovery refuse outstanding Engine hidden-window records; startup stays paused and reports `lite.recovery_error`. Start the matching Engine runtime and restore those records before switching modes.
+`hyprwm restore-all` routes to a responding daemon or, where supported, the stopped Lite runtime's persisted recovery ledger. It restores verified window lifetimes and preserves unresolved records. Success is distinct from a command being queued; confirm native visibility. Lite replies with a specific pending error while asynchronous AX restoration runs; `hyprwm`, `hyprwmctl` and the uninstaller retry only that marker with a four-second budget. A client using the socket protocol directly must handle pending responses itself. Restoring outstanding stopped-runtime records needs Accessibility and is a runtime operation, not an offline config check. An empty ledger can be checked without starting a window manager. Both Lite startup and offline recovery refuse outstanding Engine hidden-window records; startup stays paused and reports `lite.recovery_error`. Start the matching Engine runtime and restore those records before switching modes.
 
 The raw command `quit` targets the focused **application**. It is not a daemon shutdown command. Use **Quit HyprWM** or the matching uninstaller for restoration-aware daemon shutdown.
 

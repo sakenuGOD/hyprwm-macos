@@ -31,7 +31,7 @@ Once running, open two disposable Terminal or TextEdit windows. Try the focus/mo
 
 ## Default shortcuts
 
-These are actual macOS keys from the portable baseline. An existing or imported configuration may differ; **Settings → Hotkeys** is authoritative. Shortcuts require the mode’s hotkey handler. Carbon runtime shortcuts do not require Input Monitoring; the settings recorder uses an event tap.
+These are actual macOS keys from the portable baseline. An existing or imported configuration may differ; **Settings → Hotkeys** shows the mode’s configured bindings. Shortcuts require the mode’s hotkey handler, and another application can already own a chord. Carbon runtime shortcuts do not require Input Monitoring; the settings recorder uses an event tap.
 
 | Shortcut | Action |
 | --- | --- |
