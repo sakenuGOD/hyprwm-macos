@@ -47,6 +47,19 @@ final class LiteRuntime {
         wm.cfgSink = configure
         wm.workspaceStatus = { [weak self] in self?.workspaceStatus ?? .null }
         wm.controlHandler = { [weak self] command in try self?.control(command) }
+        sys.ax.onCreated = { [weak self] created in self?.created(created) }
+    }
+    private func created(_ created: LiteAX.Created) {
+        guard !stopping, !recovering, wm.enabled, !sys.sessionLocked(), !sys.mouseDown(),
+              !sys.interactionOverlay(), sys.frontPid() == created.window.pid,
+              !sys.applicationHidden(created.window.pid), sys.now()-censusAt < 0.1,
+              let last = wm.last, last.space == sys.workspace,
+              let windows = sys.admitCreated(created) else { return }
+        // Reuse Core admission, classification, ignore/float/no-animation policy.
+        // Metadata alone never authorizes a write or persisted ownership.
+        let (changed, opened) = wm.sync(last.area, last.space, windows)
+        wm.last = (last.area, last.space, windows)
+        if changed { wm.apply(last.area, last.space, windows, opening: opened) }
     }
     private var workspaceStatus: JSON {
         .object([("state", .string("virtual")), ("active", .int(sys.workspace)), ("previous", .int(sys.previousWorkspace)),

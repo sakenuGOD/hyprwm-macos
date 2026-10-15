@@ -93,11 +93,43 @@ final class LiteSys: SysAPI {
     private var restackPending = false, restackedAt = 0.0
     private var unsafeRestackBirths = Set<String>()
     private var observers: [NSObjectProtocol] = []
+    private var createdWindows: [Int: LiteAX.Created] = [:]
+    private(set) var createdAdmissions = 0
+    func admitCreated(_ created: LiteAX.Created) -> [WinInfo]? {
+        let window = created.window
+        guard now()-created.received < 0.25, membership[window.wid] == nil,
+              !rawWindows.contains(where: { $0.wid == window.wid }),
+              processBirth(window.pid) == created.birth, Self.publicOwner(window.wid) == window.pid,
+              ax.window(window.pid, window.wid).map({ CFEqual($0.element, created.element) }) == true else { return nil }
+        var admitted = window; admitted.space = workspace
+        createdWindows[window.wid] = created
+        createdAdmissions += 1
+        censusLock.lock(); rawWindows.insert(admitted, at: 0); let windows = rawWindows; censusLock.unlock()
+        return windows
+    }
+    static func publicOwner(_ wid: Int) -> Int? {
+        (CGWindowListCopyWindowInfo(.optionIncludingWindow, CGWindowID(wid)) as? [[String: Any]])?.first {
+            $0[kCGWindowNumber as String] as? Int == wid
+        }?[kCGWindowOwnerPID as String] as? Int
+    }
+    func createdDeadline(_ wid: Int) -> Double { createdWindows[wid].map { $0.received+0.25 } ?? 0 }
+    func freshlyCreated(_ wid: Int) -> Bool {
+        guard let created = createdWindows[wid] else { return false }
+        return now()-created.received < 0.25 && processBirth(created.window.pid) == created.birth && Self.publicOwner(wid) == created.window.pid
+    }
     var beforeClose: ((Int, @escaping (Bool) -> Void) -> Void)?
     var onFrame: ((Int, Rect) -> Void)?
     init(stateDir: String) {
         recovery = LiteRecovery(directory: stateDir)
         let center = NSWorkspace.shared.notificationCenter
+        for application in NSWorkspace.shared.runningApplications where application.activationPolicy == .regular && application.processIdentifier != getpid() {
+            ax.watch(Int(application.processIdentifier))
+        }
+        observers.append(center.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main) { [weak self] notification in
+            guard let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  application.activationPolicy == .regular, application.processIdentifier != getpid() else { return }
+            self?.ax.watch(Int(application.processIdentifier))
+        })
         observers.append(center.addObserver(forName: NSWorkspace.sessionDidResignActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.setLocked(true) })
         observers.append(center.addObserver(forName: NSWorkspace.sessionDidBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.setLocked(false) })
     }
@@ -170,6 +202,17 @@ final class LiteSys: SysAPI {
                 window.role = metadata.role; window.subrole = metadata.subrole
             }
             windows.append(window)
+        }
+        for (wid, created) in createdWindows {
+            if now()-created.received >= 0.25 || processBirth(created.window.pid) != created.birth || Self.publicOwner(wid) != created.window.pid {
+                createdWindows[wid] = nil
+                if membership[wid] == nil && recovery.records[wid] == nil { ax.expireCreated(created) }
+                continue
+            }
+            if !windows.contains(where: { $0.wid == wid }), membership[wid] == nil {
+                var provisional = created.window; provisional.space = workspace
+                windows.append(provisional)
+            }
         }
         censusLock.lock(); rawWindows = windows; censusLock.unlock()
         physicalWindows = physical

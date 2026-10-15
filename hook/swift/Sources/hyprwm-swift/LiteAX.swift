@@ -19,6 +19,7 @@ final class LiteAX {
         let queue: DispatchQueue
         let application: AXUIElement
         let birth: String
+        var observer: AXObserver?
         var windows: [Int: Window] = [:]
         var closed = Set<Int>()
         var focused: Int?, flags = NativeFocusFlags.unknown
@@ -30,6 +31,7 @@ final class LiteAX {
             AXUIElementSetMessagingTimeout(application, 0.08)
         }
     }
+    static let cancelledAdmission = -100_001
     typealias WindowIDBridge = @convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError
     private let bridge: WindowIDBridge? = {
         guard ProcessInfo.processInfo.environment["HYPRWM_LITE_PUBLIC_AX"] != "1",
@@ -38,7 +40,98 @@ final class LiteAX {
     }()
     private let lock = NSLock()
     private var clients: [Int: Client] = [:]
+    private var createdStages: [String: Int] = [:]
+    private func createdStage(_ stage: String) {
+        lock.lock(); createdStages[stage, default: 0] += 1; lock.unlock()
+    }
+    var createdStatus: JSON {
+        lock.lock(); defer { lock.unlock() }
+        return .object(createdStages.sorted { $0.key < $1.key }.map { ($0.key, .int($0.value)) })
+    }
     var privateIDBridgeAvailable: Bool { bridge != nil }
+    struct Created {
+        let window: WinInfo, birth: String, element: AXUIElement, received: Double
+    }
+    var onCreated: ((Created) -> Void)?
+    private static let createdCallback: AXObserverCallback = { observer, element, _, context in
+        guard let context else { return }
+        Unmanaged<LiteAX>.fromOpaque(context).takeUnretainedValue().created(observer, element)
+    }
+    private func observe(_ pid: Int, _ client: Client) {
+        client.queue.async { [weak self] in
+            guard let self else { return }
+            var value: AXObserver?
+            guard AXObserverCreate(pid_t(pid), Self.createdCallback, &value) == .success, let observer = value,
+                  AXObserverAddNotification(observer, client.application, kAXWindowCreatedNotification as CFString,
+                    Unmanaged.passUnretained(self).toOpaque()) == .success else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.lock.lock(); let current = self.clients[pid] === client
+                if current { client.observer = observer }; self.lock.unlock()
+                if current { CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .commonModes); self.createdStage("observer_registered") }
+            }
+        }
+    }
+    private func created(_ observer: AXObserver, _ element: AXUIElement) {
+        let received = ProcessInfo.processInfo.systemUptime
+        createdStage("notification")
+        var rawPID: pid_t = 0
+        guard AXUIElementGetPid(element, &rawPID) == .success else { return }
+        let pid = Int(rawPID)
+        lock.lock(); let client = clients[pid]; lock.unlock()
+        guard let client, client.observer.map({ CFEqual($0, observer) }) == true else { return }
+        client.queue.async { [weak self] in
+            guard let self, Self.birth(pid) == client.birth else { return }
+            AXUIElementSetMessagingTimeout(element, 0.08)
+            guard let values = Self.attributes(element), let frame = Self.frame(values), frame.w > 0, frame.h > 0,
+                  values[kAXRoleAttribute] as? String == kAXWindowRole,
+                  values[kAXSubroleAttribute] as? String == kAXStandardWindowSubrole,
+                  let modal = values[kAXModalAttribute] as? Bool, !modal,
+                  let full = values["AXFullScreen"] as? Bool, !full else { return }
+            self.createdStage("ordinary")
+            var settable = DarwinBoolean(false)
+            guard AXUIElementIsAttributeSettable(element, kAXSizeAttribute as CFString, &settable) == .success,
+                  settable.boolValue, !Self.modalBarrier(client.application, element),
+                  let focused = Self.attribute(client.application, kAXFocusedWindowAttribute), CFEqual(focused, element) else { return }
+            self.createdStage("focused")
+            let title = values[kAXTitleAttribute] as? String ?? ""
+            var number: CGWindowID = 0
+            var row: [String: Any]?
+            if let bridge = self.bridge, bridge(element, &number) == .success, number > 0 {
+                row = (CGWindowListCopyWindowInfo(.optionIncludingWindow, number) as? [[String: Any]])?.first {
+                    $0[kCGWindowNumber as String] as? Int == Int(number) && $0[kCGWindowOwnerPID as String] as? Int == pid
+                }
+            } else {
+                let matches = (CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []).filter { row in
+                    guard row[kCGWindowOwnerPID as String] as? Int == pid,
+                          let bounds = row[kCGWindowBounds as String] as? [String: Any],
+                          let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return false }
+                    let name = row[kCGWindowName as String] as? String ?? ""
+                    return Rect(rect.minX, rect.minY, rect.width, rect.height).maxDiff(frame) <= 2 && (title.isEmpty || name.isEmpty || title == name)
+                }
+                if matches.count == 1 { row = matches[0] }
+            }
+            guard let row, let wid = row[kCGWindowNumber as String] as? Int, wid > 0,
+                  row[kCGWindowOwnerPID as String] as? Int == pid, row[kCGWindowLayer as String] as? Int == 0,
+                  Self.birth(pid) == client.birth, ProcessInfo.processInfo.systemUptime-received < 0.25 else { return }
+            self.createdStage("mapped")
+            var window = WinInfo(wid: wid, pid: pid, owner: row[kCGWindowOwnerName as String] as? String ?? "",
+                name: title, x: frame.x, y: frame.y, w: frame.w, h: frame.h, on: true, space: 0)
+            window.role = kAXWindowRole; window.subrole = kAXStandardWindowSubrole
+            self.lock.lock()
+            let current = self.clients[pid] === client && client.observer.map { CFEqual($0, observer) } == true
+            let fresh = client.windows[wid] == nil
+            if current && fresh {
+                client.windows[wid] = Window(element: element, role: window.role, subrole: window.subrole, resizable: true, modal: false, fullscreen: false)
+                client.closed.remove(wid); client.focused = wid; client.flags = 0
+            }
+            self.lock.unlock()
+            guard current, fresh else { return }
+            self.createdStage("delivered")
+            let created = Created(window: window, birth: client.birth, element: element, received: received)
+            DispatchQueue.main.async { [weak self] in self?.onCreated?(created) }
+        }
+    }
 
     static func birth(_ pid: Int) -> String? {
         var seconds: UInt64 = 0, micros: UInt64 = 0
@@ -102,8 +195,10 @@ final class LiteAX {
         lock.lock(); defer { lock.unlock() }
         if let old = clients[pid], old.birth == birth { return old }
         let client = Client(pid: pid, birth: birth); clients[pid] = client
+        observe(pid, client)
         return client
     }
+    func watch(_ pid: Int) { _ = client(pid) }
     func window(_ pid: Int, _ wid: Int) -> Window? {
         guard let client = client(pid) else { return nil }
         lock.lock(); defer { lock.unlock() }; return client.windows[wid]
@@ -218,11 +313,14 @@ final class LiteAX {
         return moved == .success && resized == .success ? 0 : Int((moved == .success ? resized : moved).rawValue)
     }
     func setFrame(_ pid: Int, _ wid: Int, _ frame: Rect) -> Int { perform(pid, wid) { Self.setFrame($0, $1, frame) } }
-    func setFrameAsync(_ pid: Int, _ wid: Int, _ frame: Rect, deadline: Double = .infinity, completion: @escaping (Int, Rect?) -> Void) {
+    func setFrameAsync(_ pid: Int, _ wid: Int, _ frame: Rect, deadline: Double = .infinity, validation: ((AXUIElement, AXUIElement) -> Bool)? = nil, completion: @escaping (Int, Rect?) -> Void) {
         guard let client = client(pid), let window = window(pid, wid) else { completion(-1, nil); return }
         client.queue.async {
             guard ProcessInfo.processInfo.systemUptime < deadline,
-                  Self.birth(pid) == client.birth else { DispatchQueue.main.async { completion(-1, nil) }; return }
+                  Self.birth(pid) == client.birth else { DispatchQueue.main.async { completion(validation == nil ? -1 : Self.cancelledAdmission, nil) }; return }
+            guard validation?(client.application, window.element) != false else {
+                DispatchQueue.main.async { completion(Self.cancelledAdmission, nil) }; return
+            }
             let result = Self.setFrame(client.application, window.element, frame)
             let accepted = Self.frame(window.element)
             DispatchQueue.main.async { completion(result, accepted) }
@@ -232,6 +330,13 @@ final class LiteAX {
         var result: Rect?
         _ = perform(pid, wid) { _, window in result = Self.frame(window); return result == nil ? -1 : 0 }
         return result
+    }
+    func expireCreated(_ created: Created) {
+        lock.lock(); defer { lock.unlock() }
+        guard let client = clients[created.window.pid], client.birth == created.birth,
+              let window = client.windows[created.window.wid], CFEqual(window.element, created.element) else { return }
+        client.windows[created.window.wid] = nil
+        client.refreshed = 0
     }
     func forget(_ wid: Int) {
         lock.lock(); defer { lock.unlock() }

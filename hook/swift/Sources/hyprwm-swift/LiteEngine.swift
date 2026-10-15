@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import QuartzCore
 import HyprCore
 
@@ -57,7 +58,7 @@ final class LiteChannel: ChannelAPI {
     private var capturePending = Set<Int>()
     private var shuttingDown = false
     private var releasing = Set<Int>()
-    private(set) var proxyMotions = 0, directPlacements = 0, captureFailures = 0
+    private(set) var proxyMotions = 0, directPlacements = 0, captureFailures = 0, earlyParks = 0
     var widMax = 1
     init(sys: LiteSys, config: HyprConfig) throws {
         self.sys = sys; self.config = config; borders = try LiteBorders(config: config)
@@ -283,7 +284,49 @@ final class LiteChannel: ChannelAPI {
                 }
             }
         }
-        if let image = oldProxy?.image { captured(image) }
+        if opening, oldProxy == nil, sys.freshlyCreated(slot.wid) {
+            // Core has admitted the ordinary tile and track() durably recorded
+            // its original frame. Conceal before SCK so capture latency cannot
+            // expose the initial default frame for another polling interval.
+            // Preserve admitted logical visibility while the real client is
+            // parked and its first capture is pending; the ordinary CG census
+            // must not interpret this owned transition as a departure.
+            sys.presentation[slot.wid] = start
+            guard capturePending.count < 2, capturePending.insert(slot.wid).inserted else {
+                directPlacements += 1; place(slot, frame: geometry.to, logical: geometry.to); return
+            }
+            let createdID = slot.wid, createdPID = slot.pid
+            sys.ax.setFrameAsync(slot.pid, slot.wid, sys.park(geometry.to), deadline: sys.createdDeadline(slot.wid), validation: { [weak self] application, element in
+                guard let self, !LiteAX.modalBarrier(application, element),
+                      let focused = LiteAX.attribute(application, kAXFocusedWindowAttribute), CFEqual(focused, element) else { return false }
+                return LiteSys.publicOwner(createdID) == createdPID && self.sys.frontPid() == createdPID &&
+                    NSRunningApplication(processIdentifier: pid_t(createdPID))?.isHidden == false &&
+                    !self.sys.mouseDown() && !self.sys.sessionLocked()
+            }) { [weak self, weak slot] result, accepted in
+                guard let self else { return }
+                guard let slot, self.current(slot, version), slot.capturing else { self.capturePending.remove(createdID); return }
+                if result == LiteAX.cancelledAdmission {
+                    self.capturePending.remove(createdID)
+                    slot.configureError = result; slot.busy = false; slot.capturing = false; slot.landing = false
+                    self.forget(slot.wid) // No AX write occurred; retain original recovery authority.
+                    return
+                }
+                guard result == 0, let accepted, self.sys.parked(accepted) else {
+                    self.capturePending.remove(createdID)
+                    self.directPlacements += 1; self.place(slot, frame: geometry.to, logical: geometry.to); return
+                }
+                self.earlyParks += 1
+                slot.actual = accepted
+                self.captures.image(slot.wid, pid: slot.pid, frame: accepted) { [weak self] image in
+                    self?.capturePending.remove(createdID)
+                    captured(image)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now()+0.22) { [weak self, weak slot] in
+                    guard let self, let slot, self.current(slot, version), slot.capturing, slot.proxy == nil else { return }
+                    captured(nil)
+                }
+            }
+        } else if let image = oldProxy?.image { captured(image) }
         else {
             captures.image(slot.wid, pid: slot.pid, frame: slot.presented, completion: captured)
             DispatchQueue.main.asyncAfter(deadline: .now()+0.22) { [weak self, weak slot] in
@@ -442,6 +485,7 @@ final class LiteChannel: ChannelAPI {
                  ("animation", .string(captures.permitted ? "captured-proxy" : "direct-ax-fallback")),
                  ("private_ax_id_bridge", .bool(sys.ax.privateIDBridgeAvailable)), ("private_ax_id_sip", .string("documented SIP-on by AeroSpace; not locally verified")),
                  ("engine_channel_used", .bool(false)), ("virtual_workspaces", .bool(true)),
+                 ("created_stages", sys.ax.createdStatus), ("created_admissions", .int(sys.createdAdmissions)), ("early_parks", .int(earlyParks)),
                  ("proxy_motions", .int(proxyMotions)), ("direct_placements", .int(directPlacements)),
                  ("capture_failures", .int(captureFailures)), ("client_opacity", .string("opaque; public API does not set foreign alpha"))])
     }

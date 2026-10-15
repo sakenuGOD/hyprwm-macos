@@ -184,3 +184,9 @@ documents layer-local start times and nested transaction commits; this supports
 the implementation hypothesis and does not establish its frame behavior.
 Source checks and extracted motion/identity/recovery checks are supporting
 evidence, not live passes.
+
+### AX-created admission experiment
+
+A public per-application `AXWindowCreated` observer now batches ordinary-window metadata on the existing AX worker, optionally maps its window ID through the documented AeroSpace bridge, and independently checks the current public CG owner. The public fallback requires a unique frame/title match. An exact, fresh, focused ordinary window can enter the existing Core admission and rule matcher; metadata alone cannot park it. Its original frame is persisted before an admitted opening may park ahead of ScreenCaptureKit capture. The queued write rechecks the PID lifetime, public owner, modal/menu state, exact AX key window, foreground app, hidden state, mouse buttons, and session lock. Expired or refused admission makes no AX write.
+
+The first live take used the optional ID bridge but recorded zero fast admissions and zero early parks. The new document still appeared at its default position before tiling. This does not establish that the early-parking technique ran or beats presentation. Bounded stage counters were added for the next distinct qualification. The instrumented take aborted its actor-prefix precondition before creating windows or starting a daemon. No before-presentation guarantee or local SIP-on validation follows from these experiments.
