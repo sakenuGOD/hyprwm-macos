@@ -299,8 +299,9 @@ final class LiteChannel: ChannelAPI {
             .sorted(by: { $0.capturedAt < $1.capturedAt }).prefix(1) {
             guard capturePending.insert(slot.wid).inserted else { continue }
             slot.capturedAt = sys.now()
-            captures.image(slot.wid, pid: slot.pid, frame: slot.presented) { [weak self, weak slot] image in
-                guard let self else { return }; self.capturePending.remove(slot?.wid ?? 0)
+            let capturedID = slot.wid
+            captures.image(capturedID, pid: slot.pid, frame: slot.presented) { [weak self, weak slot] image in
+                guard let self else { return }; self.capturePending.remove(capturedID)
                 if let slot, let image, self.slots[slot.wid] === slot, !slot.busy { slot.cached = image }
             }
         }
