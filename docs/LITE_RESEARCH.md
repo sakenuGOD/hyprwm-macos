@@ -83,6 +83,16 @@ runtime adapters.
 - Native application hiding suppresses cached proxy imagery and borders. An AX
   window-list omission while its application is hidden is insufficient evidence
   that the recovery record's window has closed.
+- A transition to an empty virtual workspace first makes a visible, owned
+  “Workspace N” panel the keyboard receiver. This prevents typing into the
+  previously focused parked client. It retains no typed characters. The panel
+  stays until a current-workspace client has verified visible native focus, or
+  the user chooses an unowned visible window/application. Status exposes
+  `workspace_public.empty_receiver` with `visible`, `key`, `window` and
+  `key_events` fields.
+- Changing an owned, inactive window to an ignored rule restores its recorded
+  original frame before releasing ownership. The same bounded recovery pump
+  handles this subset; `lite.ignored_release_count` reports outstanding work.
 
 ## Limits and live acceptance
 
@@ -124,7 +134,27 @@ reported hover focus, visible captured-proxy swap motion with its border,
 atomic gap reload, and restoration to the recorded original client frames.
 A captured TextEdit entrance also showed its default-position frame before AX
 discovery. The zero-flash first-map acceptance gate therefore remains blocked.
-Full close/retarget/landing frame inspection, virtual-workspace round trip,
-mid-motion pause, native application hiding, and parked-client crash recovery
-need a further live session on the final build. Source checks and extracted
-motion/identity/recovery checks are supporting evidence, not live passes.
+Two further isolated sessions tested virtual-workspace round trips, silent sends,
+same-workspace no-ops, inactive-window rule release, mid-motion pause and manual
+move/resume. A daemon killed while its clients were physically parked recovered
+them on a paused restart with responsive IPC. Normal quit also restored parked
+clients. One Terminal recovery accepted a frame within six points of the recorded
+frame because of its character-grid sizing; recovery does not guarantee exact
+pixel dimensions for every client.
+
+The visible empty-workspace panel received guarded numeric key events in the
+same-application test, and returning to an occupied workspace dismissed it after
+native client focus. A later source guard for cross-application focus handoff
+still needs its own desktop test. Native application hiding and broad modal,
+multiple-display, retarget and burst coverage also remain pending.
+
+Actual captured close/expansion frames exposed a late content jump: a stretched
+old half-height Terminal image changed to the resized live client at handoff.
+The first-map and clean-landing motion gates therefore remain failed. Refreshing
+the parked client's resized backing and crossfading it through the existing
+proxy is a candidate under test, not a verified fix. Apple's public
+[CATransition](https://developer.apple.com/documentation/quartzcore/catransition)
+supports a [fade](https://developer.apple.com/documentation/quartzcore/catransitiontype/fade)
+for layer content changes; capture timing and off-screen client backing updates
+require live evidence. Source checks and extracted motion/identity/recovery
+checks are supporting evidence, not live passes.
