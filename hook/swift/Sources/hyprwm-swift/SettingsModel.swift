@@ -8,26 +8,26 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     case general, layout, animations, appearance, focus, hotkeys, rules, advanced, about
     var id: String { rawValue }
     var title: String { switch self {
-    case .general: return "Основные"; case .layout: return "Раскладка"; case .animations: return "Анимации"
-    case .appearance: return "Оформление"; case .focus: return "Фокус и мышь"; case .hotkeys: return "Горячие клавиши"
-    case .rules: return "Правила приложений"; case .advanced: return "Дополнительно"; case .about: return "О HyprWM" } }
+    case .general: return "General"; case .layout: return "Layout"; case .animations: return "Animations"
+    case .appearance: return "Appearance"; case .focus: return "Focus & Mouse"; case .hotkeys: return "Keyboard Shortcuts"
+    case .rules: return "App Rules"; case .advanced: return "Advanced"; case .about: return "About HyprWM" } }
     var symbol: String { switch self {
     case .general: return "gearshape"; case .layout: return "rectangle.split.2x2"; case .animations: return "waveform.path"
     case .appearance: return "paintpalette"; case .focus: return "cursorarrow.motionlines"; case .hotkeys: return "command"
     case .rules: return "app.badge"; case .advanced: return "slider.horizontal.3"; case .about: return "info.circle" } }
     var color: Color { switch self {
-    case .general: return .gray; case .layout: return .blue; case .animations: return .purple; case .appearance: return .pink
+    case .general: return .gray; case .layout: return .blue; case .animations: return .blue; case .appearance: return .pink
     case .focus: return .orange; case .hotkeys: return .indigo; case .rules: return .green; case .advanced: return .gray; case .about: return .blue } }
     var subtitle: String { switch self {
-    case .general: return "Окна и доступ."
-    case .layout: return "Расположение окон."
-    case .animations: return "Длительность и кривые."
-    case .appearance: return "Рамки, тени и отступы."
-    case .focus: return "Фокус и перетаскивание."
-    case .hotkeys: return "Сочетания клавиш."
-    case .rules: return "Параметры приложений."
-    case .advanced: return "Конфигурация и диагностика."
-    case .about: return "Версия и поддержка." } }
+    case .general: return "Windows and permissions."
+    case .layout: return "Window layout."
+    case .animations: return "Timing and curves."
+    case .appearance: return "Borders, shadows, and spacing."
+    case .focus: return "Focus and dragging."
+    case .hotkeys: return "Keyboard shortcuts."
+    case .rules: return "Per-app settings."
+    case .advanced: return "Configuration and diagnostics."
+    case .about: return "Version and support." } }
 }
 struct SettingSpec: Identifiable {
     enum Kind { case number(ClosedRange<Double>, Double, String), toggle, choice([(String,String)]), color }
@@ -40,46 +40,46 @@ struct SettingSpec: Identifiable {
     }
 }
 let settingSpecs: [SettingSpec] = [
-    .init("runtime.window_resize_mode","Изменение размера",.animations,"Движение",.choice([("native","Без масштабирования"),("buffer","Растягивание")]),"native",note:"Обычно текст и содержимое сохраняют масштаб, а края окна плавно открываются или обрезаются. Растягивание масштабирует живое содержимое вместе с окном и выключено по умолчанию."),
-    .init("time_scale","Общая длительность",.animations,"Движение",.number(0.1...4,0.05,"×"),1.0),
-    .init("animations.enabled","Анимации окон",.animations,"Движение",.toggle,true,source:"config.animations.enabled"),
-    .init("layout.gaps_in","Между окнами",.layout,"Отступы",.number(0...100,1,"pt"),3,source:"config.general.gaps_in",note:"Зазор складывается из отступов соседних окон."),
-    .init("layout.gaps_out.top","Сверху",.layout,"Края экрана",.number(0...200,1,"pt"),8,source:"config.general.gaps_out.top"),
-    .init("layout.gaps_out.right","Справа",.layout,"Края экрана",.number(0...200,1,"pt"),12,source:"config.general.gaps_out.right"),
-    .init("layout.gaps_out.bottom","Снизу",.layout,"Края экрана",.number(0...200,1,"pt"),12,source:"config.general.gaps_out.bottom"),
-    .init("layout.gaps_out.left","Слева",.layout,"Края экрана",.number(0...200,1,"pt"),12,source:"config.general.gaps_out.left"),
-    .init("layout.default_split_ratio","Пропорция деления",.layout,"Деление",.number(0.1...1.9,0.05,"×"),1,source:"config.dwindle.default_split_ratio"),
-    .init("layout.split_width_multiplier","Предпочтение широких плиток",.layout,"Деление",.number(0.1...10,0.05,"×"),1,source:"config.dwindle.split_width_multiplier"),
-    .init("layout.minimum_policy","Минимальный размер",.layout,"Деление",.choice([("native","Размер приложения"),("ratio","Пропорции раскладки")]),"native",source:"config.dwindle.minimum_policy"),
-    .init("appearance.border.size","Толщина рамки",.appearance,"Рамки",.number(0...20,0.5,"pt"),2,source:"config.general.border_size"),
-    .init("appearance.border.active.angle","Угол градиента",.appearance,"Рамки",.number(0...90,1,"°"),45,source:"config.general.col.active_border.angle"),
-    .init("appearance.border.inactive","Неактивная рамка",.appearance,"Рамки",.color,"rgba(53434155)",source:"config.general.col.inactive_border"),
-    .init("appearance.rounding","Скругление углов",.appearance,"Форма окон",.number(0...100,1,"pt"),18,source:"config.decoration.rounding"),
-    .init("appearance.rounding_power","Форма скругления",.appearance,"Форма окон",.number(1...10,0.1,""),2.6,source:"config.decoration.rounding_power"),
-    .init("appearance.shadow.enabled","Тень",.appearance,"Тень",.toggle,true,source:"config.decoration.shadow.enabled"),
-    .init("appearance.shadow.range","Размер тени",.appearance,"Тень",.number(1...200,1,"pt"),34,source:"config.decoration.shadow.range"),
-    .init("appearance.shadow.render_power","Мягкость тени",.appearance,"Тень",.number(1...4,1,""),3,source:"config.decoration.shadow.render_power"),
-    .init("appearance.shadow.scale","Масштаб тени",.appearance,"Тень",.number(0...1,0.01,"×"),1,source:"config.decoration.shadow.scale"),
-    .init("appearance.shadow.offset.0","Смещение по горизонтали",.appearance,"Тень",.number(-2000...2000,1,"pt"),0,source:"config.decoration.shadow.offset.0"),
-    .init("appearance.shadow.offset.1","Смещение по вертикали",.appearance,"Тень",.number(-2000...2000,1,"pt"),10,source:"config.decoration.shadow.offset.1"),
-    .init("appearance.shadow.color","Активная тень",.appearance,"Тень",.color,"rgba(00000077)",source:"config.decoration.shadow.color"),
-    .init("appearance.shadow.color_inactive","Неактивная тень",.appearance,"Тень",.color,"rgba(00000044)",source:"config.decoration.shadow.color_inactive"),
-    .init("appearance.glow.enabled","Внутреннее свечение",.appearance,"Свечение",.toggle,true,source:"config.decoration.glow.enabled"),
-    .init("appearance.glow.range","Размер свечения",.appearance,"Свечение",.number(0...200,1,"pt"),18,source:"config.decoration.glow.range"),
-    .init("appearance.glow.render_power","Рассеивание",.appearance,"Свечение",.number(1...10,0.1,""),3,source:"config.decoration.glow.render_power"),
-    .init("appearance.glow.color","Активное свечение",.appearance,"Свечение",.color,"rgba(ffb4a433)",source:"config.decoration.glow.color"),
-    .init("appearance.glow.color_inactive","Неактивное свечение",.appearance,"Свечение",.color,"rgba(ffb4a400)",source:"config.decoration.glow.color_inactive"),
-    .init("focus.follow_mouse","Фокус следует за мышью",.focus,"Фокус",.choice([("0","Выключено"),("1","Включено")]),1,source:"config.input.follow_mouse"),
-    .init("focus.focus_on_close","После закрытия окна",.focus,"Фокус",.choice([("0","Ближайшее окно"),("1","Окно под указателем"),("2","Предыдущее окно")]),0,source:"config.input.focus_on_close"),
-    .init("focus.no_focus_fallback","Сохранять фокус без соседа",.focus,"Фокус",.toggle,false,source:"config.general.no_focus_fallback"),
-    .init("drag.mode","Перетаскивание плитки",.focus,"Перетаскивание",.choice([("swap","Поменять местами"),("insert","Вставить рядом")]),"swap",source:"config.input.drag_mode"),
-    .init("drag.throw_distance_pt","Порог перемещения",.focus,"Перетаскивание",.number(8...400,1,"pt"),32,source:"config.input.drag_throw_distance"),
-    .init("drag.direction_ratio","Точность направления",.focus,"Перетаскивание",.number(1...4,0.05,"×"),1.25,source:"config.input.drag_direction_ratio"),
-    .init("runtime.pointer_focus_pause_ms","Пауза фокуса за мышью",.focus,"Фокус",.number(0...2000,10,"ms"),0),
-    .init("runtime.overview_hidden_windows","Скрытые окна в Mission Control · Бета",.advanced,"Поведение окон",.toggle,false,note:"Экспериментальное отображение скрытых окон в обзоре. Может нарушать показ карточек; по умолчанию выключено."),
-    .init("runtime.prehide","Подготовка новых окон",.advanced,"Поведение окон",.toggle,false),
-    .init("runtime.hold_max_ms","Ожидание первого кадра",.advanced,"Поведение окон",.number(0...2000,10,"ms"),200),
-    .init("runtime.capture_sampling","Подбирать цвет краёв окна",.advanced,"Поведение окон",.toggle,false, note:"Определять цвет края по изображению окна.")
+    .init("runtime.window_resize_mode","Resize Mode",.animations,"Motion",.choice([("native","Native"),("buffer","Scale Content")]),"native",note:"Native preserves the size of window content. Scale Content stretches the live window buffer during resizing."),
+    .init("time_scale","Duration Scale",.animations,"Motion",.number(0.1...4,0.05,"×"),1.0),
+    .init("animations.enabled","Window Animations",.animations,"Motion",.toggle,true,source:"config.animations.enabled"),
+    .init("layout.gaps_in","Window Gap",.layout,"Spacing",.number(0...100,1,"pt"),3,source:"config.general.gaps_in",note:"Adjacent window margins combine to form the gap."),
+    .init("layout.gaps_out.top","Top",.layout,"Screen Edges",.number(0...200,1,"pt"),8,source:"config.general.gaps_out.top"),
+    .init("layout.gaps_out.right","Right",.layout,"Screen Edges",.number(0...200,1,"pt"),12,source:"config.general.gaps_out.right"),
+    .init("layout.gaps_out.bottom","Bottom",.layout,"Screen Edges",.number(0...200,1,"pt"),12,source:"config.general.gaps_out.bottom"),
+    .init("layout.gaps_out.left","Left",.layout,"Screen Edges",.number(0...200,1,"pt"),12,source:"config.general.gaps_out.left"),
+    .init("layout.default_split_ratio","Split Ratio",.layout,"Splitting",.number(0.1...1.9,0.05,"×"),1,source:"config.dwindle.default_split_ratio"),
+    .init("layout.split_width_multiplier","Prefer Wide Tiles",.layout,"Splitting",.number(0.1...10,0.05,"×"),1,source:"config.dwindle.split_width_multiplier"),
+    .init("layout.minimum_policy","Minimum Size",.layout,"Splitting",.choice([("native","App Minimum"),("ratio","Layout Ratio")]),"native",source:"config.dwindle.minimum_policy"),
+    .init("appearance.border.size","Border Width",.appearance,"Borders",.number(0...20,0.5,"pt"),2,source:"config.general.border_size"),
+    .init("appearance.border.active.angle","Gradient Angle",.appearance,"Borders",.number(0...90,1,"°"),45,source:"config.general.col.active_border.angle"),
+    .init("appearance.border.inactive","Inactive Border",.appearance,"Borders",.color,"rgba(53434155)",source:"config.general.col.inactive_border"),
+    .init("appearance.rounding","Corner Radius",.appearance,"Window Shape",.number(0...100,1,"pt"),18,source:"config.decoration.rounding"),
+    .init("appearance.rounding_power","Corner Shape",.appearance,"Window Shape",.number(1...10,0.1,""),2.6,source:"config.decoration.rounding_power"),
+    .init("appearance.shadow.enabled","Shadow",.appearance,"Shadow",.toggle,true,source:"config.decoration.shadow.enabled"),
+    .init("appearance.shadow.range","Shadow Size",.appearance,"Shadow",.number(1...200,1,"pt"),34,source:"config.decoration.shadow.range"),
+    .init("appearance.shadow.render_power","Shadow Softness",.appearance,"Shadow",.number(1...4,1,""),3,source:"config.decoration.shadow.render_power"),
+    .init("appearance.shadow.scale","Shadow Scale",.appearance,"Shadow",.number(0...1,0.01,"×"),1,source:"config.decoration.shadow.scale"),
+    .init("appearance.shadow.offset.0","Horizontal Offset",.appearance,"Shadow",.number(-2000...2000,1,"pt"),0,source:"config.decoration.shadow.offset.0"),
+    .init("appearance.shadow.offset.1","Vertical Offset",.appearance,"Shadow",.number(-2000...2000,1,"pt"),10,source:"config.decoration.shadow.offset.1"),
+    .init("appearance.shadow.color","Active Shadow",.appearance,"Shadow",.color,"rgba(00000077)",source:"config.decoration.shadow.color"),
+    .init("appearance.shadow.color_inactive","Inactive Shadow",.appearance,"Shadow",.color,"rgba(00000044)",source:"config.decoration.shadow.color_inactive"),
+    .init("appearance.glow.enabled","Inner Glow",.appearance,"Glow",.toggle,true,source:"config.decoration.glow.enabled"),
+    .init("appearance.glow.range","Glow Size",.appearance,"Glow",.number(0...200,1,"pt"),18,source:"config.decoration.glow.range"),
+    .init("appearance.glow.render_power","Falloff",.appearance,"Glow",.number(1...10,0.1,""),3,source:"config.decoration.glow.render_power"),
+    .init("appearance.glow.color","Active Glow",.appearance,"Glow",.color,"rgba(ffb4a433)",source:"config.decoration.glow.color"),
+    .init("appearance.glow.color_inactive","Inactive Glow",.appearance,"Glow",.color,"rgba(ffb4a400)",source:"config.decoration.glow.color_inactive"),
+    .init("focus.follow_mouse","Focus Follows Mouse",.focus,"Focus",.choice([("0","Off"),("1","On")]),1,source:"config.input.follow_mouse"),
+    .init("focus.focus_on_close","After Closing a Window",.focus,"Focus",.choice([("0","Nearest Window"),("1","Window Under Pointer"),("2","Previous Window")]),0,source:"config.input.focus_on_close"),
+    .init("focus.no_focus_fallback","Keep Focus Without a Neighbor",.focus,"Focus",.toggle,false,source:"config.general.no_focus_fallback"),
+    .init("drag.mode","Tile Dragging",.focus,"Dragging",.choice([("swap","Swap"),("insert","Insert Beside")]),"swap",source:"config.input.drag_mode"),
+    .init("drag.throw_distance_pt","Drag Threshold",.focus,"Dragging",.number(8...400,1,"pt"),32,source:"config.input.drag_throw_distance"),
+    .init("drag.direction_ratio","Direction Bias",.focus,"Dragging",.number(1...4,0.05,"×"),1.25,source:"config.input.drag_direction_ratio"),
+    .init("runtime.pointer_focus_pause_ms","Pointer Focus Delay",.focus,"Focus",.number(0...2000,10,"ms"),0),
+    .init("runtime.overview_hidden_windows","Hidden Windows in Mission Control · Beta",.advanced,"Window Behavior",.toggle,false,note:"Experimental. Hidden windows may appear incorrectly in the overview. Off by default."),
+    .init("runtime.prehide","Prepare New Windows",.advanced,"Window Behavior",.toggle,false),
+    .init("runtime.hold_max_ms","First Frame Timeout",.advanced,"Window Behavior",.number(0...2000,10,"ms"),200),
+    .init("runtime.capture_sampling","Sample Window Edge Color",.advanced,"Window Behavior",.toggle,false, note:"Use the window image to determine its edge color.")
 ]
 
 func valueAt(_ root: Any, _ path: String) -> Any? {
@@ -109,7 +109,7 @@ func settingsFileData(_ url:URL) throws -> Data {
     guard FileManager.default.fileExists(atPath:url.path) else {return Data("{}".utf8)}
     let file=try FileHandle(forReadingFrom:url);defer{try? file.close()}
     let data=try file.read(upToCount:262145) ?? Data()
-    guard data.count<=262144 else {throw NSError(domain:"HyprWM.Settings",code:1,userInfo:[NSLocalizedDescriptionKey:"Файл настроек превышает 256 КБ."])}
+    guard data.count<=262144 else {throw NSError(domain:"HyprWM.Settings",code:1,userInfo:[NSLocalizedDescriptionKey:"Settings file exceeds 256 KB."])}
     return data
 }
 
@@ -121,7 +121,7 @@ enum SettingsPersistence {
             if expected==nil && actual==nil {equal=true}
             else if let expected,let actual {equal=NSDictionary(dictionary:["value":expected]).isEqual(to:["value":actual])}
             else {equal=false}
-            guard equal else {throw NSError(domain:"HyprWM.Settings",code:2,userInfo:[NSLocalizedDescriptionKey:"Эти настройки изменились в другом приложении. Повторите изменение."])}
+            guard equal else {throw NSError(domain:"HyprWM.Settings",code:2,userInfo:[NSLocalizedDescriptionKey:"These settings changed in another app. Try again."])}
         }
         var candidate=disk
         for (key,value) in changes.sorted(by:{$0.key.split(separator:".").count < $1.key.split(separator:".").count}) {candidate=settingValue(candidate,key.split(separator:".").map(String.init),value is NSNull ? nil:value) as! [String:Any]}
@@ -258,9 +258,9 @@ final class SettingsStore: ObservableObject {
         guard panel.runModal() == .OK, let source=panel.url else {return}
         do {
             let bytes=try Data(contentsOf:source)
-            guard bytes.count <= 262144, let text=String(data:bytes,encoding:.utf8) else {throw CmdError("Ожидается UTF-8 файл не больше 256 КБ")}
+            guard bytes.count <= 262144, let text=String(data:bytes,encoding:.utf8) else {throw CmdError("Expected a UTF-8 file no larger than 256 KB.")}
             let result=try TextConfig.parse(text,configDir:hook+"/config")
-            guard result.issues.isEmpty else {throw CmdError(result.error ?? "Неверный конфиг")}
+            guard result.issues.isEmpty else {throw CmdError(result.error ?? "Invalid configuration")}
             try backupConfig(); try bytes.write(to:url,options:.atomic); reload()
         } catch {self.error=error.localizedDescription}
     }
@@ -292,14 +292,14 @@ final class SettingsStore: ObservableObject {
             do {
                 let old=try settingsFileData(path)
                 let diskJSON=try TextConfig.parse(String(decoding:old,as:UTF8.self),configDir:hook+"/config").document
-                guard let disk=try JSONSerialization.jsonObject(with:Data(diskJSON.dumps(ensureASCII:false).utf8)) as? [String:Any] else {throw NSError(domain:"Settings",code:3,userInfo:[NSLocalizedDescriptionKey:"Не удалось прочитать настройки."])}
+                guard let disk=try JSONSerialization.jsonObject(with:Data(diskJSON.dumps(ensureASCII:false).utf8)) as? [String:Any] else {throw NSError(domain:"Settings",code:3,userInfo:[NSLocalizedDescriptionKey:"Could not read settings."])}
                 let candidate=try SettingsPersistence.merge(base:self?.persistenceBase ?? disk,disk:disk,changes:changes)
                 let bytes=try JSONSerialization.data(withJSONObject:candidate,options:[.prettyPrinted,.sortedKeys,.withoutEscapingSlashes])
-                guard bytes.count <= 262144 else { throw NSError(domain:"Settings",code:1,userInfo:[NSLocalizedDescriptionKey:"Настройки превышают допустимый размер."]) }
+                guard bytes.count <= 262144 else { throw NSError(domain:"Settings",code:1,userInfo:[NSLocalizedDescriptionKey:"Settings exceed the maximum size."]) }
                 try SettingsValidation.validate(bytes, hook:hook)
                 // Do not overwrite an external edit made during validation.
                 let now=try settingsFileData(path)
-                guard now==old else { throw NSError(domain:"Settings",code:2,userInfo:[NSLocalizedDescriptionKey:"Файл изменился в другом приложении. Повторите изменение."]) }
+                guard now==old else { throw NSError(domain:"Settings",code:2,userInfo:[NSLocalizedDescriptionKey:"The file changed in another app. Try again."]) }
                 try TextConfig.write(try JSON.parse(bytes),configDir:hook+"/config",preserving:String(decoding:old,as:UTF8.self))
                 self?.persistenceBase=candidate
                 DispatchQueue.main.async {
@@ -307,7 +307,7 @@ final class SettingsStore: ObservableObject {
                     if self.pending.isEmpty && self.editRevision==revision { self.document=candidate }
                     // The shared file watcher applies this edit through the same diff as editor saves.
                 }
-            } catch { DispatchQueue.main.async { guard let self else {return}; self.error="Изменение не сохранено: "+error.localizedDescription;self.savesInFlight -= 1; self.saving = !self.pending.isEmpty || self.savesInFlight>0;if self.editRevision==revision {self.reload()} } }
+            } catch { DispatchQueue.main.async { guard let self else {return}; self.error="Change not saved: "+error.localizedDescription;self.savesInFlight -= 1; self.saving = !self.pending.isEmpty || self.savesInFlight>0;if self.editRevision==revision {self.reload()} } }
         }
     }
     func requestAccess() { let options=[kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String:true] as CFDictionary; trusted=AXIsProcessTrustedWithOptions(options) }
@@ -337,7 +337,7 @@ enum SettingsValidation {
             schema=settingValue(schema,["properties","runtime","properties",key],["type":"boolean"]) as! [String:Any]
         }
         let object=try JSONSerialization.jsonObject(with:bytes)
-        try check(object,schema:schema,root:schema,path:"Настройки")
+        try check(object,schema:schema,root:schema,path:"Settings")
         if let object=object as? [String:Any] {
             let curves=(base.raw["curves"]?.object ?? []).reduce(into:[String:JSON]()){$0[$1.0]=$1.1}
             let local=object["curves"] as? [String:[String:Any]] ?? [:]
@@ -352,7 +352,7 @@ enum SettingsValidation {
         }
         _=try NativeRuntimeConfig.build(base:base,document:json,environment:[:])
     }
-    private static func failure(_ path: String) -> NSError { NSError(domain:"HyprWM.Settings",code:1,userInfo:[NSLocalizedDescriptionKey:"Недопустимое значение: "+path]) }
+    private static func failure(_ path: String) -> NSError { NSError(domain:"HyprWM.Settings",code:1,userInfo:[NSLocalizedDescriptionKey:"Invalid value: "+path]) }
     private static func check(_ value: Any, schema: [String:Any], root:[String:Any],path:String) throws {
         if let ref=schema["$ref"] as? String, let target=valueAt(root,String(ref.dropFirst(2)).replacingOccurrences(of:"/",with:".")) as? [String:Any] { try check(value,schema:target,root:root,path:path); return }
         if let alternatives=schema["oneOf"] as? [[String:Any]] {

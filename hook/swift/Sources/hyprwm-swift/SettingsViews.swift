@@ -12,7 +12,7 @@ struct SettingsRootView: View {
     var body: some View {
         NavigationSplitView {
             VStack(spacing:0) {
-                HStack(spacing:8) { Image(systemName:"magnifyingglass").foregroundStyle(.secondary); TextField("Поиск настроек",text:$search).textFieldStyle(.plain).focused($searchFocused)
+                HStack(spacing:8) { Image(systemName:"magnifyingglass").foregroundStyle(.secondary); TextField("Search Settings",text:$search).textFieldStyle(.plain).focused($searchFocused)
                     if !search.isEmpty { Button { search="" } label:{Image(systemName:"xmark.circle.fill")}.buttonStyle(.plain).foregroundStyle(.secondary) }
                 }.padding(9).background(.quaternary,in:RoundedRectangle(cornerRadius:8)).padding(12)
                 List(selection:$selection) {
@@ -21,7 +21,7 @@ struct SettingsRootView: View {
                     }
                 }.listStyle(.sidebar)
                 HStack(spacing:7) { Circle().fill(store.trusted && store.connected ? (store.enabled ? .green : .orange) : .red).frame(width:7,height:7)
-                    Text(!store.trusted ? "Нет доступа" : !store.connected ? "Нет подключения" : store.enabled ? "HyprWM работает" : "Тайлинг на паузе").font(.caption).foregroundStyle(.secondary)
+                    Text(!store.trusted ? "Permission Required" : !store.connected ? "Disconnected" : store.enabled ? "HyprWM Running" : "Tiling Paused").font(.caption).foregroundStyle(.secondary)
                     Spacer()
                 }.padding(16)
             }.navigationSplitViewColumnWidth(min:210,ideal:235,max:270)
@@ -32,7 +32,7 @@ struct SettingsRootView: View {
                     Image(systemName:page.symbol).font(.system(size:23,weight:.medium)).foregroundStyle(.white).frame(width:48,height:48).background(page.color,in:RoundedRectangle(cornerRadius:12))
                     Text(page.title).font(.title2.weight(.semibold))
                     Spacer()
-                    if page != .general && page != .about && page != .hotkeys && sectionChanged(page) { Button {resetConfirmation=true} label:{ Image(systemName:"arrow.counterclockwise") }.help("Сбросить настройки раздела").buttonStyle(.borderless) }
+                    if page != .general && page != .about && page != .hotkeys && sectionChanged(page) { Button {resetConfirmation=true} label:{ Image(systemName:"arrow.counterclockwise") }.help("Reset Section").buttonStyle(.borderless) }
                 }.padding(.horizontal,UIStyle.spacious).padding(.vertical,UIStyle.large)
                 Divider()
                 if let error=store.error { HStack(alignment:.top) {Image(systemName:"exclamationmark.triangle.fill").foregroundStyle(.orange); Text(error).font(.callout); Spacer(); Button {store.error=nil} label:{Image(systemName:"xmark")}.buttonStyle(.plain)}.padding(14).background(.orange.opacity(0.08)) }
@@ -44,42 +44,48 @@ struct SettingsRootView: View {
                     ForEach(Array(Set(specs.map(\.group))).sorted(),id:\.self) { group in
                         Section(group) {
                             ForEach(specs.filter{$0.group==group}) { spec in SettingRow(store:store,spec:spec) }
-                            if page == .appearance && group == "Рамки" { gradientColors }
+                            if page == .appearance && group == "Borders" { gradientColors }
                         }
                     }
                     if page == .animations { AnimationSettings(store:store) }
                     if page == .rules { AppRulesSettings(store:store) }
                     if page == .hotkeys { HotkeySettings(store:store) }
-                    if page == .advanced { Section("Файлы конфигурации") {
-                        Button {store.openConfig()} label:{Label("Открыть конфигурацию",systemImage:"doc.text")}
-                        Button {store.importConfig()} label:{Label("Импортировать…",systemImage:"square.and.arrow.down")}
-                        Button {store.exportConfig()} label:{Label("Экспортировать…",systemImage:"square.and.arrow.up")}
-                        Button {store.resetConfig()} label:{Label("Сбросить конфигурацию",systemImage:"arrow.counterclockwise")}
-                        Button {NSWorkspace.shared.open(store.url.deletingLastPathComponent())} label:{Label("Показать папку конфигурации",systemImage:"folder")}
+                    if page == .advanced { Section("Configuration") {
+                        Button {store.openConfig()} label:{Label("Open Configuration",systemImage:"doc.text")}
+                        Button {store.importConfig()} label:{Label("Import…",systemImage:"square.and.arrow.down")}
+                        Button {store.exportConfig()} label:{Label("Export…",systemImage:"square.and.arrow.up")}
+                        Button {store.resetConfig()} label:{Label("Reset Configuration",systemImage:"arrow.counterclockwise")}
+                        Button {NSWorkspace.shared.open(store.url.deletingLastPathComponent())} label:{Label("Show Configuration Folder",systemImage:"folder")}
                     } }
                     if page == .about { about }
                     if ProcessInfo.processInfo.environment["HYPRWM_UI_PREVIEW_SCROLL"] == "bottom" {Color.clear.frame(height:0).id("settings-bottom")}
                 }.formStyle(.grouped).disabled(!store.loaded && ![.general,.about,.advanced].contains(page))
                     .onAppear { if ProcessInfo.processInfo.environment["HYPRWM_UI_PREVIEW_SCROLL"] == "bottom" {DispatchQueue.main.asyncAfter(deadline:.now()+0.5){proxy.scrollTo("settings-bottom",anchor:.bottom)}} }
                 }
-                HStack { Spacer(); if ProcessInfo.processInfo.environment["HYPRWM_UI_PREVIEW"] == "1" {Text("Предпросмотр").font(.caption).foregroundStyle(.tertiary)} else if store.saving {ProgressView().controlSize(.mini);Text("Сохранение…").font(.caption).foregroundStyle(.secondary)} else {Text("Изменения применяются автоматически").font(.caption).foregroundStyle(.tertiary)} }.padding(.horizontal,24).padding(.vertical,9)
+                HStack { Spacer(); if ProcessInfo.processInfo.environment["HYPRWM_UI_PREVIEW"] == "1" {Text("Preview").font(.caption).foregroundStyle(.tertiary)} else if store.saving {ProgressView().controlSize(.mini);Text("Saving…").font(.caption).foregroundStyle(.secondary)} else {Text("Changes apply automatically").font(.caption).foregroundStyle(.tertiary)} }.padding(.horizontal,24).padding(.vertical,9)
             }.background(Color(nsColor:.windowBackgroundColor))
-            .confirmationDialog("Вернуть исходные настройки раздела?",isPresented:$resetConfirmation,titleVisibility:.visible) {Button("Сбросить настройки",role:.destructive){store.resetPage(page)}} message:{Text("Настройки других разделов сохранятся.")}
+            .confirmationDialog("Reset this section?",isPresented:$resetConfirmation,titleVisibility:.visible) {Button("Reset Settings",role:.destructive){store.resetPage(page)}} message:{Text("Other sections will stay unchanged.")}
         }.frame(minWidth:830,minHeight:640)
         .onAppear { selection=initialPage;searchFocused=true }
 
         .onReceive(NotificationCenter.default.publisher(for:NSApplication.didBecomeActiveNotification)) {_ in store.trusted=AXIsProcessTrusted();store.reload()}
     }
-    private func sectionChanged(_ page:SettingsPage)->Bool {store.hasChanges(page)}
+    private func sectionChanged(_ page:SettingsPage)->Bool {
+        if store.hasChanges(page) {return true}
+        if page == .appearance {return !store.isDefault("appearance.border.active.colors",fallback:["rgba(ffb4a4ee)","rgba(7fd0f5ee)"])}
+        if page == .animations {return !store.isDefault("animations",fallback:[:]) || !store.isDefault("curves",fallback:[:])}
+        if page == .rules {return !store.isDefault("window_rules",fallback:[])}
+        return false
+    }
     private var general: some View {
         Group {
             Section {
-                HStack { VStack(alignment:.leading,spacing:5) {Text("Управление окнами").font(.headline);Text("Автоматически размещать окна.").foregroundStyle(.secondary)};Spacer();Toggle("",isOn:Binding(get:{store.enabled},set:{store.set("runtime.enabled",$0)})).labelsHidden().toggleStyle(.switch).disabled(!store.connected) }
-                HStack {Label("Универсальный доступ",systemImage:store.trusted ? "checkmark.shield.fill":"hand.raised.fill").foregroundStyle(store.trusted ? .green:.primary);Spacer();Text(store.trusted ? "Разрешён":"Требуется доступ").foregroundStyle(.secondary);if !store.trusted {Button("Разрешить"){store.requestAccess()}}}
+                HStack { VStack(alignment:.leading,spacing:5) {Text("Tiling").font(.headline);Text("Arrange windows automatically.").foregroundStyle(.secondary)};Spacer();Toggle("",isOn:Binding(get:{store.enabled},set:{store.set("runtime.enabled",$0)})).labelsHidden().toggleStyle(.switch).disabled(!store.connected) }
+                HStack {Label("Accessibility",systemImage:store.trusted ? "checkmark.shield.fill":"hand.raised.fill").foregroundStyle(store.trusted ? .green:.primary);Spacer();Text(store.trusted ? "Granted":"Permission Required").foregroundStyle(.secondary);if !store.trusted {Button("Grant Access"){store.requestAccess()}}}
             }
-            Section("Система") {
-                LabeledContent("Версия macOS",value:ProcessInfo.processInfo.operatingSystemVersionString)
-                LabeledContent("Уменьшение движения",value:NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? "Включено в macOS":"Выключено")
+            Section("System") {
+                LabeledContent("macOS Version",value:ProcessInfo.processInfo.operatingSystemVersionString)
+                LabeledContent("Reduce Motion",value:NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? "Enabled in macOS":"Off")
             }
             Section {TilingPreview(store:store,animated:false).frame(height:190).listRowInsets(EdgeInsets())}
         }
@@ -87,30 +93,30 @@ struct SettingsRootView: View {
     private var gradientColors: some View {
         let values=(store.value("appearance.border.active.colors",fallback:["rgba(ffb4a4ee)","rgba(7fd0f5ee)"]) as? [String]) ?? ["rgba(ffb4a4ee)"]
         return VStack(alignment:.leading,spacing:12) {
-            HStack {Text("Активная рамка");Spacer();if settingChanged(store,"appearance.border.active.colors",fallback:["rgba(ffb4a4ee)","rgba(7fd0f5ee)"]) {Button {store.reset("appearance.border.active.colors")} label:{Image(systemName:"arrow.counterclockwise")}.buttonStyle(.borderless).help("Сбросить цвета")}}
+            HStack {Text("Active Border");Spacer();if settingChanged(store,"appearance.border.active.colors",fallback:["rgba(ffb4a4ee)","rgba(7fd0f5ee)"]) {Button {store.reset("appearance.border.active.colors")} label:{Image(systemName:"arrow.counterclockwise")}.buttonStyle(.borderless).help("Reset Colors")}}
             HStack {
-                ForEach(values.indices,id:\.self) {index in ColorPicker("Цвет \(index+1)",selection:Binding(get:{nativeColor(values[index])},set:{ var colors=values;colors[index]=runtimeColor($0);store.set("appearance.border.active.colors",colors)})).labelsHidden()
+                ForEach(values.indices,id:\.self) {index in ColorPicker("Color \(index+1)",selection:Binding(get:{nativeColor(values[index])},set:{ var colors=values;colors[index]=runtimeColor($0);store.set("appearance.border.active.colors",colors)})).labelsHidden()
                     if values.count>1 {Button {var colors=values;colors.remove(at:index);store.set("appearance.border.active.colors",colors)} label:{Image(systemName:"minus.circle")}.buttonStyle(.borderless)}
                 }
-                if values.count<8 {Button {store.set("appearance.border.active.colors",values+["rgba(7fd0f5ee)"])} label:{Image(systemName:"plus.circle")}.buttonStyle(.borderless).help("Добавить цвет")};Spacer()
+                if values.count<8 {Button {store.set("appearance.border.active.colors",values+["rgba(7fd0f5ee)"])} label:{Image(systemName:"plus.circle")}.buttonStyle(.borderless).help("Add Color")};Spacer()
             }
         }.padding(.vertical,5)
     }
     private var about: some View {
         Group {
             Section {
-                VStack(spacing:13) {AppMark().frame(width:84,height:84);Text("HyprWM").font(.system(size:28,weight:.semibold));Text(store.runtimeVersion.isEmpty ? appVersion : "Версия "+store.runtimeVersion).font(.caption).foregroundStyle(.tertiary)}.frame(maxWidth:.infinity).padding(.vertical,24)
+                VStack(spacing:13) {AppMark().frame(width:84,height:84);Text("HyprWM").font(.system(size:28,weight:.semibold));Text(store.runtimeVersion.isEmpty ? appVersion : "Version "+store.runtimeVersion).font(.caption).foregroundStyle(.tertiary)}.frame(maxWidth:.infinity).padding(.vertical,24)
             }
             Section {
-                Link(destination:URL(string:"https://github.com/sakenuGOD/hyprwm-macos")!){Label("Проект HyprWM",systemImage:"arrow.up.right.square")}
-                Link(destination:URL(string:"https://github.com/sakenuGOD/hyprwm-macos/issues")!){Label("Сообщить о проблеме",systemImage:"bubble.left.and.bubble.right")}
-                Button {store.copyDiagnosis()} label:{Label("Скопировать диагностику",systemImage:"doc.on.doc")}
-                Text("Диагностика содержит версию, состояние подключения и разрешений. Содержимое окон и личные настройки в неё не входят.").font(.caption).foregroundStyle(.secondary)
+                Link(destination:URL(string:"https://github.com/sakenuGOD/hyprwm-macos")!){Label("HyprWM on GitHub",systemImage:"arrow.up.right.square")}
+                Link(destination:URL(string:"https://github.com/sakenuGOD/hyprwm-macos/issues")!){Label("Report an Issue",systemImage:"bubble.left.and.bubble.right")}
+                Button {store.copyDiagnosis()} label:{Label("Copy Diagnostics",systemImage:"doc.on.doc")}
+                Text("Diagnostics include the version, connection, and permissions. Window contents and personal settings are excluded.").font(.caption).foregroundStyle(.secondary)
             }
         }
     }
 }
-var appVersion: String { let version=Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String; let build=Bundle.main.object(forInfoDictionaryKey:"CFBundleVersion") as? String; return version.map { "Версия "+$0+(build.map{" ("+$0+")"} ?? "") } ?? "Локальная сборка · Swift" }
+var appVersion: String { let version=Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String; let build=Bundle.main.object(forInfoDictionaryKey:"CFBundleVersion") as? String; return version.map { "Version "+$0+(build.map{" ("+$0+")"} ?? "") } ?? "Local Build · Swift" }
 struct AppMark: View {
     var body: some View {GeometryReader{geometry in
         let width=min(geometry.size.width,geometry.size.height)
@@ -136,7 +142,7 @@ struct SettingRow: View {
                 Picker(spec.title,selection:Binding(get:{String(describing:store.value(spec.path,fallback:spec.fallback))},set:{value in store.set(spec.path,spec.fallback is Int ? (Int(value) ?? 0) as Any:value)})) {ForEach(choices,id:\.0){Text($0.1).tag($0.0)}}.labelsHidden().frame(maxWidth:220)
             case .color: ColorPicker(spec.title,selection:Binding(get:{nativeColor(store.string(spec.path,spec.fallback as? String ?? ""))},set:{store.set(spec.path,runtimeColor($0))})).labelsHidden()
             }
-            if settingChanged(store,spec.path,fallback:spec.fallback) {Button {store.reset(spec.path)} label:{Image(systemName:"arrow.counterclockwise").font(.caption)}.buttonStyle(.borderless).foregroundStyle(.secondary).help("Сбросить: "+spec.title).accessibilityLabel("Сбросить "+spec.title).frame(width:16)} else {Color.clear.frame(width:16,height:16)}
+            if settingChanged(store,spec.path,fallback:spec.fallback) {Button {store.reset(spec.path)} label:{Image(systemName:"arrow.counterclockwise").font(.caption)}.buttonStyle(.borderless).foregroundStyle(.secondary).help("Reset: "+spec.title).accessibilityLabel("Reset "+spec.title).frame(width:16)} else {Color.clear.frame(width:16,height:16)}
         }.padding(.vertical,2)
     }
 }
