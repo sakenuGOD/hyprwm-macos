@@ -4,6 +4,11 @@
 import CChan
 import Foundation
 
+public enum ChannelCapabilities {
+    public static let mask=UInt32(CH_CAP_EFFECTS)|UInt32(CH_CAP_SHADOW)|UInt32(CH_CAP_SNAPSHOT)|UInt32(CH_CAP_SNAPSHOT_COVER)|UInt32(CH_CAP_TERMINAL_MOVE)
+    public static func abi(_ version:UInt32) -> UInt32 { version & ~mask }
+}
+
 public final class LiveChannel: ChannelAPI {
     public let path: String
     public let base: UnsafeMutableRawPointer
@@ -31,8 +36,23 @@ public final class LiveChannel: ChannelAPI {
     public var magicOK: Bool { hdr.pointee.magic == CH_MAGIC }
     public var sizeOK: Bool { hdr.pointee.size == ch_abi() }
     public var ticks: UInt32 { hdr.pointee.ticks }
+    public var engineTime:Double { hdr.pointee.now }
+    public var snapshotBatchTime:Double {
+        let header=hdr.pointee
+        return NativeBatchClock.lowerBound(now:header.now,presentation:header.te,period:header.period)
+    }
     public func setStop() { hdr.pointee.stop = 1 }
     public var raw: UnsafeMutablePointer<ch_hdr> { hdr }
+    public func curvesCompatible(_ configuration:HyprConfig) -> Bool {
+        let scale=configuration.timeScale
+        return configuration.sortedCurves().enumerated().allSatisfy { index,entry in
+            guard index<Int(CH_NCURVE) else{return false}
+            switch entry.1 {
+            case let .spring(mass,k,d):return hs_curve_compatible(UInt32(index),UInt32(CV_SPRING),mass,k/(scale*scale),d/scale,0)==1
+            case let .bezier(p1,p2):return hs_curve_compatible(UInt32(index),UInt32(CV_BEZIER),p1.0,p1.1,p2.0,p2.1)==1
+            }
+        }
+    }
 
     private func full() {
         if !fullLogged { log("кольцо команд полно (движок не забирает)") }
@@ -40,6 +60,15 @@ public final class LiveChannel: ChannelAPI {
     }
 
     // ── команды ──────────────────────────────────────────────────────────
+    public var terminalGeometrySupported:Bool {hdr.pointee.version & UInt32(CH_CAP_TERMINAL_MOVE) != 0}
+    public func geomTerminal(_ wid:Int,to:Rect,curves:(Int,Int),durations:(Double,Double),from:Rect?) -> Bool {
+        guard terminalGeometrySupported else{return false}
+        let flags=UInt32(F_MOVE_END)|(from != nil ? UInt32(F_FROM):0),initial=from ?? Rect(0,0,0,0)
+        let result=ch_geom(Int32(OP_GEOM),UInt32(wid),flags,to.x,to.y,to.w,to.h,initial.x,initial.y,initial.w,initial.h,
+            UInt32(curves.0),UInt32(curves.1),durations.0,durations.1)
+        if result != 0 {full();return false}
+        fullLogged=false;return true
+    }
     public func geom(_ wid: Int, _ to: Rect, _ cpos: Int, _ csize: Int, dpos: Double, dsize: Double, frm: Rect?,
                      move: Bool, warp: Bool, stretch: Bool) {
         let fl = (frm != nil ? UInt32(F_FROM) : 0) | (move ? UInt32(F_MOVE) : 0) | (stretch ? UInt32(F_STRETCH) : 0)
@@ -51,9 +80,26 @@ public final class LiveChannel: ChannelAPI {
     }
 
     public func alpha(_ wid: Int, _ a: Double, _ curve: Int, _ dur: Double, frm: Double?) {
-        if ch_alpha(UInt32(wid), frm != nil ? UInt32(F_FROM) : 0, a, frm ?? 0, UInt32(curve), dur) != 0 { full() }
+        if ch_alpha(UInt32(wid), frm != nil ? UInt32(F_FROM) : 0, a, frm ?? 0, UInt32(dur <= 0 ? Int(CH_INSTANT) : curve), dur) != 0 { full() }
     }
 
+    public func geometry(_ wid: Int,to: Rect,curves: (Int,Int),durations: (Double,Double),from: Rect?,warp: Bool,stretch: Bool,native: Bool,wait: Bool,hold: Bool) {
+        let flags: UInt32=(from != nil ? UInt32(F_FROM) : 0)|UInt32(F_MOVE)|(stretch ? UInt32(F_STRETCH) : 0)|(native ? UInt32(F_NATIVE) : 0)|(wait ? UInt32(F_WAIT) : 0)|(hold ? UInt32(F_HOLD) : 0)
+        let initial=from ?? Rect(0,0,0,0)
+        if ch_geom(Int32(warp ? OP_WARP : OP_GEOM),UInt32(wid),flags,to.x,to.y,to.w,to.h,initial.x,initial.y,initial.w,initial.h,
+            UInt32(curves.0),UInt32(curves.1),durations.0,durations.1) != 0 { full() }
+    }
+    public func configureNative(_ wid: Int, _ frame: Rect) { if ch_cfg(UInt32(wid),frame.x,frame.y,frame.w,frame.h) != 0 { full() } }
+    public var snapshotSupported:Bool {
+        let required=UInt32(CH_CAP_SNAPSHOT)|UInt32(CH_CAP_SNAPSHOT_COVER)
+        return (hdr.pointee.version & required) == required
+    }
+    public func snapshotGeometry(_ wid:Int,to:Rect,curves:(Int,Int),durations:(Double,Double),from:Rect?) -> Bool {
+        let initial=from ?? Rect(0,0,0,0),flags=from != nil ? UInt32(F_FROM) : 0
+        return hs_snapshot_final(UInt32(wid),flags,to.x,to.y,to.w,to.h,initial.x,initial.y,initial.w,initial.h,
+            UInt32(curves.0),UInt32(curves.1),durations.0,durations.1) == 0
+    }
+    public func space(_ wid: Int, _ sid: Int) { if ch_space(UInt32(wid), UInt64(sid)) != 0 { full() } }
     public func under(_ wid: Int, _ under: Int) { _ = ch_under(UInt32(wid), UInt32(under)) }
     public func forget(_ wid: Int) { _ = ch_forget(UInt32(wid)) }
     public func commit() { ch_commit() }
@@ -79,10 +125,11 @@ public final class LiveChannel: ChannelAPI {
         for i in 0..<Int(CH_NW) {
             let w = winArr[i]
             if w.used == 0 { continue }
-            out.append(EngWin(wid: Int(w.wid), pos: (w.pos.v.0, w.pos.v.1), size: (w.size.v.0, w.size.v.1),
+            var window=EngWin(wid: Int(w.wid), pos: (w.pos.v.0, w.pos.v.1), size: (w.size.v.0, w.size.v.1),
                               posActive: w.pos.active != 0, sizeActive: w.size.active != 0,
                               alphaActive: w.alpha.active != 0, settling: w.settling != 0, curAlpha: w.cur_alpha,
-                              held: w.held != 0, radius: w.radius, a: Rect(w.ax, w.ay, w.aw, w.ah)))
+                              held: w.held != 0, radius: w.radius, a: Rect(w.ax, w.ay, w.aw, w.ah))
+            window.geo=Int(w.geo);out.append(window)
         }
         return out
     }
@@ -90,6 +137,7 @@ public final class LiveChannel: ChannelAPI {
     public var stats: EngStats {
         let h = hdr.pointee
         var s = EngStats()
+        s.holding = Int(h.holding)
         s.ticks = Int(h.ticks); s.nactive = Int(h.nactive); s.errors = Int(h.errors)
         s.ticksLate = Int(h.ticks_late); s.teSkips = Int(h.te_skips)
         s.tickUsMax = h.tick_us_max; s.tickUsLast = h.tick_us_last
@@ -110,3 +158,64 @@ public final class LiveChannel: ChannelAPI {
     }
 }
 
+
+extension LiveChannel {
+    public func decorationFocus(_ wid: Int, fullscreen: Int) {
+        let channel=base.assumingMemoryBound(to: CChan.ch.self)
+        channel.pointee.deco.focus=UInt32(max(0,wid)); channel.pointee.deco.nofull=UInt32(max(0,fullscreen))
+    }
+    /// Writes the public legacy decoration carrier and capability-gated GPU effect packets.
+    /// No new capabilities are advertised by this writer.
+    public func configureAppearance(_ config: HyprConfig) throws {
+        let appearance=try Appearance(config), channel=base.assumingMemoryBound(to: CChan.ch.self)
+        var decoration=channel.pointee.deco
+        func copy<T>(_ values: [Double], _ tuple: inout T) {
+            withUnsafeMutableBytes(of: &tuple) { raw in
+                let target=raw.bindMemory(to:Double.self)
+                for index in 0..<min(target.count,values.count) { target[index]=values[index] }
+            }
+        }
+        let border=config.anim("border"), shadow=config.anim("fadeShadow")
+        decoration.ngrad=8
+        copy(appearance.gradient.flatMap(\.values), &decoration.grad)
+        copy(appearance.inactive.values, &decoration.inact)
+        copy(appearance.endpoints.0, &decoration.start); copy(appearance.endpoints.1, &decoration.end)
+        decoration.width=appearance.width; decoration.radius=appearance.radius
+        decoration.curve=UInt32(border.curve); decoration.dur=border.on ? border.dur : 0
+        decoration.sh_on=appearance.shadowOn ? 1 : 0; decoration.srad=appearance.shadowRange/3.1
+        decoration.soff=appearance.shadowOffset.1; decoration.sop_act=appearance.shadowActive.a; decoration.sop_in=appearance.shadowInactive.a
+        decoration.scurve=UInt32(shadow.curve); decoration.sdur=shadow.on ? shadow.dur : 0
+        decoration.sys_off=3; decoration.inset10=10
+        for (leaf, isBorder) in [("border",true),("fadeShadow",false)] {
+            let curve=config.curves()[config.animation(leaf).curve]
+            let points: [Double]
+            if case let .bezier(p1,p2)?=curve { points=[p1.0,p1.1,p2.0,p2.1] } else { points=[0.25,1,0.5,1] }
+            if isBorder { copy(points,&decoration.bez) } else { copy(points,&decoration.sbez) }
+        }
+        decoration.on=appearance.width > 0 ? 1 : 0
+        channel.pointee.deco=decoration
+        let close=config.anim("windowsOut"), fade=config.anim("fadeOut")
+        let closeScale=config.animation("windowsOut").style == "fade" ? 1 : (config.popin("windowsOut") ?? 0)
+        var flags: UInt64=3 | UInt64(close.on ? close.curve : Int(CH_INSTANT))<<8 | UInt64(fade.on ? fade.curve : Int(CH_INSTANT))<<16
+        if config.raw["config"]?["animations"]?["enabled"]?.truthy == false { flags |= 1<<24 }
+        if config.raw["runtime"]?["window_resize_mode"]?.string == "buffer" { flags |= 1<<25 }
+        hdr.pointee.reserved.0=flags
+        hdr.pointee.reserved.1=(close.on ? close.dur : 0).bitPattern
+        hdr.pointee.reserved.2=(fade.on ? fade.dur : 0).bitPattern
+        hdr.pointee.reserved.3=closeScale.bitPattern
+        if hdr.pointee.version & UInt32(CH_CAP_EFFECTS) != 0 {
+            let glow=config.anim("fadeGlow"), disabled=config.raw["config"]?["animations"]?["enabled"]?.truthy == false
+            let values=appearance.effectsPacket(glow.on ? glow.dur : 0)
+            let flags: UInt32=1 | (appearance.glowOn ? 2 : 0) | (disabled ? 4 : 0)
+            let result=values.withUnsafeBufferPointer { ch_effects(flags,UInt32(glow.curve),$0.baseAddress) }
+            if result != 0 { throw CmdError("native effects command ring unavailable") }
+        }
+        if hdr.pointee.version & UInt32(CH_CAP_SHADOW) != 0 {
+            let values=appearance.exactShadow ? appearance.shadowPacket : [1,3,1,0,0,0,0,0,0,0,0,0,0]
+            let flags: UInt32=appearance.shadowOn && appearance.exactShadow ? 1 : 0
+            let result=values.withUnsafeBufferPointer { ch_shadow(flags,UInt32(shadow.curve),shadow.on ? shadow.dur : 0,$0.baseAddress) }
+            if result != 0 { throw CmdError("native shadow command ring unavailable") }
+        }
+        commit()
+    }
+}

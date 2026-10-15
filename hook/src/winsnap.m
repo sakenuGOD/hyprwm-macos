@@ -5,6 +5,52 @@
 // Сборка: clang -O2 -fobjc-arc -dynamiclib -framework AppKit -framework ApplicationServices
 //         src/winsnap.m -o build/libwinsnap.dylib
 #import <AppKit/AppKit.h>
+#include "snapshot_policy.h"
+#include "focus_monitor.h"
+
+static BOOL menuTracking;
+static void menuNotice(CFNotificationCenterRef center, void *observer, CFStringRef name,
+                       const void *object, CFDictionaryRef info) {
+    menuTracking = CFEqual(name, CFSTR("com.apple.HIToolbox.beginMenuTrackingNotification"));
+}
+
+// Pump distributed AppKit tracking notices on the daemon's main thread without capturing pixels.
+int ws_menu_tracking(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        CFNotificationCenterRef c = CFNotificationCenterGetDistributedCenter();
+        CFNotificationCenterAddObserver(c, &menuTracking, menuNotice,
+            CFSTR("com.apple.HIToolbox.beginMenuTrackingNotification"), NULL,
+            CFNotificationSuspensionBehaviorDeliverImmediately);
+        CFNotificationCenterAddObserver(c, &menuTracking, menuNotice,
+            CFSTR("com.apple.HIToolbox.endMenuTrackingNotification"), NULL,
+            CFNotificationSuspensionBehaviorDeliverImmediately);
+    });
+    CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0, true);
+    return menuTracking;
+}
+
+// Spotlight's accessory panel owns keyboard input while NSWorkspace still reports
+// the previously active app. Query only window metadata, never pixels or AX.
+int ws_input_overlay(void) {
+    @autoreleasepool {
+        CFArrayRef windows = CGWindowListCopyWindowInfo(
+            kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID);
+        if (!windows) return 1;  // Do not steal focus while native ownership is unknown.
+        BOOL active = NO;
+        for (NSDictionary *window in (__bridge NSArray *)windows) {
+            if ([window[(id)kCGWindowOwnerName] isEqualToString:@"Spotlight"] &&
+                [window[(id)kCGWindowLayer] intValue] > 0 &&
+                [window[(id)kCGWindowIsOnscreen] boolValue] &&
+                [window[(id)kCGWindowAlpha] doubleValue] > .001) {
+                active = YES;
+                break;
+            }
+        }
+        CFRelease(windows);
+        return active;
+    }
+}
 
 typedef int CGSConnectionID;
 extern CGSConnectionID SLSMainConnectionID(void);
@@ -16,19 +62,35 @@ extern CFArrayRef SLSCopyWindowsWithOptionsAndTags(CGSConnectionID cid, uint32_t
 
 // wid -> Space для всех окон: по одному запросу на рабочий стол (раньше — запрос на каждое окно, ~35 RPC
 // в WindowServer на снимок, 60 снимков/с).
-static NSMutableDictionary *space_map(CGSConnectionID cid) {
+static NSMutableDictionary *current_display_spaces(CFArrayRef displays) {
+    NSMutableDictionary *current = [NSMutableDictionary dictionary];
+    if (!displays) return current;
+    for (NSDictionary *d in (__bridge NSArray *)displays) {
+        NSNumber *sid = d[@"Current Space"][@"id64"] ?: d[@"Current Space"][@"ManagedSpaceID"];
+        if (d[@"Display Identifier"] && sid) current[d[@"Display Identifier"]] = sid;
+    }
+    return current;
+}
+
+static NSMutableDictionary *space_map(CGSConnectionID cid, NSMutableDictionary *types, NSMutableSet *fullscreen,
+                                     NSMutableDictionary *displayCurrent) {
     NSMutableDictionary *m = [NSMutableDictionary dictionary];
     CFArrayRef ds = SLSCopyManagedDisplaySpaces(cid);
     if (!ds) return m;
+    [displayCurrent addEntriesFromDictionary:current_display_spaces(ds)];
     for (NSDictionary *d in (__bridge NSArray *)ds) {
         for (NSDictionary *sp in d[@"Spaces"]) {
             NSNumber *sid = sp[@"id64"] ?: sp[@"ManagedSpaceID"];
             if (!sid) continue;
+            NSNumber *type = sp[@"type"] ?: @0;
+            types[sid] = type;
             uint64_t set = 0, clear = 0;
             CFArrayRef ws = SLSCopyWindowsWithOptionsAndTags(cid, 0, (__bridge CFArrayRef) @[ sid ], 0x7, &set, &clear);
             if (!ws) continue;
-            for (NSNumber *w in (__bridge NSArray *)ws)
+            for (NSNumber *w in (__bridge NSArray *)ws) {
                 if (!m[w]) m[w] = sid;
+                if (type.intValue == 4) [fullscreen addObject:w];
+            }
             CFRelease(ws);
         }
     }
@@ -50,11 +112,53 @@ int ws_snapshot(char *buf, int cap) {
         NSScreen *s = NSScreen.screens.firstObject;
         CGFloat H = NSMaxY(s.frame);
         NSRect v = s.visibleFrame;
+        NSMutableDictionary *space_types = [NSMutableDictionary dictionary];
+        NSMutableSet *fullscreen = [NSMutableSet set];
+        NSMutableDictionary *displayCurrent = [NSMutableDictionary dictionary];
+        NSDictionary *spm = getenv("WINSNAP_OLD") ? nil : space_map(cid, space_types, fullscreen, displayCurrent);
+        NSArray<NSScreen *> *screens = NSScreen.screens;
+        NSMutableArray *monitors = [NSMutableArray array];
+        FocusMonitorRect monitorRects[screens.count ?: 1];
+        for (NSScreen *display in screens) {
+            CGDirectDisplayID did = [display.deviceDescription[@"NSScreenNumber"] unsignedIntValue];
+            CFUUIDRef uuid = CGDisplayCreateUUIDFromDisplayID(did);
+            NSString *key = uuid ? CFBridgingRelease(CFUUIDCreateString(NULL, uuid)) : @"";
+            if (uuid) CFRelease(uuid);
+            NSRect f = display.frame, visible = display.visibleFrame;
+            NSDictionary *frame = @{@"x": @(f.origin.x), @"y": @(H - NSMaxY(f)),
+                                    @"w": @(f.size.width), @"h": @(f.size.height)};
+            NSDictionary *work = @{@"x": @(visible.origin.x), @"y": @(H - NSMaxY(visible)),
+                                   @"w": @(visible.size.width), @"h": @(visible.size.height)};
+            NSNumber *current = displayCurrent[key] ?: displayCurrent[@"Main"];
+            if (!current && display == s) current = @(sp0);
+            monitorRects[monitors.count] = (FocusMonitorRect){f.origin.x, H - NSMaxY(f), f.size.width, f.size.height};
+            [monitors addObject:@{@"id": @(did), @"screen": frame, @"visible": work, @"space": current ?: @0}];
+        }
+        NSMutableArray *workspaceNative = [NSMutableArray array];
+        CFArrayRef workspaceDisplays = SLSCopyManagedDisplaySpaces(cid);
+        if (workspaceDisplays) {
+            for (NSDictionary *display in (__bridge NSArray *)workspaceDisplays) {
+                NSString *identifier = display[@"Display Identifier"];
+                NSDictionary *current = display[@"Current Space"];
+                NSNumber *sid = current[@"id64"] ?: current[@"ManagedSpaceID"];
+                for (NSDictionary *space in display[@"Spaces"]) {
+                    NSNumber *candidate = space[@"id64"] ?: space[@"ManagedSpaceID"];
+                    if (identifier && sid && [candidate isEqual:sid])
+                        [workspaceNative addObject:@{@"display":identifier,@"sid":sid,
+                            @"uuid":space[@"uuid"] ?: space[@"UUID"] ?: @"",@"type":space[@"type"] ?: @(-1)}];
+                }
+            }
+            CFRelease(workspaceDisplays);
+        }
         NSMutableString *o = [NSMutableString string];
         [o appendFormat:@"{\"screen\":{\"x\":%.0f,\"y\":%.0f,\"w\":%.0f,\"h\":%.0f},",
                         s.frame.origin.x, H - NSMaxY(s.frame), s.frame.size.width, s.frame.size.height];
         [o appendFormat:@"\"visible\":{\"x\":%.0f,\"y\":%.0f,\"w\":%.0f,\"h\":%.0f},",
                         v.origin.x, H - NSMaxY(v), v.size.width, v.size.height];
+        NSData *monitorJSON = [NSJSONSerialization dataWithJSONObject:monitors options:0 error:nil];
+        [o appendFormat:@"\"monitors\":%@,", [[NSString alloc] initWithData:monitorJSON encoding:NSUTF8StringEncoding]];
+        NSData *workspaceJSON = [NSJSONSerialization dataWithJSONObject:workspaceNative options:0 error:nil];
+        [o appendFormat:@"\"workspace_native\":%@,", [[NSString alloc] initWithData:workspaceJSON encoding:NSUTF8StringEncoding]];
         [o appendFormat:@"\"front_pid\":%d,\"windows\":[",
                         NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier];
         // Сначала окна на экране в НАСТОЯЩЕМ z-порядке (OnScreenOnly идёт спереди назад; OptionAll
@@ -70,14 +174,14 @@ int ws_snapshot(char *buf, int cap) {
             if (![seen containsObject:d[(id)kCGWindowNumber]]) [m addObject:d];
         CFRelease(on); CFRelease(all);
         CFArrayRef a = (__bridge_retained CFArrayRef)m;
-        NSDictionary *spm = getenv("WINSNAP_OLD") ? nil : space_map(cid);
         BOOL first = YES;
         for (CFIndex i = 0; i < CFArrayGetCount(a); i++) {
             NSDictionary *d = (__bridge NSDictionary *)CFArrayGetValueAtIndex(a, i);
-            if ([d[(id)kCGWindowLayer] intValue] != 0) continue;
+            int layer = [d[(id)kCGWindowLayer] intValue];
+            BOOL ordered = [d[(id)kCGWindowIsOnscreen] boolValue];
             CGRect r = CGRectZero;
             CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)d[(id)kCGWindowBounds], &r);
-            if (r.size.width < 60 || r.size.height < 60) continue;
+            if (!snapshot_include(layer, ordered, r.size.width, r.size.height)) continue;
             NSNumber *wid = d[(id)kCGWindowNumber];
             uint64_t sp = 0;
             if (spm) sp = [spm[wid] unsignedLongLongValue];
@@ -87,17 +191,41 @@ int ws_snapshot(char *buf, int cap) {
                     sp = [(__bridge NSNumber *)CFArrayGetValueAtIndex(sps, 0) unsignedLongLongValue];
                 if (sps) CFRelease(sps);
             }
+            if (!sp && ordered && layer != 0) sp = sp0;
+            size_t monitorIndex = focus_monitor_for((FocusMonitorRect){r.origin.x, r.origin.y, r.size.width, r.size.height},
+                                                    monitorRects, monitors.count);
+            unsigned int monitorID = monitors.count ? [monitors[monitorIndex][@"id"] unsignedIntValue] : 0;
             [o appendFormat:@"%@{\"wid\":%d,\"pid\":%d,\"owner\":%@,\"name\":%@,\"x\":%.1f,\"y\":%.1f,"
-                             "\"w\":%.1f,\"h\":%.1f,\"on\":%d,\"space\":%llu}",
+                             "\"w\":%.1f,\"h\":%.1f,\"on\":%d,\"space\":%llu,\"layer\":%d,\"alpha\":%.3f,\"native_fullscreen\":%d,\"monitor\":%u}",
                             first ? @"" : @",", wid.intValue, [d[(id)kCGWindowOwnerPID] intValue],
                             esc(d[(id)kCGWindowOwnerName]), esc(d[(id)kCGWindowName]),
                             r.origin.x, r.origin.y, r.size.width, r.size.height,
-                            [d[(id)kCGWindowIsOnscreen] boolValue], sp];
+                            ordered, sp, layer, [d[(id)kCGWindowAlpha] doubleValue], [fullscreen containsObject:wid], monitorID];
             first = NO;
         }
         CFRelease(a);
         uint64_t sp1 = SLSGetActiveSpace(cid);
-        [o appendFormat:@"],\"space\":%llu,\"stable\":%d}", sp1, sp0 == sp1];
+        BOOL displaysStable = YES;
+        if (screens.count > 1) {
+            CFArrayRef after = SLSCopyManagedDisplaySpaces(cid);
+            displaysStable = after && [displayCurrent isEqualToDictionary:current_display_spaces(after)];
+            if (after) CFRelease(after);
+        }
+        NSArray<NSScreen *> *afterScreens = NSScreen.screens;
+        displaysStable = displaysStable && afterScreens.count == monitors.count;
+        CGFloat afterH = NSMaxY(afterScreens.firstObject.frame);
+        for (NSUInteger i = 0; displaysStable && i < afterScreens.count; ++i) {
+            NSScreen *display = afterScreens[i];
+            NSDictionary *before = monitors[i], *frame = before[@"screen"], *work = before[@"visible"];
+            NSRect f = display.frame, a = display.visibleFrame;
+            displaysStable = [display.deviceDescription[@"NSScreenNumber"] isEqual:before[@"id"]] &&
+                f.origin.x == [frame[@"x"] doubleValue] && afterH - NSMaxY(f) == [frame[@"y"] doubleValue] &&
+                f.size.width == [frame[@"w"] doubleValue] && f.size.height == [frame[@"h"] doubleValue] &&
+                a.origin.x == [work[@"x"] doubleValue] && afterH - NSMaxY(a) == [work[@"y"] doubleValue] &&
+                a.size.width == [work[@"w"] doubleValue] && a.size.height == [work[@"h"] doubleValue];
+        }
+        [o appendFormat:@"],\"space\":%llu,\"space_type\":%d,\"stable\":%d}", sp1,
+            [space_types[@(sp1)] intValue], sp0 == sp1 && displaysStable];
         const char *u = o.UTF8String;
         int n = (int)strlen(u);
         if (n + 1 > cap) return -(n + 1);

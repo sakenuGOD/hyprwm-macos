@@ -223,6 +223,7 @@ final class ConfigurerTests: XCTestCase {
     final class AXSys: SysAPI {
         let lock = NSLock()
         var frames: [Rect] = []
+        var sizes:[(Double,Double)]=[]
         var cur = Rect(0, 0, 800, 600)
         let gate = DispatchSemaphore(value: 0)
         var gateFirst = true
@@ -236,6 +237,10 @@ final class ConfigurerTests: XCTestCase {
             return 0
         }
         func axGetFrame(_ pid: Int, _ wid: Int) -> Rect? { lock.lock(); defer { lock.unlock() }; return cur }
+        func axSize(_ pid:Int,_ wid:Int,_ width:Double,_ height:Double) -> Int {
+            lock.lock();defer{lock.unlock()}
+            sizes.append((width,height));cur=Rect(cur.x,cur.y,max(width,470),max(height,584));return 0
+        }
         func snapshot() throws -> Snapshot { throw CmdError("-") }
         func winPidLevel(_ wid: Int) -> (pid: Int?, level: Int?) { (nil, nil) }
         func frontPid() -> Int? { nil }
@@ -275,5 +280,19 @@ final class ConfigurerTests: XCTestCase {
         XCTAssertEqual(results[0].to, Rect(0, 0, 400, 300))
         XCTAssertEqual(results[0].got, Rect(0, 0, 470, 584))   // окно встало на свой минимум
         XCTAssertEqual(sys.frames.map(\.w), [300, 400], "промежуточная цель 350 пропущена")
+    }
+    func testEarlySizeOnlyKeepsLogicalDestinationAndNeverCallsPositionSetter() throws {
+        let sys=AXSys(),done=expectation(description:"one size accepted")
+        sys.cur=Rect(12,41,1176,850)
+        let logical=Rect(605,41,583,850)
+        let worker=Configurer(sys:sys) {result in
+            XCTAssertEqual(result.to,logical)
+            XCTAssertEqual(result.got,Rect(12,41,583,850))
+            done.fulfill()
+        }
+        var job=CfgJob(wid:1,pid:9,owner:"Fixture",to:logical);job.sizeOnly=true
+        worker.submit([job]);wait(for:[done],timeout:2)
+        sys.lock.lock();defer{sys.lock.unlock()}
+        XCTAssertEqual(sys.sizes.count,1);XCTAssertTrue(sys.frames.isEmpty)
     }
 }

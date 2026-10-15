@@ -4,17 +4,18 @@
 //   1. забирает из общей памяти все опубликованные команды и применяет их с одним t0;
 //   2. продвигает переменные всех окон (позиция, размер, альфа) по кривым Hyprland —
 //      пружина аналитикой hyprutils advanceSpring, безье с запеканием 255 точек и getYForPoint;
-//   3. читает у сервера фактическую рамку окна A и ставит трансформ, который показывает
-//      окно в видимой рамке B(t): A растягивается в B (пивот — левый верхний угол окна).
-//      Приложению конечный размер сообщается один раз (демон), до перерисовки видно растяжение.
+//   3. читает фактическую рамку A. Legacy visual mode показывает её в B(t);
+//      F_NATIVE sends the central intermediate geometry to the app, while real A
+//      owns presentation/ring/input. Native app handler has no second animation clock.
 // Когда анимации окна кончились и приложение приняло размер (или вышло время ожидания) —
 // identity, слот трансформа удаляется сервером, окно рисуется как есть.
 //
-// Тик: anim_frame висит в metalCallbacks (зовётся из composite() раз за кадр) и ставит
-// anim_tick в очередь главного потока «сейчас»; в простое тик сам перепланирует себя
-// через idle_poll, чтобы забирать команды.
+// Тик идёт по таймеру главного потока, в фазе развёртки выбранного дисплея WS.
+// anim_frame не устанавливается в metalCallbacks: повторная перепланировка ломает фазу.
 // Сборка: build_anim4.sh (плоский образ __TEXT, без релокаций и без обращений к __DATA).
 #include "chan.h"
+#include "live_edge.h"
+#include "../effects/config_command.h"
 
 typedef struct { double x, y, w, h; } rect;
 struct rect4_ { double x, y, w, h; };
@@ -119,6 +120,16 @@ struct ctx {
     void       (*wm_shadow)(void *win, const void *act, const void *inact);             // 0x3d8 WSWindowSetWindowManagerShadowProperties
     void       (*sh_inval)(void *conn, void *win);                                      // 0x3e0 WSWindowInvalidateShadowFrame
     void       (*sh_sched)(void *win, void *conn);                                      // 0x3e8 CGXWindow::invalidate_shadow_and_schedule_update
+    unsigned   (*display_id)(void *win);                                               // 0x3f0 WSWindowGetDisplayID [V native getter]
+    void        *s_name, *s_setname, *layer_name, *s_equal;                              // 0x3f8..0x410 ownership of our CALayers
+    double       scan_t;                                                               // 0x418 last new-window scan
+    void        *s_colorsget, *str_colors;                                             // 0x420..0x428 single-ring focus animation
+    void        *s_removeanim;                                                        // 0x430
+    struct edge_api *edge_api;                                                       // 0x438
+    struct edge_state *edges;                                                       // 0x440 private, 64 owned helpers
+    const struct hy_effects_api *effects_api;                                        // 0x448 optional separately loaded module
+    void *effects_runtime;                                                          // 0x450 separately owned heap state
+    u64 pending_edge_generation[CH_NW];                                             // 0x458..0x658 private prepare requests
 };
 
 _Static_assert(__builtin_offsetof(struct ctx, msg) == 0xc0, "ctx");
@@ -139,6 +150,15 @@ _Static_assert(__builtin_offsetof(struct ctx, post) == 0x3c0, "ctx");
 _Static_assert(__builtin_offsetof(struct ctx, owner) == 0x3c8, "ctx");
 _Static_assert(__builtin_offsetof(struct ctx, s_arm) == 0x3d0, "ctx");
 _Static_assert(__builtin_offsetof(struct ctx, sh_sched) == 0x3e8, "ctx");
+_Static_assert(__builtin_offsetof(struct ctx, display_id) == 0x3f0, "ctx");
+_Static_assert(__builtin_offsetof(struct ctx, scan_t) == 0x418, "ctx");
+_Static_assert(__builtin_offsetof(struct ctx, edge_api) == 0x438, "ctx");
+_Static_assert(__builtin_offsetof(struct ctx, effects_api) == 0x448, "ctx");
+_Static_assert(__builtin_offsetof(struct ctx, effects_runtime) == 0x450, "ctx");
+_Static_assert(__builtin_offsetof(struct ctx, pending_edge_generation) == 0x458, "ctx pending prepare");
+_Static_assert(sizeof(struct ctx) == 0x658, "ctx pending prepare extent");
+struct edge_lease { u32 wid, on; double generation, expires; }; // on:1=device/prepare,3=ACKed grant
+_Static_assert(512 + CH_NW * (sizeof(struct edge_state) + sizeof(struct edge_lease)) <= 16384, "edge mapping overflow");
 _Static_assert(sizeof(struct ctx) <= 0x800, "ctx заходит на P8_TAB");
 _Static_assert(__builtin_offsetof(struct ctx, s_shpathget) == 0x330, "ctx");
 _Static_assert(__builtin_offsetof(struct ctx, order) == 0x338, "ctx");
@@ -146,6 +166,125 @@ _Static_assert(__builtin_offsetof(struct ctx, cb) == 0x380, "ctx");
 _Static_assert(__builtin_offsetof(struct ctx, nskip) == 0x39c, "ctx");
 _Static_assert(__builtin_offsetof(struct ctx, cur_curve) == 0x3a8, "ctx");
 _Static_assert(__builtin_offsetof(struct ctx, tags) == 0x3b0, "ctx");
+
+static int effects_ready(struct ctx *c) {
+    const struct hy_effects_api *a=c->effects_api;
+    return c->effects_runtime && a && a->magic==HY_EFFECTS_MAGIC && a->size==sizeof(*a) && a->version==1 &&
+        a->configure && a->frame && a->drop && a->destroy && a->flags && a->suspend && a->eligible;
+}
+
+// Private state belongs to this installation, not the shared channel. P8 uses
+// 0x800..0xb00 and 0xc00..0xc40; 64 saved records fit in the installer's 16KB ctx.
+struct saved_window {
+    u64 original_mask, shadow[16]; u32 mask_set, shadow_set; u64 deco_hash;
+    double cfg_rect[4], cfg_stamp;
+    u32 cfg_sent, cfg_bridge;    // sent: 0=no sample, 1=intermediate, 2=final; bridge: separate SCFG owner
+};
+#define SAVED_TAB(c) ((struct saved_window *)((char *)(c) + 0xd00))
+_Static_assert(0xd00 + CH_NW * sizeof(struct saved_window) <= 0x4000, "saved window state outside ctx mapping");
+static struct saved_window *saved_window(struct ctx *c, struct ch_win *w) { return &SAVED_TAB(c)[w - c->ch->win]; }
+struct p8c { u32 wid, src; double t0; u32 live, pending; };
+#define P8_TAB(c) ((struct p8c *)((char *)(c) + 0x800))
+#define P8_N 32
+#define P8_SOURCE(c) ((u64 *)((char *)(c) + 0xb00))
+#define P8_EPOCH(c) ((u32 *)((char *)(c) + 0xc40))
+#define SNAP_SEQUENCE(c) (*(u32 *)((char *)(c) + 0xcc0))
+_Static_assert(0x800+P8_N*sizeof(struct p8c)==0xb00,"P8 table fence");
+_Static_assert(0xb00+P8_N*sizeof(u64)==0xc00,"P8 source fence");
+_Static_assert(0xc40+P8_N*sizeof(u32)==0xcc0 && 0xcc4<=0xd00,"snapshot epoch fence");
+static int cover_index(struct ctx *c, unsigned wid, int source) {
+    for(int i=0;i<P8_N;i++) {
+        struct p8c *e=&P8_TAB(c)[i];
+        if(e->live && e->pending==3 && (source?e->src:e->wid)==wid)return i;
+    }
+    return -1;
+}
+static unsigned presentation_wid(struct ctx *c, struct ch_win *w) {
+    int i=cover_index(c,w->wid,0);
+    return i>=0?P8_TAB(c)[i].src:w->wid;
+}
+static void cover_retire(struct ctx *c,int index,int result,double now);
+static void cover_cancel_source(struct ctx *c,unsigned wid,double now) {
+    int index=cover_index(c,wid,1);
+    if(index>=0)cover_retire(c,index,SNAP_CANCELLED,now);
+}
+static struct edge_lease *live_edge_lease(struct ctx *c, struct ch_win *w) {
+    return c->edges ? &((struct edge_lease *)(c->edges + CH_NW))[w-c->ch->win] : 0;
+}
+static void live_edge_drop(struct ctx *c, struct ch_win *w) {
+    if(c->edge_api && c->edges) {
+        struct edge_lease *lease=live_edge_lease(c,w);
+        void *source=c->edges[w-c->ch->win].source_window;
+        u32 was=c->in_cb;c->in_cb=1;
+        edge_remove(c->edge_api,&c->edges[w-c->ch->win]);c->in_cb=was;
+        // Keep the exact source birth fence while an ACKed grant survives a
+        // helper teardown/retarget. Never silently transfer it to a reused WID.
+        if(lease && lease->on && lease->expires>0) c->edges[w-c->ch->win].source_window=source;
+    }
+}
+static int live_edge_granted(struct ctx *c, struct ch_win *w) {
+    if(!c->edge_api || !c->edges || c->ch->h.pad_t!=CH_EDGE_PERMISSION || w->geo==2) return 0;
+    struct edge_lease *lease=live_edge_lease(c,w);
+    void *source=c->edges[w-c->ch->win].source_window;
+    return source && lease->wid==w->wid && lease->on==3 &&
+        c->ch->h.now<lease->expires && source==c->by_id(w->wid);
+}
+static int effects_owns_corner(struct ctx *c,struct ch_win *w) {
+    if(!effects_ready(c)||!live_edge_granted(c,w)||w->wid==c->ch->deco.nofull||
+       !(c->effects_api->flags(c->effects_runtime)&HY_EFFECTS_ROUNDING))return 0;
+    void *win=c->by_id(w->wid),*cwc=win?*(void**)((char*)win+0x18):0;
+    struct hy_effects_frame identity={0};
+    identity.slot=(unsigned)(w-c->ch->win);identity.wid=w->wid;
+    identity.generation=(u64)live_edge_lease(c,w)->generation;identity.source_window=(u64)win;
+    identity.source_context=cwc?(u64)*(void**)((char*)cwc+0x38):0;
+    return c->effects_api->eligible(c->effects_runtime,&identity);
+}
+
+static int live_edge_enabled(struct ctx *c, struct ch_win *w) {
+    if(!c->edge_api || !c->edges || !c->ch->h.pad_t) return 0;
+    if(c->ch->h.pad_t!=CH_EDGE_PERMISSION) return c->ch->h.pad_t==w->wid;
+    return w->geo==3 && live_edge_granted(c,w);
+}
+static int live_edge_primed(struct ctx *c, struct ch_win *w) {
+    if(!c->edge_api || !c->edges || c->ch->h.pad_t!=CH_EDGE_PERMISSION ||
+       (w->geo!=1 && !(w->geo==0 && effects_ready(c)))) return 0;
+    struct edge_lease *lease=live_edge_lease(c,w);
+    void *source=c->edges[w-c->ch->win].source_window;
+    return source && source==c->by_id(w->wid) && lease->wid==w->wid &&
+        (lease->on==1 || lease->on==3) && c->ch->h.now<lease->expires;
+}
+static void live_edge_client(struct ctx *c, struct ch_win *w, int on) {
+    struct edge_lease *lease=live_edge_lease(c,w);
+    if(!lease || (!on && (!lease->on || lease->wid!=w->wid))) return;
+    // Production renewal requires another genuine client ACK. Posting a
+    // notification alone must not extend its grant or replace its request nonce.
+    if(on && c->ch->h.pad_t==CH_EDGE_PERMISSION) return;
+    unsigned index=(unsigned)(w-c->ch->win);
+    u64 pending=c->pending_edge_generation[index];
+    void *win=c->by_id(w->wid), *owner=win && c->owner ? c->owner(win) : 0;
+    // An ended source can be replaced under the same WID. Its capability is
+    // revoked locally; never send the old lease-end to the replacement owner.
+    if(!on && lease->expires>0 && c->edges[w-c->ch->win].source_window!=win) owner=0;
+    if(owner && c->post) {
+        struct { u32 magic,wid,enabled,reserved; double generation; } m=
+            {0x50525948u,w->wid,on!=0,0,(!on && lease->expires>0)?
+                (pending?(double)pending:lease->generation):c->ch->h.now};
+        c->post(owner,0x7f19,&m,sizeof m);
+    }
+    lease->wid=w->wid;lease->on=on!=0;lease->generation=c->ch->h.now;
+    if(!on) {
+        c->pending_edge_generation[index]=0;
+        // Ending authorization is distinct from a nonce renewal. Restore both
+        // retained FX owners before another prepare/ACK can arrive this tick.
+        if(effects_ready(c)) {
+            unsigned i=(unsigned)(w-c->ch->win);
+            c->effects_api->drop(c->effects_runtime,i,0);
+            c->effects_api->drop(c->effects_runtime,i,1);
+        }
+        lease->expires=0; c->edges[w-c->ch->win].source_window=0;
+        if(w->geo==3) w->geo=1;
+    }
+}
 
 static inline double dabs(double x) { return x < 0 ? -x : x; }
 static inline int finite(double x) { return x == x && dabs(x) < 1e7; }
@@ -199,18 +338,27 @@ static void spring_adv(struct ctx *c, const struct ch_curve *sp, double *value, 
 }
 
 static int is_spring(struct ch *ch, u32 cv) { return cv < CH_NCURVE && ch->curve[cv].type == CV_SPRING; }
+static int step(struct ctx *c, struct ch_var *v, int n, double now);
 
-// operator= из hyprutils CGenericAnimatedVariable: старт от текущего значения; у пружины
-// при перезапуске посреди хода скорость сохраняется (Vector2D: масштаб 1, float: OLD/NEW).
-static void retarget(struct ch *ch, struct ch_var *v, int n, const double *g, u32 cv, double dur, double now) {
+// Retarget from the current visible sample. Project the old physical velocity
+// onto the new displacement so a reversal doesn't instantaneously reverse it.
+// One scalar spring represents a vector trajectory; projection is the closest
+// representable continuation when the new target changes direction.
+static void retarget(struct ctx *c, struct ch_var *v, int n, const double *g, u32 cv, double dur, double now) {
+    struct ch *ch = c->ch;
     int same = 1;
     for (int i = 0; i < n; i++) same &= v->g[i] == g[i];
     if (same) return;
-    int was = v->active, sp = is_spring(ch, cv);
+    int was = v->active && is_spring(ch, v->curve), sp = is_spring(ch, cv);
     double scale = 1.0;
-    if (was && sp && n == 1) {
-        double od = v->g[0] - v->b[0], nd = g[0] - v->v[0];
-        scale = dabs(nd) > 1e-6 ? od / nd : 0.0;
+    if (was && sp) {
+        double dot = 0.0, norm = 0.0;
+        for (int i = 0; i < n; i++) {
+            double od = v->g[i] - v->b[i], nd = g[i] - v->v[i];
+            dot += od * nd;
+            norm += nd * nd;
+        }
+        scale = norm > 1e-12 ? dot / norm : 0.0;
     }
     for (int i = 0; i < n; i++) { v->g[i] = g[i]; v->b[i] = v->v[i]; }
     v->curve = cv; v->dur = dur;
@@ -235,7 +383,7 @@ static int step(struct ctx *c, struct ch_var *v, int n, double now) {
     double y; int fin;
     if (is_spring(ch, v->curve)) {
         double dt = now - v->last;
-        v->last = now;
+        if (dt > 0) v->last = now;
         spring_adv(c, &ch->curve[v->curve], &v->sv, &v->svel, dt);
         fin = dabs(1.0 - v->sv) <= 0.001 && dabs(v->svel) <= 0.001;
         if (fin) { v->sv = 1.0; v->svel = 0.0; }
@@ -258,6 +406,12 @@ static void post_evt(struct ch *ch, u32 type, u32 wid, double now, double x, dou
     e->type = type; e->wid = wid; e->t = now; e->x = x; e->y = y; e->w = w; e->h = h;
     __atomic_store_n(&ch->h.evt_head, hd + 1, __ATOMIC_RELEASE);
 }
+static void record_error(struct ch *ch, u32 opcode, u32 wid, u32 reason) {
+    ch->h.errors++;
+    // Fixed-size event ring; overwritten diagnostics never recursively add an
+    // error or touch reserved[4], which owns stale layer teardown statistics.
+    post_evt(ch,EV_ERROR,wid,ch->h.now,opcode,reason,ch->h.errors,0);
+}
 
 static int actual(struct ctx *c, struct ch_win *w, void **winp) {
     void *win = c->by_id(w->wid);
@@ -269,6 +423,55 @@ static int actual(struct ctx *c, struct ch_win *w, void **winp) {
     if (!finite(r.x) || !finite(r.y) || !(r.w >= 1) || !(r.h >= 1)) return 0;
     w->ax = r.x; w->ay = r.y; w->aw = r.w; w->ah = r.h;
     return 1;
+}
+
+// A parked system panel must not admit future banners on its connection.
+// Keep registration only when another currently native normal window is managed.
+static void prehide_forget(struct ctx *c, struct ch_win *forgot, void *win) {
+    if (!win || *(int *)((char *)win + 0x20) == 0) return;
+    u64 cn = (u64)*(void **)((char *)win + 0x30);
+    if (!cn) return;
+    for (int i = 0; i < CH_NW; i++) {
+        struct ch_win *w = &c->ch->win[i];
+        if (w == forgot || !w->used || !w->geo) continue;
+        void *sibling = c->by_id(w->wid);
+        if (sibling && *(int *)((char *)sibling + 0x20) == 0 &&
+            (u64)*(void **)((char *)sibling + 0x30) == cn) return;
+    }
+    for (int i = 0; i < CH_NCONN; i++) if (c->ch->conn[i] == cn) c->ch->conn[i] = 0;
+}
+
+// Explicit CAP6 or additive bridge transport. Stamps order application receipts;
+// they must be WS current time, never the future presentation sample time.
+static int native_post_frame(struct ctx *c, struct ch_win *w, void *win, const double *r) {
+    void *own = win && c->owner ? c->owner(win) : 0;
+    if (!own || !c->post) return 0;
+    int bridge = saved_window(c, w)->cfg_bridge;
+    struct ch_cfgmsg m = {bridge ? CH_STREAM_MAGIC : CH_CFG_MAGIC, w->wid, r[0], r[1], r[2], r[3], c->ch->h.now};
+    c->post(own, bridge ? CH_STREAM_NOTIFY : CH_CFG_NOTIFY, &m, sizeof m);
+    return 1;
+}
+
+static int native_allowed(struct ctx *c, struct ch_win *w, void *win) {
+    return win && c->owner && c->owner(win) && c->post &&
+        *(int *)((char *)win + 0x20) == 0 &&
+        ((*(u64 *)((char *)win + 0x928) >> 44) & 1);
+}
+
+static void native_cancel(struct ctx *c, struct ch_win *w, void *win) {
+    if (w->geo != 2) return;
+    double zero[4] = {0, 0, 0, 0};
+    native_post_frame(c, w, win, zero); // invalidate application-side main queue before releasing owner
+    saved_window(c, w)->cfg_sent = 0;
+    w->geo = 1; w->held = w->needs = w->settling = 0;
+    if (w->wait == 1) w->wait = 0;
+    void *present;
+    if (win && actual(c, w, &present)) {
+        double p[2] = {w->ax, w->ay}, s[2] = {w->aw, w->ah};
+        warp(&w->pos, 2, p); warp(&w->size, 2, s);
+    } else {
+        w->pos.active = w->size.active = 0;
+    }
 }
 
 static void put_xform(struct ctx *c, struct ch_win *w, double sx, double sy, double tx, double ty) {
@@ -314,6 +517,28 @@ typedef void (*msgd_t)(void *, void *, double);
 typedef void (*msgr_t)(void *, void *, struct rect4);
 typedef struct rect4 (*msgb_t)(void *, void *);     // CGRect-возврат: HFA в d0–d3 (arm64, без stret)
 
+static void layers_commit(struct ctx *c, void *tx) {
+    c->tx_dtor(tx);
+    // WS scope commit can be nested in an implicit transaction left by the
+    // scheduler/CA getters. Its selected contexts then stay unpublished, and a
+    // later window overwrites that selection. Flush the implicit outer scope
+    // while THIS scope's context list is still current. Public flush deliberately
+    // leaves an enclosing explicit native transaction alone; never pop it here.
+    void *transaction = c->cls("CATransaction");
+    if (transaction) ((void (*)(void *, void *))c->msg)(transaction, c->sel("flush"));
+}
+
+static void decoration_damage(struct ctx *c, void *win) {
+    if (!win) return;
+    // The gradient extends outside the application's content/dirty region.
+    // A CA commit or scheduling a display is not an explicit invalidation of
+    // that outer band. Use WS's native visible-frame minus opaque-interior
+    // damage path (includes transformed shadow outset), before scheduling.
+    // No shadow-property, geometry-seed or application redraw is changed here.
+    if (c->sh_inval) c->sh_inval(0, win);
+    if (c->sched_win) c->sched_win(0, win);
+}
+
 static int mask_ready(struct ctx *c) {
     if (!c->msg || !c->sel || !c->cls || !c->tx_ctor || !c->tx_add || !c->tx_dtor || !c->srgb) return 0;
     if (!c->c_layer) {
@@ -322,10 +547,30 @@ static int mask_ready(struct ctx *c) {
         c->s_bg = c->sel("setBackgroundColor:"); c->s_mask = c->sel("setMask:");
         c->s_bounds = c->sel("bounds");
         c->s_arm = c->sel("setAutoresizingMask:");
+        c->s_getmask = c->sel("mask");
+        c->s_name = c->sel("name"); c->s_setname = c->sel("setName:"); c->s_equal = c->sel("isEqualToString:");
+        void *ns = c->cls("NSString");
+        c->layer_name = ns ? ((void *(*)(void *, void *, const char *))c->msg)(ns, c->sel("stringWithUTF8String:"), "hyprwm.managed.v1") : 0;
+        if (c->layer_name) ((msg0_t)c->msg)(c->layer_name, c->s_retain);
         c->black = c->srgb(0, 0, 0, 1);
         c->c_layer = c->cls("CALayer");
     }
     return c->c_layer && c->black;
+}
+
+static void mark_layer(struct ctx *c, void *L) {
+    if (L && c->layer_name) ((msgp_t)c->msg)(L, c->s_setname, c->layer_name);
+}
+static int owned_layer(struct ctx *c, void *L) {
+    void *name = L && c->s_name ? ((msg0_t)c->msg)(L, c->s_name) : 0;
+    return name && c->layer_name && ((unsigned char (*)(void *, void *, void *))c->msg)(name, c->s_equal, c->layer_name);
+}
+static void restore_mask(struct ctx *c, struct ch_win *w, void *H) {
+    struct saved_window *s = saved_window(c, w);
+    if (H && w->mask && ((msg0_t)c->msg)(H, c->s_getmask) == (void *)w->mask)
+        ((msgp_t)c->msg)(H, c->s_mask, (void *)s->original_mask);
+    if (s->original_mask) ((msg0_t)c->msg)((void *)s->original_mask, c->s_release);
+    s->original_mask = 0; s->mask_set = 0;
 }
 
 // Слой держится у ВЕРХНЕГО края родителя (ось Y слоёв окна — вверх): WS меняет bounds Hosting/Server root в
@@ -360,6 +605,7 @@ static void put_mask(struct ctx *c, struct ch_win *w, void *win, int on, double 
         if (!M) {
             M = ((msg0_t)c->msg)(c->c_layer, c->s_layer);
             if (M) {
+                mark_layer(c, M);
                 ((msg0_t)c->msg)(M, c->s_retain);
                 keep_top(c, M);
                 ((msgp_t)c->msg)(M, c->s_bg, c->black);
@@ -370,6 +616,14 @@ static void put_mask(struct ctx *c, struct ch_win *w, void *win, int on, double 
             }
         }
         if (M) {
+            struct saved_window *s = saved_window(c, w);
+            if (!s->mask_set) {
+                void *original = ((msg0_t)c->msg)(H, c->s_getmask);
+                if (original && original != M && !owned_layer(c, original)) {
+                    ((msg0_t)c->msg)(original, c->s_retain); s->original_mask = (u64)original;
+                }
+                s->mask_set = 1;
+            }
             double hh = chh < hb.h ? chh : hb.h;                  // буфер видим от верхнего края слоя
             double y = ch->h.mask_flip ? hb.y + hb.h - hh : hb.y;  // ось Y слоя вверх [V rec2 f_011]
             struct rect4 f = {hb.x, y, cw, hh};
@@ -379,11 +633,11 @@ static void put_mask(struct ctx *c, struct ch_win *w, void *win, int on, double 
             w->mrect[0] = cw; w->mrect[1] = chh; w->mhost[0] = hb.y; w->mhost[1] = hb.h;
         }
     } else {
-        ((msgp_t)c->msg)(H, c->s_mask, 0);
+        restore_mask(c, w, H);
         ((msg0_t)c->msg)((void *)w->mask, c->s_release);
         w->mask = 0; w->mrect[0] = w->mrect[1] = 0;
     }
-    c->tx_dtor(tx);                                              // commit этого контекста
+    layers_commit(c, tx);                                       // publish this context, including implicit outer scope
     if (c->sched_win) c->sched_win(0, win);
 }
 
@@ -406,6 +660,7 @@ static int deco_ready(struct ctx *c) {
     if (!c->c_grad) {
         c->s_bwidth = c->sel("setBorderWidth:"); c->s_bcolor = c->sel("setBorderColor:");
         c->s_colors = c->sel("setColors:"); c->s_start = c->sel("setStartPoint:"); c->s_end = c->sel("setEndPoint:");
+        c->s_colorsget = c->sel("colors");
         c->s_opacity = c->sel("setOpacity:"); c->s_addsub = c->sel("addSublayer:");
         c->s_remove = c->sel("removeFromSuperlayer"); c->s_convert = c->sel("convertRect:toLayer:");
         c->s_arr = c->sel("arrayWithObjects:count:"); c->s_getmask = c->sel("mask"); c->s_curve = c->sel("setCornerCurve:");
@@ -427,6 +682,7 @@ static int deco_ready(struct ctx *c) {
         c->c_basic = c->cls("CABasicAnimation"); c->s_akp = c->sel("animationWithKeyPath:");
         c->s_from = c->sel("setFromValue:"); c->s_to = c->sel("setToValue:"); c->s_adur = c->sel("setDuration:");
         c->s_tf = c->sel("setTimingFunction:"); c->s_addanim = c->sel("addAnimation:forKey:");
+        c->s_removeanim = c->sel("removeAnimationForKey:");
         c->s_pres = c->sel("presentationLayer"); c->s_opget = c->sel("opacity"); c->s_shopget = c->sel("shadowOpacity");
         c->c_num = c->cls("NSNumber"); c->s_numf = c->sel("numberWithFloat:");
         c->c_tfn = c->cls("CAMediaTimingFunction"); c->s_tfcp = c->sel("functionWithControlPoints::::");
@@ -435,8 +691,10 @@ static int deco_ready(struct ctx *c) {
         void *sutf = c->sel("stringWithUTF8String:");
         c->str_op = ns3 ? mk(ns3, sutf, "opacity") : 0;
         c->str_shop = ns3 ? mk(ns3, sutf, "shadowOpacity") : 0;
+        c->str_colors = ns3 ? mk(ns3, sutf, "colors") : 0;
         if (c->str_op) ((msg0_t)c->msg)(c->str_op, c->s_retain);
         if (c->str_shop) ((msg0_t)c->msg)(c->str_shop, c->s_retain);
+        if (c->str_colors) ((msg0_t)c->msg)(c->str_colors, c->s_retain);
         c->s_curveget = c->sel("cornerCurve");
         c->s_subl = c->sel("sublayers"); c->s_count = c->sel("count"); c->s_objat = c->sel("objectAtIndex:");
         c->s_iskind = c->sel("isKindOfClass:"); c->s_shpathget = c->sel("shadowPath");
@@ -448,6 +706,7 @@ static int deco_ready(struct ctx *c) {
 static void *ring(struct ctx *c, double wd, double r, void *color) {
     void *L = ((msg0_t)c->msg)(c->c_layer, c->s_layer);
     if (!L) return 0;
+    mark_layer(c, L);
     ((msgd_t)c->msg)(L, c->s_bwidth, wd);
     ((msgp_t)c->msg)(L, c->s_bcolor, color);
     ((msgd_t)c->msg)(L, c->s_radius, r);
@@ -457,19 +716,6 @@ static void *ring(struct ctx *c, double wd, double r, void *color) {
 }
 
 typedef double (*msgdr_t)(void *, void *);
-// Только чтение: borderWidth/cornerRadius слоёв окна в reserved заголовка (кто рисует обводку Tahoe)
-static void probe_layers(struct ctx *c, void *cwc) {
-    struct ch *ch = c->ch;
-    void *bwsel = c->sel("borderWidth"), *crsel = c->sel("cornerRadius");
-    int offs[3] = {0x88, 0x98, 0x90};
-    for (int i = 0; i < 3; i++) {
-        void *L = *(void **)((char *)cwc + offs[i]);
-        double v = L ? ((msgdr_t)c->msg)(L, bwsel) : -1, r = L ? ((msgdr_t)c->msg)(L, crsel) : -1;
-        ch->h.reserved[i] = (u64)(v * 1000) << 32 | (u64)(r * 1000);
-    }
-    ch->h.reserved[3]++;
-}
-
 static void border_make(struct ctx *c, struct ch_win *w, void *root) {
     struct ch_deco *d = &c->ch->deco;
     double r = d->radius + d->width;
@@ -480,9 +726,10 @@ static void border_make(struct ctx *c, struct ch_win *w, void *root) {
     if (ci) c->release(ci);
     void *G = ((msg0_t)c->msg)(c->c_grad, c->s_layer);
     if (!I || !G) return;
+    mark_layer(c, G);
     void *cols[8]; unsigned n = d->ngrad > 8 ? 8 : d->ngrad;
     if (n < 2) n = 2;
-    for (unsigned i = 0; i < n; i++) cols[i] = c->srgb(d->grad[i][0], d->grad[i][1], d->grad[i][2], d->grad[i][3]);
+    for (unsigned i = 0; i < n; i++) cols[i] = c->srgb(d->inact[0], d->inact[1], d->inact[2], d->inact[3]);
     void *arr = ((msgarr_t)c->msg)(c->c_array, c->s_arr, cols, n);
     ((msgp_t)c->msg)(G, c->s_colors, arr);
     for (unsigned i = 0; i < n; i++) if (cols[i]) c->release(cols[i]);
@@ -491,7 +738,10 @@ static void border_make(struct ctx *c, struct ch_win *w, void *root) {
     ((msgpt_t)c->msg)(G, c->s_end, b);
     void *M = ring(c, band, r, c->black);
     if (M) ((msgp_t)c->msg)(G, c->s_mask, M);
-    ((msgf_t)c->msg)(G, c->s_opacity, 0.0f);
+    // One visible ring: interpolating its colors preserves coverage throughout focus.
+    // Keep the old inactive slot as a hidden compatibility layer, never composite it.
+    ((msgf_t)c->msg)(I, c->s_opacity, 0.0f);
+    ((msgf_t)c->msg)(G, c->s_opacity, 1.0f);
     keep_top(c, I); keep_top(c, G);
     ((msg0_t)c->msg)(I, c->s_retain); ((msg0_t)c->msg)(G, c->s_retain);
     ((msgp_t)c->msg)(root, c->s_addsub, I);
@@ -501,7 +751,7 @@ static void border_make(struct ctx *c, struct ch_win *w, void *root) {
 
 // Снять рамку и маску окна (слот освобождается). cactx может быть 0 (окна уже нет): тогда транзакция без
 // контекста — только чтобы release/removeFromSuperlayer шли внутри сбалансированной транзакции WS.
-static void layers_drop(struct ctx *c, struct ch_win *w, void *cactx) {
+static void layers_drop(struct ctx *c, struct ch_win *w, void *cactx, void *H) {
     if (!w->bl_in && !w->bl_act && !w->bl_sh && !w->bl_fill && !w->mask) return;
     if (!mask_ready(c)) return;
     unsigned long long tx[4] = {0, 0, 0, 0};
@@ -509,39 +759,56 @@ static void layers_drop(struct ctx *c, struct ch_win *w, void *cactx) {
     if (cactx) c->tx_add(tx, cactx);
     void *L[4] = {(void *)w->bl_in, (void *)w->bl_act, (void *)w->bl_sh, (void *)w->bl_fill};
     for (int i = 0; i < 4; i++) if (L[i]) { ((msg0_t)c->msg)(L[i], c->s_remove); ((msg0_t)c->msg)(L[i], c->s_release); }
-    if (w->mask) ((msg0_t)c->msg)((void *)w->mask, c->s_release);   // маску держит и Hosting, если он жив
+    restore_mask(c, w, H);
+    if (w->mask) {
+        ((msg0_t)c->msg)((void *)w->mask, c->s_release);
+    }
     w->bl_in = w->bl_act = w->bl_sh = w->bl_fill = w->mask = 0;
     w->fkey[4] = -1;
-    c->tx_dtor(tx);
+    layers_commit(c, tx);
+    if (cactx && c->by_id) decoration_damage(c, c->by_id(w->wid));
 }
 
 // WSShadowProperties (0x40): sigma, density, rimDens, rimRad, innerDens, innerRad, offY (float), flags, …, маска
 // override @+0x38 [V сеттер копирует ldp q0..q3; beyond_bounds §1.7.1]. on: sigma 23 (frame_bounds +65 pt),
 // density 0.001 (порог «тень включена» — клип не схлопывается; 0.26/255 — невидимо), контур Tahoe 0, маска 0xfff —
-// AppKit не перебьёт. off: нулевая структура с маской 0 — снова значения AppKit (тень Tahoe возвращается).
+// AppKit не перебьёт. off: восстановить ровно прежние active/inactive override, не сбрасывать чужую настройку.
 struct ws_shadow { float f[14]; u32 mask, pad; };
-static void shadow_override(struct ctx *c, void *win, int on) {
+static void shadow_override(struct ctx *c, struct ch_win *w, void *win, int on) {
+    struct saved_window *old = saved_window(c, w);
+    if (on && !old->shadow_set) {
+        for (int i = 0; i < 16; i++) old->shadow[i] = *(u64 *)((char *)win + 0x2d8 + 8 * i);
+        old->shadow_set = 1;
+    }
     struct ws_shadow s;
     for (int i = 0; i < 14; i++) s.f[i] = 0;
     s.mask = 0; s.pad = 0;
     if (on) { s.f[0] = 23.0f; s.f[1] = 0.001f; s.mask = 0xfff; }
     void *conn = c->owner ? c->owner(win) : 0;
     if (c->sh_inval) c->sh_inval(conn, win);
-    c->wm_shadow(win, &s, &s);
+    if (!on && old->shadow_set) {
+        c->wm_shadow(win, old->shadow, old->shadow + 8);
+        old->shadow_set = 0;
+    } else c->wm_shadow(win, &s, &s);
     if (c->sh_sched) c->sh_sched(win, conn);
 }
 
 static void radius_restore(struct ctx *c, struct ch_win *w, void *win) {
-    if ((w->rset & 4) && win && c->wm_shadow) shadow_override(c, win, 0);   // системная тень — значения AppKit
+    if ((w->rset & 4) && win && c->wm_shadow) shadow_override(c, w, win, 0);
     if ((w->rset & 1) && win && c->dbg_clear) c->dbg_clear(win);    // радиус приложения снова в силе
     if ((w->rset & 2) && win && c->tags) { void *a[1] = {win}; c->tags(0, a, 8, 1); }   // тень/контур Tahoe — назад
     w->rset = 0;
 }
 
 static void slot_free(struct ctx *c, struct ch_win *w, void *win) {
+    live_edge_drop(c,w);
+    live_edge_client(c,w,0);
+    native_cancel(c, w, win);
     radius_restore(c, w, win);
     void *cwc = win ? *(void **)((char *)win + 0x18) : 0;
-    layers_drop(c, w, cwc ? *(void **)((char *)cwc + 0x38) : 0);
+    layers_drop(c, w, cwc ? *(void **)((char *)cwc + 0x38) : 0, cwc ? *(void **)((char *)cwc + 0x98) : 0);
+    saved_window(c, w)->shadow_set = 0;
+    saved_window(c, w)->cfg_sent = 0;
     w->used = 0;
 }
 
@@ -554,6 +821,7 @@ static void shadow_make(struct ctx *c, struct ch_win *w, void *root, void *shado
     struct ch_deco *d = &c->ch->deco;
     void *S = ((msg0_t)c->msg)(c->c_layer, c->s_layer);
     if (!S) return;
+    mark_layer(c, S);
     void *black = c->black;
     ((msgp_t)c->msg)(S, c->s_shcolor, black);
     ((msgd_t)c->msg)(S, c->s_shrad, d->srad);
@@ -594,13 +862,69 @@ static void fade_to(struct ctx *c, void *L, void *key, void *getsel, void *setse
             }
             ((void (*)(void *, void *, void *, void *))c->msg)(L, c->s_addanim, A, key);
         }
-    }
+    } else if (key && c->s_removeanim) ((msgp_t)c->msg)(L, c->s_removeanim, key);
     ((msgf_t)c->msg)(L, setsel, (float)to);
+}
+
+// CAGradientLayer.colors is an animatable NSArray<CGColorRef> (public SDK).
+// QuartzCore interpolates matching arrays componentwise; no second ring contributes
+// source-over coverage. A change in stop count skips interpolation rather than truncating.
+static void fade_colors(struct ctx *c, void *G, double focus, double dur, const double *bz) {
+    struct ch_deco *d = &c->ch->deco;
+    unsigned n = d->ngrad > 8 ? 8 : d->ngrad; if (n < 2) n = 2;
+    void *cols[8];
+    for (unsigned i = 0; i < n; i++) {
+        const double *rgba = focus > 0.5 ? d->grad[d->ngrad < 2 ? 0 : i] : d->inact;
+        cols[i] = c->srgb(rgba[0], rgba[1], rgba[2], rgba[3]);
+    }
+    void *to = ((msgarr_t)c->msg)(c->c_array, c->s_arr, cols, n);
+    for (unsigned i = 0; i < n; i++) if (cols[i]) c->release(cols[i]);
+    void *P = c->s_pres ? ((msg0_t)c->msg)(G, c->s_pres) : 0;
+    void *from = ((msg0_t)c->msg)(P ? P : G, c->s_colorsget);
+    if (!P && c->str_colors) {
+        // An uncommitted endpoint has never been displayed. Preserve the
+        // pending animation's start on a reversal before the first commit.
+        void *pending = ((void *(*)(void *, void *, void *))c->msg)(G, c->sel("animationForKey:"), c->str_colors);
+        void *start = pending ? ((msg0_t)c->msg)(pending, c->sel("fromValue")) : 0;
+        if (start) from = start;
+    }
+    unsigned long nf = from ? ((unsigned long (*)(void *, void *))c->msg)(from, c->s_count) : 0;
+    if (to && from && nf == n && dur > 0.001 && c->c_basic && c->str_colors) {
+        void *A = ((void *(*)(void *, void *, void *))c->msg)(c->c_basic, c->s_akp, c->str_colors);
+        if (A) {
+            ((msgp_t)c->msg)(A, c->s_from, from); ((msgp_t)c->msg)(A, c->s_to, to);
+            ((msgd_t)c->msg)(A, c->s_adur, dur);
+            if (c->c_tfn) {
+                void *T = ((void *(*)(void *, void *, float, float, float, float))c->msg)(c->c_tfn, c->s_tfcp,
+                          (float)bz[0], (float)bz[1], (float)bz[2], (float)bz[3]);
+                if (T) ((msgp_t)c->msg)(A, c->s_tf, T);
+            }
+            ((void (*)(void *, void *, void *, void *))c->msg)(G, c->s_addanim, A, c->str_colors);
+        }
+    } else if (c->s_removeanim && c->str_colors) ((msgp_t)c->msg)(G, c->s_removeanim, c->str_colors);
+    if (to) ((msgp_t)c->msg)(G, c->s_colors, to);
+}
+
+static u64 decoration_hash(const struct ch_deco *d) {
+    // focus changes have their own animation; all remaining style fields must refresh
+    // existing layers after hot reload, including border widths initialized at creation.
+    const unsigned char *p = (const unsigned char *)d; u64 hash = 1469598103934665603ull;
+    for (unsigned i = 8; i < sizeof *d; i++) { hash ^= p[i]; hash *= 1099511628211ull; }
+    return hash;
+}
+
+static double ring_scale(struct ch_win *w) {
+    double sx = w->m[0], sy = w->m[1];
+    // The root transform applies after convertRect:toLayer:. Uniform popin may scale
+    // the window, but its visible border width stays in screen pt. Nonuniform scaling
+    // needs an anisotropic contour; do not claim a scalar width solves it.
+    return sx > 0.02 && sy > 0.02 && dabs(sx - sy) < 1e-4 * sx ? sx : 1.0;
 }
 
 // Уборка следов прошлых установок движка (их слоты потеряны при переустановке, слои остались в дереве окна:
 // «лишнее кольцо старой геометрии», «два активных кольца», чужая маска на Hosting). В Server root от WS — только
-// Shadow; наши признаки: CAGradientLayer/CAShapeLayer, CALayer с borderWidth ≥ 1 или shadowPath. Внутри транзакции.
+// Shadow; снимаем только слои с нашим именем. Тип/ширина обводки не доказывают владение:
+// приложения тоже используют CAGradientLayer/CAShapeLayer и свои маски.
 typedef unsigned long (*msgul_t)(void *, void *);
 static void sweep_old(struct ctx *c, struct ch_win *w, void *root, void *shadow_sys, void *H) {
     if (!c->s_subl || !c->s_count || !c->s_objat || !c->s_iskind) return;
@@ -611,22 +935,40 @@ static void sweep_old(struct ctx *c, struct ch_win *w, void *root, void *shadow_
         void *L = ((void *(*)(void *, void *, unsigned long))c->msg)(subs, c->s_objat, i);
         if (!L || L == shadow_sys || L == (void *)w->bl_in || L == (void *)w->bl_act || L == (void *)w->bl_sh ||
             L == (void *)w->bl_fill) continue;
-        int ours = (c->c_grad && ((int (*)(void *, void *, void *))c->msg)(L, c->s_iskind, c->c_grad)) ||
-                   (c->c_shape && ((int (*)(void *, void *, void *))c->msg)(L, c->s_iskind, c->c_shape)) ||
-                   ((msgdr_t)c->msg)(L, c->sel("borderWidth")) >= 1.0 ||
-                   ((msg0_t)c->msg)(L, c->s_shpathget) != 0;
+        int ours = owned_layer(c, L);
         if (ours) kill[k++] = L;
     }
     for (int i = 0; i < k; i++) ((msg0_t)c->msg)(kill[i], c->s_remove);
     void *m = ((msg0_t)c->msg)(H, c->s_getmask);
-    if (m && m != (void *)w->mask) ((msgp_t)c->msg)(H, c->s_mask, 0);
-    c->ch->h.reserved[4] += (u64)k + (m && m != (void *)w->mask);   // счётчик убранных следов (для лога)
+    int drop_mask = m && m != (void *)w->mask && owned_layer(c, m);
+    if (drop_mask) ((msgp_t)c->msg)(H, c->s_mask, 0);
+    c->ch->h.reserved[4] += (u64)k + drop_mask;
+}
+
+// Draw-time projection is local to an active ordinary live resize. AppKit has
+// already accepted its one final size, which can be smaller than intermediate B.
+// Keep opening/native/edge/snapshot state and the shared stretch flag unchanged.
+static unsigned live_resize_projection(struct ctx *c,struct ch_win *w,double bw,double bh,double *sx,double *sy) {
+    *sx=*sy=1;
+    // Buffer scaling is an explicit optional presentation mode. Native mode
+    // redraws through the client; never silently turn live content into a zoom.
+    if (!(c->ch->h.reserved[0] & (1ull<<25))) return 0;
+    if((w->geo!=1&&w->geo!=4)||w->stretch||w->held||!w->size.active||
+       cover_index(c,w->wid,0)>=0||cover_index(c,w->wid,1)>=0||
+       !(bw>=1&&bh>=1&&w->aw>=1&&w->ah>=1)||!finite(bw)||!finite(bh)||!finite(w->aw)||!finite(w->ah))return 0;
+    unsigned axes=0;
+    if(w->size.g[0]<bw-.5&&dabs(w->aw-w->size.g[0])<=2&&w->aw<bw-.5&&w->aw/bw>=.02){*sx=w->aw/bw;axes|=1;}
+    if(w->size.g[1]<bh-.5&&dabs(w->ah-w->size.g[1])<=2&&w->ah<bh-.5&&w->ah/bh>=.02){*sy=w->ah/bh;axes|=2;}
+    return axes;
 }
 
 // Рамка одного окна на кадр te. 1 — кроссфейд ещё идёт.
 static int border_win(struct ctx *c, struct ch_win *w, double te) {
     struct ch *ch = c->ch;
     struct ch_deco *d = &ch->deco;
+    struct saved_window *saved = saved_window(c, w);
+    u64 dhash = decoration_hash(d);
+    int style_changed = saved->deco_hash != dhash;
     if (!w->geo) return 0;
     void *win = c->by_id(w->wid);
     if (!win) return 0;
@@ -635,15 +977,17 @@ static int border_win(struct ctx *c, struct ch_win *w, double te) {
     void *H = cwc ? *(void **)((char *)cwc + 0x98) : 0;
     void *cactx = cwc ? *(void **)((char *)cwc + 0x38) : 0;
     if (!root || !H || !cactx) return 0;
-    if (!d->on || w->wid == d->nofull || (d->only && w->wid != d->only)) {
-        if (w->bl_in || w->bl_sh) layers_drop(c, w, cactx);
-        radius_restore(c, w, win);
+    unsigned focus_wid=presentation_wid(c,w);
+    if (!d->on || focus_wid == d->nofull || (d->only && focus_wid != d->only)) {
+        if (w->bl_in || w->bl_sh) layers_drop(c, w, cactx, H);
+        if(!effects_owns_corner(c,w))radius_restore(c, w, win);
         return 0;
     }
     // радиус угла как в Hyprland (decoration.rounding) — отладочный радиус WS главнее радиуса приложения [V листинг
     // resolved_corner_radius 187063110: бит 6 win+0x928 → win+0x858]; Telegram/Tahoe иначе 26, Ghostty 16
-    if (d->radius > 0 && c->dbg_radius && c->corner && dabs(c->corner(win) - d->radius) > 0.01) {
-        c->dbg_radius(win, d->radius);
+    double configured_radius=effects_owns_corner(c,w)?0:d->radius;
+    if (configured_radius >= 0 && c->dbg_radius && c->corner && dabs(c->corner(win) - configured_radius) > 0.01) {
+        c->dbg_radius(win, configured_radius);
         w->rset |= 1;
     }
     // системная тень и контур Tahoe — тегом DisableShadow (бит 3 `win+0x80`): WS сам держит их выключенными при
@@ -662,38 +1006,63 @@ static int border_win(struct ctx *c, struct ch_win *w, double te) {
     // win+0x35c ≠ 0.001, практически не бывает при маске 0xfff)
     int ovr = d->sys_off == 3 && c->wm_shadow;
     if (ovr && (!(w->rset & 4) || dabs(*(float *)((char *)win + 0x35c) - 0.001f) > 0.0005)) {
-        shadow_override(c, win, 1);
+        shadow_override(c, w, win, 1);
         w->rset |= 4;
     }
     if (!ovr && (w->rset & 4) && c->wm_shadow) {
-        shadow_override(c, win, 0);
+        shadow_override(c, w, win, 0);
         w->rset &= ~4u;
     }
     double rin = c->corner ? c->corner(win) : d->radius;
     int rchg = dabs(rin - w->radius) > 0.01;
     if (rchg) w->radius = rin;
     // Кроссфейд рамки/тени ведёт сам CA (fade_to): нам — только смена цели и заявки на перерисовку, пока он идёт
-    double gt = w->wid == d->focus ? 1.0 : 0.0;
-    int tchg = !w->bl_in || w->act.g[0] != gt;
+    double gt = focus_wid == d->focus ? 1.0 : 0.0;
+    int tchg = !w->bl_in || w->act.g[0] != gt || style_changed;
     double op = gt;
     double sop = d->sh_on ? d->sop_in + (d->sop_act - d->sop_in) * gt : 0.0;
-    double fend = w->act.t0 + (d->dur > d->sdur ? d->dur : d->sdur) + 0.034;
+    double fend = w->act.t0 + (d->dur > d->sdur ? d->dur : d->sdur) + 2 * ch->h.period;
     int an = te < fend;                              // CA-анимация идёт: каждый кадр — заявка на перерисовку
     // бокс рамки в координатах окна: видимая рамка B от левого верхнего угла буфера (popin тянет A на B — тогда A)
-    double bw = w->stretch ? w->aw : w->size.v[0], bh = w->stretch ? w->ah : w->size.v[1];
+    double bw = w->stretch || w->geo == 2 ? w->aw : w->size.v[0];
+    double bh = w->stretch || w->geo == 2 ? w->ah : w->size.v[1];
     if (!(bw >= 1) || !(bh >= 1) || !finite(bw) || !finite(bh)) return an;
+    double projected_x,projected_y;
+    live_resize_projection(c,w,bw,bh,&projected_x,&projected_y);
+    // The window's inverse transform scales this root too. Express screen B in
+    // source units so the ring follows B exactly instead of being scaled twice.
+    bw*=projected_x;bh*=projected_y;
     struct rect4 hb = ((msgb_t)c->msg)(H, c->s_bounds);
     if (!(hb.h >= 1) || !finite(hb.h) || !finite(hb.y)) return an;
+    if (w->geo == 2) {             // native shape and Hosting can be ingested in adjacent frames
+        if (hb.w >= 1 && finite(hb.w) && hb.w < bw) bw = hb.w;
+        if (hb.h < bh) bh = hb.h;
+    }
     // кольцо: наружу на ow (= ширина рамки, как Hyprland; 0 — если клип окна узкий, режим «тег»), внутрь на ins
     // (закрыть обводку, которую рисует само приложение); ширина полосы кольца = ow + ins
     double wd = d->width, ins = d->inset10 / 10.0;
     double ow = d->sys_off == 1 ? 0.0 : wd;
     if (d->sys_off == 1 && ins > wd) ins = wd;
+    double scale = ring_scale(w); ow *= scale; ins *= scale;
     struct rect4 f = {hb.x - ow, ch->h.mask_flip ? hb.y + hb.h - bh - ow : hb.y - ow, bw + 2 * ow, bh + 2 * ow};
-    int moved = !w->bl_in || rchg || dabs(f.x - w->bframe[0]) > 0.01 || dabs(f.y - w->bframe[1]) > 0.01 ||
-                dabs(f.w - w->bframe[2]) > 0.01 || dabs(f.h - w->bframe[3]) > 0.01;
+    // Hosting can move relative to Server root without changing its local bounds.
+    // Compare the converted rectangle, otherwise those ingestion updates leave a stale ring.
+    struct rect4 fr = ((msgcv_t)c->msg)(H, c->s_convert, f, root);
+    // Native ingestion/autoresizing owns the parent and can change our actual
+    // layer frame without changing the desired rectangle or bframe cache.
+    // Verify both attachment and geometry before considering this ring settled.
+    void *get_parent = c->sel("superlayer"), *get_frame = c->sel("frame");
+    int detached = (w->bl_in && ((msg0_t)c->msg)((void *)w->bl_in, get_parent) != root) ||
+                   (w->bl_act && ((msg0_t)c->msg)((void *)w->bl_act, get_parent) != root) ||
+                   (w->bl_sh && ((msg0_t)c->msg)((void *)w->bl_sh, get_parent) != root) ||
+                   (w->bl_fill && ((msg0_t)c->msg)((void *)w->bl_fill, get_parent) != root);
+    struct rect4 actual = w->bl_act ? ((msgb_t)c->msg)((void *)w->bl_act, get_frame) : (struct rect4){0};
+    int drift = dabs(actual.x-fr.x) > 0.01 || dabs(actual.y-fr.y) > 0.01 ||
+                dabs(actual.w-fr.w) > 0.01 || dabs(actual.h-fr.h) > 0.01;
+    int moved = !w->bl_in || detached || drift || rchg || style_changed || dabs(fr.x - w->bframe[0]) > 0.01 || dabs(fr.y - w->bframe[1]) > 0.01 ||
+                dabs(fr.w - w->bframe[2]) > 0.01 || dabs(fr.h - w->bframe[3]) > 0.01;
     // пустая полоса: видимая рамка B больше слоя с буфером (приложение ещё не перерисовалось в новый размер)
-    int strip = w->fill && c->c_shape && c->path_mut && !w->stretch && (bw > hb.w + 0.5 || bh > hb.h + 0.5);
+    int strip = w->geo != 2 && w->fill && c->c_shape && c->path_mut && !w->stretch && (bw > hb.w + 0.5 || bh > hb.h + 0.5);
     double fk[5] = {strip ? bw : 0, strip ? bh : 0, strip ? hb.w : 0, strip ? hb.h : 0, (double)w->fill};
     int fchg = 0;
     for (int i = 0; i < 5; i++) fchg |= dabs(fk[i] - w->fkey[i]) > 0.01;
@@ -704,7 +1073,7 @@ static int border_win(struct ctx *c, struct ch_win *w, double te) {
     int fixsh = (d->sys_off == 2 || (d->sys_off == 3 && !c->wm_shadow)) && shs && c->s_shopget &&
                 (((msgfr_t)c->msg)(shs, c->s_shopget) > 0.001f || ((msgdr_t)c->msg)(shs, c->sel("borderWidth")) > 0.001);
     if (!moved && !fchg && !tchg && !fixsh && dabs(sop - w->sop) < 0.002) {
-        if (an && c->sched_win) c->sched_win(0, win);
+        if (an) decoration_damage(c, win);
         return an;
     }
     unsigned long long tx[4] = {0, 0, 0, 0};
@@ -719,6 +1088,13 @@ static int border_win(struct ctx *c, struct ch_win *w, double te) {
         sweep_old(c, w, root, *(void **)((char *)cwc + 0x88), H);
         border_make(c, w, root);
     }
+    if (detached) {
+        // Reattach only retained layers we own; preserve the native subtree.
+        if (w->bl_sh) ((msgi_t)c->msg)(root, c->s_insert, (void *)w->bl_sh, 0);
+        if (w->bl_fill) ((msgi_t)c->msg)(root, c->s_insert, (void *)w->bl_fill, w->bl_sh ? 1 : 0);
+        if (w->bl_in) ((msgp_t)c->msg)(root, c->s_addsub, (void *)w->bl_in);
+        if (w->bl_act) ((msgp_t)c->msg)(root, c->s_addsub, (void *)w->bl_act);
+    }
     if (fixsh) {
         ((msgf_t)c->msg)(shs, c->s_shop, 0.0f);
         ((msgd_t)c->msg)(shs, c->s_bwidth, 0.0);
@@ -727,22 +1103,24 @@ static int border_win(struct ctx *c, struct ch_win *w, double te) {
         shadow_make(c, w, root, *(void **)((char *)cwc + 0x88));
     if (w->bl_in && w->bl_act) {
         if (moved) {
-            struct rect4 fr = ((msgcv_t)c->msg)(H, c->s_convert, f, root);
             ((msgr_t)c->msg)((void *)w->bl_in, c->s_frame, fr);
             ((msgr_t)c->msg)((void *)w->bl_act, c->s_frame, fr);
             void *M = ((msg0_t)c->msg)((void *)w->bl_act, c->s_getmask);
             struct rect4 mf = {0, 0, fr.w, fr.h};
             if (M) ((msgr_t)c->msg)(M, c->s_frame, mf);
+            double band = ow + ins; if (band < 0.5 * scale) band = wd * scale;
+            ((msgd_t)c->msg)((void *)w->bl_in, c->s_bwidth, band);
+            if (M) ((msgd_t)c->msg)(M, c->s_bwidth, band);
             double ro = w->radius + ow;                              // внешний = радиус окна + выступ рамки (spec §5.1)
             ((msgd_t)c->msg)((void *)w->bl_in, c->s_radius, ro);
             if (M) ((msgd_t)c->msg)(M, c->s_radius, ro);
-            w->bframe[0] = f.x; w->bframe[1] = f.y; w->bframe[2] = f.w; w->bframe[3] = f.h;
+            w->bframe[0] = fr.x; w->bframe[1] = fr.y; w->bframe[2] = fr.w; w->bframe[3] = fr.h;
         }
         if (tchg) {
-            // встречный кроссфейд: неактивное кольцо гаснет, пока проявляется активное — без грязной смеси
-            // «градиент поверх тусклого» в середине (Hyprland смешивает цвета, а не слои)
-            fade_to(c, (void *)w->bl_act, c->str_op, c->s_opget, c->s_opacity, op, d->dur, d->bez);
-            fade_to(c, (void *)w->bl_in, c->str_op, c->s_opget, c->s_opacity, 1.0 - op, d->dur, d->bez);
+            fade_colors(c, (void *)w->bl_act, op, d->dur, d->bez);
+            struct pt2 a = {d->start[0], d->start[1]}, b = {d->end[0], d->end[1]};
+            ((msgpt_t)c->msg)((void *)w->bl_act, c->s_start, a);
+            ((msgpt_t)c->msg)((void *)w->bl_act, c->s_end, b);
         }
         w->bop = op;
     }
@@ -750,6 +1128,7 @@ static int border_win(struct ctx *c, struct ch_win *w, double te) {
         if (strip && !w->bl_fill) {
             void *F = ((msg0_t)c->msg)(c->c_shape, c->s_layer);
             if (F) {
+                mark_layer(c, F);
                 ((msg0_t)c->msg)(F, c->s_retain);
                 keep_top(c, F);
                 if (c->str_eo) ((msgp_t)c->msg)(F, c->s_fillrule, c->str_eo);
@@ -785,8 +1164,11 @@ static int border_win(struct ctx *c, struct ch_win *w, double te) {
     }
     if (w->bl_sh) {
         void *S = (void *)w->bl_sh;
+        if (style_changed) {
+            ((msgd_t)c->msg)(S, c->s_shrad, d->srad);
+            struct pt2 offset = {0, -d->soff}; ((msgpt_t)c->msg)(S, c->s_shoff, offset);
+        }
         if (moved || w->sop < 0) {
-            struct rect4 fr = ((msgcv_t)c->msg)(H, c->s_convert, f, root);
             ((msgr_t)c->msg)(S, c->s_frame, fr);
             double r = w->radius + ow;
             if (r > fr.w / 2) r = fr.w / 2;
@@ -802,14 +1184,75 @@ static int border_win(struct ctx *c, struct ch_win *w, double te) {
             fade_to(c, S, c->str_shop, c->s_shopget, c->s_shop, sop, w->sop < 0 ? 0.0 : d->sdur, d->sbez);
         w->sop = sop;
     }
-    c->tx_dtor(tx);
+    layers_commit(c, tx);
+    saved->deco_hash = dhash;
     if (tchg) { w->act.g[0] = gt; w->act.t0 = te; an = 1; }
-    if (c->sched_win) c->sched_win(0, win);
+    decoration_damage(c, win);
     return an;
 }
 
 // Подложка: окно-фон под окном приложения (deco/hyprdeco). Видна только пока окно анимируется:
 // ставится ровно на видимую рамку B (сплошной цвет — масштаб без потерь), альфа = альфа окна.
+static int effects_render_win(struct ctx *c,struct ch_win *w,double now) {
+    if(!effects_ready(c))return 0;
+    const struct hy_effects_api *a=c->effects_api;unsigned i=(unsigned)(w-c->ch->win);
+    unsigned flags=a->flags(c->effects_runtime);
+    void *win=c->by_id(w->wid);
+    if(!w->used || !flags || !live_edge_granted(c,w) || w->wid==c->ch->deco.nofull ||
+       !win || !c->corner || c->corner(win)>0.01 || !c->s_bounds || !c->s_getmask) {
+        // An owned alpha mask cannot recover pixels clipped upstream. Preserve
+        // native radius/client leases until the separate clip/ring integration
+        // is proven; never falsely count this path as accepted appearance.
+        a->drop(c->effects_runtime,i,0);a->drop(c->effects_runtime,i,1);return 0;
+    }
+    void *cwc=*(void**)((char*)win+0x18);
+    void *root=cwc?*(void**)((char*)cwc+0x80):0,*host=cwc?*(void**)((char*)cwc+0x98):0;
+    void *context=cwc?*(void**)((char*)cwc+0x38):0;
+    if(!root||!host||!context) {a->drop(c->effects_runtime,i,0);a->drop(c->effects_runtime,i,1);return 0;}
+    struct rect4 bounds=((msgb_t)c->msg)(host,c->s_bounds);
+    struct edge_lease *lease=live_edge_lease(c,w);
+    struct hy_effects_frame f={0};
+    f.slot=i;f.wid=w->wid;f.prepared=1;f.focus=w->wid==c->ch->deco.focus;
+    f.generation=(u64)lease->generation;f.source_window=(u64)win;f.source_context=(u64)context;
+    f.host=host;f.root=root;f.parent_mask=((msg0_t)c->msg)(host,c->s_getmask);
+    f.border=(void*)w->bl_act;
+    f.border_parent_mask=f.border?((msg0_t)c->msg)(f.border,c->s_getmask):0;
+    f.border_width=c->ch->deco.width;
+    f.legacy_shadow=(void*)w->bl_sh;
+    f.width=bounds.w;f.height=bounds.h;f.scale=c->edge_api->resolution?c->edge_api->resolution(win):1;f.now=now;
+    unsigned long long tx[4]={0};c->tx_ctor(tx,1);c->tx_add(tx,context);
+    int result=a->frame(c->effects_runtime,&f);
+    layers_commit(c,tx);
+    if(!(result&HY_EFFECTS_APPLIED)) {
+        // Failed hierarchy/GPU publication cannot leave a square native window
+        // or retry that same birth each tick. The runtime quarantines identity;
+        // rebuild the legal legacy ring under its accepted native radius now.
+        a->drop(c->effects_runtime,i,1);
+        if(c->dbg_radius && c->ch->deco.radius>=0) {
+            c->dbg_radius(win,c->ch->deco.radius);w->rset|=1;
+            border_win(c,w,now);
+        }
+        struct edge_state *failed=&c->edges[i];
+        if(failed->surface&&c->s_radius)
+            ((msgd_t)c->msg)(failed->surface,c->s_radius,c->ch->deco.radius);
+        decoration_damage(c,win);return 0;
+    }
+    if(result&HY_EFFECTS_DIRTY)decoration_damage(c,win);
+    int active=!!(result&HY_EFFECTS_ANIMATING);
+    struct edge_state *s=&c->edges[i];
+    if(s->window && s->surface && s->root && s->context && s->source_hidden) {
+        f.role=1;f.host=s->surface;f.root=s->root;
+        f.parent_mask=((msg0_t)c->msg)(s->surface,c->s_getmask);
+        f.border=s->gradient;f.border_parent_mask=f.border?((msg0_t)c->msg)(f.border,c->s_getmask):0;
+        f.legacy_shadow=s->shadow;
+        struct rect4 hb=((msgb_t)c->msg)(s->surface,c->s_bounds);f.width=hb.w;f.height=hb.h;
+        unsigned long long helper_tx[4]={0};c->tx_ctor(helper_tx,1);c->tx_add(helper_tx,s->context);
+        int helper=a->frame(c->effects_runtime,&f);layers_commit(c,helper_tx);
+        if((helper&HY_EFFECTS_DIRTY)&&c->edge_api->damage)c->edge_api->damage(0,s->window);
+        active|=!!(helper&HY_EFFECTS_ANIMATING);
+    } else a->drop(c->effects_runtime,i,1);
+    return active;
+}
 static void put_under(struct ctx *c, struct ch_win *w, int on, double bx, double by, double bw, double bh, double a,
                       double cw, double chh) {
     if (!w->under) return;
@@ -854,6 +1297,10 @@ static void put_under(struct ctx *c, struct ch_win *w, int on, double bx, double
 }
 
 static void put_plain(struct ctx *c, struct ch_win *w, void *win) {
+    live_edge_drop(c,w);
+    struct edge_lease *lease=live_edge_lease(c,w);
+    int preparing=lease && (live_edge_primed(c,w) || live_edge_granted(c,w));
+    if(!preparing && !w->held && !w->pos.active && !w->size.active) live_edge_client(c,w,0);
     put_identity(c, w); put_clip(c, w, win, 0, 0, 0, 0, 0);
     put_mask(c, w, win, 0, 0, 0);
     put_under(c, w, 0, 0, 0, 0, 0, 0, 0, 0);
@@ -880,33 +1327,166 @@ static struct ch_win *slot(struct ch *ch, u32 wid, int alloc) {
 // 18719d3c8]: PKGSpaceForID(sid)->+0x18 (managed space) → список окон → PKGWindowsMoveToManagedSpace → free узлов {item, next}.
 static void space_move(struct ctx *c, unsigned wid, u64 sid) {
     struct ch *ch = c->ch;
-    if (!c->space_for_id || !c->wlist || !c->wmove || !c->xfree) { ch->h.errors++; return; }
+    if (!c->space_for_id || !c->wlist || !c->wmove || !c->xfree) { record_error(ch,OP_SPACE,wid,ERR_SPACE_ABI); return; }
     void *win = c->by_id(wid);
     void *conn = win ? *(void **)((char *)win + 0x30) : 0;
     void *sp = conn ? c->space_for_id(sid) : 0;
     void *managed = sp ? *(void **)((char *)sp + 0x18) : 0;
-    if (!managed) { ch->h.errors++; return; }
+    if (!managed) { record_error(ch,OP_SPACE,wid,ERR_SPACE_TARGET); return; }
     unsigned ids[1] = {wid};
     void *list = c->wlist(conn, ids, 1);
     c->wmove(conn, list, managed);
     while (list) { void *nx = *(void **)((char *)list + 8); c->xfree(list); list = nx; }
 }
 
-struct p8c { u32 wid, src; double t0; u32 live, pending; };   // pending: 1 — снят при order-out, ждёт 0x3e9; 2 — подкладка
-#define P8_TAB(c) ((struct p8c *)((char *)(c) + 0x800))
-#define P8_N 32
 static int p8_make(struct ctx *c, char *src, int pending, double now);
+static int snapshot_ready(struct ctx *c) {
+    return c->clone && c->srr && c->set_level && c->order && c->get_id && c->rel_win;
+}
+static int snapshot_acquire(struct ctx *c, char *win, struct ch_win *w, double now) {
+    if(!snapshot_ready(c) || !win || !w || !*(void **)(win+0x30) || *(int *)(win+0x20)!=0 ||
+       !((*(u64 *)(win+0x928)>>44)&1) || SNAP_SEQUENCE(c)==0xffffffffu)return 0;
+    int existing=cover_index(c,w->wid,1);
+    if(existing>=0 && P8_SOURCE(c)[existing]==(u64)win)return 1;
+    u32 was=c->in_cb;c->in_cb=1;
+    int index=p8_make(c,win,3,now);
+    c->in_cb=was;
+    return index>=0;
+}
 
 static void apply_cmd(struct ctx *c, struct ch_cmd *k, double now) {
     struct ch *ch = c->ch;
-    if (k->op == OP_SPACE) { space_move(c, k->wid, (u64)k->x); return; }
+    if(k->op==OP_SNAP && !k->wid && k->flags==1) {
+        for(int i=0;i<P8_N;i++)if(P8_TAB(c)[i].live&&P8_TAB(c)[i].pending==3)cover_retire(c,i,SNAP_CANCELLED,now);
+        return;
+    }
+    if(k->op==OP_FORGET || k->op==OP_SPACE)cover_cancel_source(c,k->wid,now);
+    if(k->op==OP_SHADOW) {
+        if(!effects_ready(c)||!c->effects_api->configure_shadow||!c->effects_api->shadow_supported||
+           !c->effects_api->shadow_supported(c->effects_runtime))return;
+        HYShadowConfig config;double duration;
+        if(hy_shadow_config_command(ch,k,&config,&duration))
+            c->effects_api->configure_shadow(c->effects_runtime,&config,&ch->curve[k->cpos],duration,k->flags);
+        return;
+    }
+    if(k->op==OP_EFFECTS) {
+        // Missing backend cannot allocate a WID0 slot or reinterpret this as
+        // geometry. Only an independently staged/loaded native API is callable.
+        const struct hy_effects_api *api=c->effects_api;
+        if(!api||api->magic!=HY_EFFECTS_MAGIC||api->size!=sizeof(*api)||api->version!=1||
+           !c->effects_runtime||!api->configure)return;
+        struct hy_effects_config config;
+        if(hy_effects_config_command(ch,k,&config))api->configure(c->effects_runtime,&config);
+        return;
+    }
+    if(k->op==OP_EDGE) {
+        // Two-phase handshake: only the daemon may promote an exact prepare
+        // after reading its client ACK. No frame command can mint this grant.
+        if(!c->edges || !c->edge_api || k->flags>2 || k->x<0 ||
+           !(k->x<=9007199254740991.0) || (double)(u64)k->x!=k->x) return;
+        // Prime only an existing managed slot. Allocating a geometry-less slot
+        // here would let the regular frame loop transform the app before ACK.
+        struct ch_win *w=slot(ch,k->wid,0);
+        if(!w) return;
+        struct edge_lease *lease=live_edge_lease(c,w);
+        unsigned index=(unsigned)(w-ch->win);
+        u64 pending=c->pending_edge_generation[index];
+        if(!k->flags) {
+            double current=pending?(double)pending:lease->generation;
+            if(k->x && (lease->wid!=w->wid || current!=k->x)) return;
+            // Restore server paint while the exact source birth is still
+            // available. Clearing it first makes edge_remove skip restoration.
+            live_edge_drop(c,w); live_edge_client(c,w,0);
+            if(w->geo==3) w->geo=1;
+            return;
+        }
+        if(w->geo==2) return; // The native configure stream owns this slot independently.
+        void *win=c->by_id(k->wid);
+        if(ch->h.pad_t!=CH_EDGE_PERMISSION || !k->x || !native_allowed(c,w,win)) return;
+        if(k->flags==1) {
+            if(lease->wid==w->wid && (k->x<=lease->generation || (pending && k->x<=(double)pending))) return;
+            int renewing=lease->wid==w->wid && lease->on==3 && ch->h.now<lease->expires &&
+                c->edges[w-ch->win].source_window==win;
+            if(!renewing) {
+                live_edge_drop(c,w); live_edge_client(c,w,0);
+                if(w->geo==3) w->geo=1; // Re-prime through the ordinary idle path until the new ACK arrives.
+            }
+            lease->wid=w->wid;
+            if(!renewing) {
+                lease->on=1;lease->generation=0;lease->expires=ch->h.now+2.0;
+            }
+            // Preparing cannot change the active authorization consumed by
+            // frame_win/FX/source ownership. Only the exact ACK commit does.
+            c->pending_edge_generation[index]=(u64)k->x;
+            c->edges[w-ch->win].source_window=win;
+            struct { u32 magic,wid,enabled,reserved; double generation; } m=
+                {0x50525948u,w->wid,1,1,k->x};
+            c->post(c->owner(win),0x7f19,&m,sizeof m);
+        } else if(lease->wid==w->wid && lease->on &&
+                  (pending ? (double)pending==k->x : lease->on==3 && lease->generation==k->x) &&
+                  ch->h.now<lease->expires && c->edges[w-ch->win].source_window==win &&
+                  k->y>ch->h.now && k->y<=ch->h.now+2.05) {
+            // The main dispatcher is serialized, but a readonly HOST may
+            // sample during these multiword stores. Existing on1 carries no
+            // active authority; publish on3 only after the complete commit.
+            __atomic_store_n(&lease->on,1,__ATOMIC_RELEASE);
+            // Release alone orders prior writes; the HOST invalidation marker
+            // must also precede all following generation/deadline mutations.
+            __atomic_thread_fence(__ATOMIC_RELEASE);
+            lease->generation=k->x;lease->expires=k->y;
+            c->pending_edge_generation[index]=0;
+            __atomic_store_n(&lease->on,3,__ATOMIC_RELEASE);
+        }
+        return;
+    }
+    if (k->op == OP_SPACE) {
+        struct ch_win *w = slot(ch, k->wid, 0);
+        if(w) { live_edge_drop(c,w); live_edge_client(c,w,0); }
+        if (w && w->geo == 2) {
+            void *win = c->by_id(k->wid);
+            native_cancel(c, w, win); // Space owns geometry now; server visibility can lag this command
+            if (win) put_plain(c, w, win);
+        }
+        space_move(c, k->wid, (u64)k->x);
+        return;
+    }
     if (k->op == OP_CFG) {                           // владелец окна = как WS сам шлёт 0x542 (@186d441ac)
         void *win = c->by_id(k->wid);
+        struct ch_win *nw = slot(ch, k->wid, 0);
+        if (nw && nw->geo == 2) {
+            native_cancel(c, nw, win);
+            if (win) put_plain(c, nw, win);
+            if (k->w == 0 && k->h == 0) return; // cancellation above was the one required datagram
+        }
         void *own = win && c->owner ? c->owner(win) : 0;
-        if (!own || !c->post) { ch->h.errors++; return; }
+        if(nw && (saved_window(c,nw)->cfg_sent==4 || saved_window(c,nw)->cfg_sent==6) &&
+           k->w>=1 && k->h>=1 && dabs(k->x-nw->pos.g[0])<.001 &&
+           dabs(k->y-nw->pos.g[1])<.001 && dabs(k->w-nw->size.g[0])<.001 &&
+           dabs(k->h-nw->size.g[1])<.001)return; // Same epoch never posts its final configure twice.
+        if(nw && saved_window(c,nw)->cfg_sent==3 && k->w>=1 && k->h>=1) {
+            struct saved_window *s=saved_window(c,nw);
+            double target[4]={nw->pos.g[0],nw->pos.g[1],nw->size.g[0],nw->size.g[1]};
+            double requested[4]={k->x,k->y,k->w,k->h};
+            int exact=1;for(int i=0;i<4;i++)exact &= dabs(target[i]-requested[i])<.001;
+            if(exact){s->cfg_bridge=!!(k->flags&F_STREAM);s->cfg_sent=4;return;}
+        }
+        // Cancellation is idempotent after disposal: there is no remaining
+        // application queue to invalidate. A positive/mixed target still needs
+        // its real owner, and an existing owner still requires the sender ABI.
+        if(!own && k->w==0 && k->h==0)return;
+        if (!own || !c->post) { record_error(ch,k->op,k->wid,ERR_CFG_OWNER); return; }
+        int bridge = (k->flags & F_STREAM) || (nw && k->w == 0 && k->h == 0 && saved_window(c, nw)->cfg_bridge);
         struct ch_cfgmsg m;
-        m.magic = CH_CFG_MAGIC; m.wid = k->wid; m.x = k->x; m.y = k->y; m.w = k->w; m.h = k->h; m.t0 = now;
-        c->post(own, CH_CFG_NOTIFY, &m, sizeof m);
+        m.magic = bridge ? CH_STREAM_MAGIC : CH_CFG_MAGIC; m.wid = k->wid; m.x = k->x; m.y = k->y; m.w = k->w; m.h = k->h; m.t0 = ch->h.now;
+        // Queue corner ownership before the single native configure. The addon
+        // also rechecks the client root after AppKit applies that configure.
+        if(nw && live_edge_enabled(c,nw)) live_edge_client(c,nw,k->w>=1 && k->h>=1);
+        c->post(own, bridge ? CH_STREAM_NOTIFY : CH_CFG_NOTIFY, &m, sizeof m);
+        if(nw && saved_window(c,nw)->cfg_sent==5) {
+            saved_window(c,nw)->cfg_sent=6;
+            int index=cover_index(c,nw->wid,1);
+            post_evt(ch,EV_SNAPSHOT,nw->wid,now,index>=0?P8_TAB(c)[index].wid:0,SNAP_CONFIGURED,index>=0?3:0,saved_window(c,nw)->cfg_stamp);
+        }
         return;
     }
     if (k->op == OP_SNAP) {                          // подкладка-снимок на время хода (только для сжатия)
@@ -936,42 +1516,85 @@ static void apply_cmd(struct ctx *c, struct ch_cmd *k, double now) {
         return;
     }
     struct ch_win *w = slot(ch, k->wid, k->op != OP_FORGET);
-    if (!w) { ch->h.errors++; return; }
     void *win;
     if (k->op == OP_FORGET) {
+        prehide_forget(c, w, c->by_id(k->wid));
+        if (!w) return;
         if (actual(c, w, &win)) {
             put_plain(c, w, win);
             if (w->cur_alpha != 1.0) c->set_alpha(0, win, 1.0f, 0.0f);
-        } else win = 0;
+        }
         slot_free(c, w, win);
         return;
     }
+    if (!w) { record_error(ch,k->op,k->wid,ERR_SLOT); return; }
     if (k->op == OP_UNDER) {
         if (w->under && w->under != k->flags) put_under(c, w, 0, 0, 0, 0, 0, 0, 0, 0);
         w->under = k->flags; w->ualpha = -1; w->um[0] = w->um[1] = -1; w->ub[2] = -1;
         return;
     }
     if (!actual(c, w, &win)) { post_evt(ch, EV_GONE, w->wid, now, 0, 0, 0, 0); slot_free(c, w, 0); return; }
+    // Geometry/alpha commands claim an optimistic hide; it no longer belongs to the lease.
+    if (w->wait == 2 && (k->op == OP_GEOM || k->op == OP_WARP || k->op == OP_ALPHA)) w->wait = 0;
     if (k->op == OP_GEOM || k->op == OP_WARP) {
+        int native = k->op == OP_GEOM && (k->flags & F_NATIVE) && !(k->flags & F_STRETCH);
+        int terminal = k->op == OP_GEOM && (k->flags & F_MOVE_END) &&
+            !(k->flags & (F_NATIVE|F_STRETCH|F_EDGE|F_SNAPSHOT));
+        // A new command replaces the pending terminal origin, including a warp/cancel.
+        if(w->geo==4)w->geo=1;
+        int snapshot_requested=k->op==OP_GEOM && (k->flags & F_SNAPSHOT) && !native && !(k->flags & F_EDGE);
+        if(!snapshot_requested)cover_cancel_source(c,w->wid,now);
+        // Capture before legacy F_MOVE parks the native origin or OP_CFG reaches AppKit.
+        int snapshot_ok=snapshot_requested && snapshot_acquire(c,win,w,now);
+        if(snapshot_requested) {
+            struct saved_window *s=saved_window(c,w);
+            if(SNAP_SEQUENCE(c)!=0xffffffffu)SNAP_SEQUENCE(c)++;
+            s->cfg_stamp=SNAP_SEQUENCE(c);s->cfg_sent=snapshot_ok?5:3;
+            if(!snapshot_ok) {
+                u64 object=(u64)win,owner=c->owner?(u64)c->owner(win):0;
+                __builtin_memcpy(&s->cfg_rect[0],&object,8);__builtin_memcpy(&s->cfg_rect[1],&owner,8);
+            }
+            int index=cover_index(c,w->wid,1);
+            if(index>=0)P8_EPOCH(c)[index]=SNAP_SEQUENCE(c);
+            post_evt(ch,EV_SNAPSHOT,w->wid,now,index>=0?P8_TAB(c)[index].wid:0,snapshot_ok?SNAP_ACQUIRED:SNAP_DEFERRED,index>=0?3:0,s->cfg_stamp);
+        } else if(!native && saved_window(c,w)->cfg_sent>=3) saved_window(c,w)->cfg_sent=0;
+        if (native && !native_allowed(c, w, win)) { native_cancel(c, w, win); return; }
+        if (native && w->geo == 2 && saved_window(c, w)->cfg_bridge != !!(k->flags & F_STREAM))
+            native_cancel(c, w, win); // revoke the previous receiver before a transport handover
+        if (!native && w->geo == 2) { native_cancel(c, w, win); put_plain(c, w, win); }
+        int changed = w->geo != 2 || w->pos.g[0] != k->x || w->pos.g[1] != k->y ||
+                      w->size.g[0] != k->w || w->size.g[1] != k->h;
+        if (native) {
+            if (changed) saved_window(c, w)->cfg_sent = 0;
+            saved_window(c, w)->cfg_bridge = !!(k->flags & F_STREAM);
+            w->stretch = 0;
+            if (w->wait == 1) w->wait = 0;
+            put_plain(c, w, win); // discard only our previous visual transform/crop, never another app's state
+        }
         // покоящееся окно без трансформа синхронизируется с фактической рамкой (его могли
         // подвинуть); если окно держит видимую рамку (settling), видимое положение — переменные
         double a_pos[2] = {w->ax, w->ay}, a_size[2] = {w->aw, w->ah};
         int moving = (w->pos.active | w->size.active) && !w->held;
-        if (!w->settling) {
+        if (!w->settling && (!native || w->geo != 2)) {
             if (!w->pos.active) warp(&w->pos, 2, a_pos);
             if (!w->size.active) warp(&w->size, 2, a_size);
         }
         double gp[2] = {k->x, k->y}, gs[2] = {k->w, k->h};
+        if (!w->held) {
+            // Account for skipped VBLs before changing goals. Held variables have never advanced.
+            if (w->pos.active && now > w->pos.last) step(c, &w->pos, 2, now);
+            if (w->size.active && now > w->size.last) step(c, &w->size, 2, now);
+        }
         if (k->op == OP_WARP) { warp(&w->pos, 2, gp); warp(&w->size, 2, gs); }
         else {
-            if (k->flags & F_FROM) {
+            if ((k->flags & F_FROM) && (!native || w->geo != 2)) {
                 double fp[2] = {k->fx, k->fy}, fs[2] = {k->fw, k->fh};
                 warp(&w->pos, 2, fp); warp(&w->size, 2, fs);
             }
-            retarget(ch, &w->pos, 2, gp, k->cpos, k->dpos, now);
-            retarget(ch, &w->size, 2, gs, k->csize, k->dsize, now);
+            retarget(c, &w->pos, 2, gp, k->cpos, k->dpos, now);
+            retarget(c, &w->size, 2, gs, k->csize, k->dsize, now);
         }
-        if (k->flags & F_MOVE) {                    // реальное окно — сразу в цель (хит-тест, приложению)
+        if ((k->flags & F_MOVE) && !native && !terminal) { // legacy mode parks actual origin at goal
             double dx = k->x - w->ax, dy = k->y - w->ay;
             if (dabs(dx) >= 1.0 || dabs(dy) >= 1.0) {
                 unsigned wid = w->wid;
@@ -981,21 +1604,32 @@ static void apply_cmd(struct ctx *c, struct ch_cmd *k, double now) {
         }
         w->radius = c->corner ? c->corner(win) : 0;
         w->a0[0] = w->aw; w->a0[1] = w->ah;           // кадр приложения на старте: до configure
-        if (k->op == OP_GEOM && !moving && ch->h.hold_max >= 0) {   // hold_max < 0: не ждать вовсе (Hyprland)
+        // Live 1:1 content already covers a shrinking target: no new
+        // application buffer is needed before that motion can start.
+        int missing_buffer = (k->flags & F_STRETCH) ?
+            (dabs(w->aw-k->w)>2 || dabs(w->ah-k->h)>2) :
+            (w->aw+2<k->w || w->ah+2<k->h);
+        if (!native && k->op == OP_GEOM && !moving && ch->h.hold_max >= 0 && missing_buffer) {
             // Как Wayland: движение из покоя стартует, когда приложение уже прислало кадр нового размера —
             // тогда с первого кадра анимации видно новое содержимое, старое не растягивается. Уже едущее
             // окно не держим: ретаргет без остановки (S6 — иначе «ступеньки» на автоповторе биндов).
             w->held = 1;
-            w->needs = dabs(w->aw - k->w) > 2 || dabs(w->ah - k->h) > 2;
+            w->needs = missing_buffer;
             ch->h.holding = 1;
+            ch->h.hold_t = now;
         }
         if (k->flags & F_MOVE) {
-            w->geo = 1; w->moved = 0;
-            u64 cn = (u64)*(void **)((char *)win + 0x30);   // приложение тайлится — запомнить соединение
+            w->geo = native ? 2 : 1; w->moved = 0;
+            u64 cn = *(int *)((char *)win + 0x20) == 0 ?
+                (u64)*(void **)((char *)win + 0x30) : 0; // only normal windows admit prehide
             int have = 0;
             for (int i = 0; i < CH_NCONN; i++) have |= ch->conn[i] == cn;
             if (!have && cn) ch->conn[ch->conn_next++ % CH_NCONN] = cn;
         }
+        if (native) { w->geo = 2; w->needs = 0; if (!(k->flags & F_HOLD)) w->held = 0; }
+        if(!native && !(k->flags & F_STRETCH))
+            w->geo=(k->flags & F_EDGE) && live_edge_granted(c,w) ? 3 : 1;
+        if(terminal){w->geo=4;w->moved=0;}
         // warp или цель не сдвинулась (анимация не стартовала): сразу сверка рамки — буфер в боксе
         // (обрезка/край), без ложного EV_MOVED у окна, стоящего на своём минимуме
         w->settling = k->op == OP_WARP || !(w->pos.active | w->size.active);
@@ -1003,24 +1637,47 @@ static void apply_cmd(struct ctx *c, struct ch_cmd *k, double now) {
         // посреди хода — иначе прыжок масштаба [daily_bugs F3]
         if (k->flags & F_STRETCH) w->stretch = 1;
         else if (!(w->stretch && w->size.active)) w->stretch = 0;
-        if (k->op == OP_GEOM && (k->flags & F_WAIT)) { w->wait = 1; w->wait_t = now; }
+        if (!native && k->op == OP_GEOM && (k->flags & F_WAIT)) { w->wait = 1; w->wait_t = now; }
         // сосед открывающегося окна: стоит на старте, пока новое окно не пришлёт кадр размера плитки (≤150 мс),
         // и стартует с его popin в одном кадре — одна волна (как Hyprland: configure до показа)
-        if (k->op == OP_GEOM && (k->flags & F_HOLD)) {   // ждёт и новое окно, и свой кадр нового размера
-            w->held = 1; w->needs = dabs(w->aw - k->w) > 2 || dabs(w->ah - k->h) > 2; ch->h.holding = 1;
+        if (k->op == OP_GEOM && (k->flags & F_HOLD) && !moving) {
+            // A new opening batch must not stop an already visible moving neighbor.
+            // Its current spring retargets continuously; only resting neighbors join the hold.
+            w->held = 1; w->needs = native ? 0 : dabs(w->aw - k->w) > 2 || dabs(w->ah - k->h) > 2; ch->h.holding = 1;
+            ch->h.hold_t = now;
         }
+        if(snapshot_requested && !snapshot_ok){w->held=w->needs=0;}
         w->done_t = now;
     } else if (k->op == OP_ALPHA) {
         double ga[1] = {k->a};
+        if (k->calpha == CH_INSTANT) { warp(&w->alpha, 1, ga); return; }
         if (k->flags & F_FROM) { double fa[1] = {k->fa}; warp(&w->alpha, 1, fa); }
-        retarget(ch, &w->alpha, 1, ga, k->calpha, k->dalpha, now);
+        if (!w->held && !w->wait && w->alpha.active && now > w->alpha.last) step(c, &w->alpha, 1, now);
+        retarget(c, &w->alpha, 1, ga, k->calpha, k->dalpha, now);
     }
 }
 
 // Один кадр окна. 1 — окну ещё нужны тики.
 static int frame_win(struct ctx *c, struct ch_win *w, double now) {
     struct ch *ch = c->ch;
-    if (w->wait) {
+    struct edge_lease *lease=live_edge_lease(c,w);
+    if(lease && lease->on && lease->wid==w->wid) {
+        int preparing=live_edge_primed(c,w);
+        if(!preparing && !live_edge_enabled(c,w)) { live_edge_drop(c,w); live_edge_client(c,w,0); }
+        else if(ch->h.pad_t!=CH_EDGE_PERMISSION && ch->h.now-lease->generation>1) live_edge_client(c,w,1);
+    }
+    if(w->geo==3 && !live_edge_enabled(c,w)) w->geo=1;
+    if (w->wait == 2) {
+        // An application connection is not a window role. Fail open if the daemon never
+        // claims this window (dialog, sheet, inspector, menu utility, or missed event).
+        void *win = c->by_id(w->wid);
+        if (!win) { slot_free(c, w, 0); return 0; }
+        if (now - w->wait_t < 0.15) return 1;
+        if (w->cur_alpha == 0.0 && w->alpha.g[0] == 0.0) c->set_alpha(0, win, 1.0f, 0.0f);
+        slot_free(c, w, win);
+        return 0;
+    }
+    if (w->wait == 1 && !w->held) {
         // Открытие как в Hyprland: окно показывается, когда приложение уже нарисовало кадр размера плитки
         // (там размер известен клиенту до первого кадра). До того — невидимо, рамка и альфа стоят на старте.
         void *win;
@@ -1031,15 +1688,14 @@ static int frame_win(struct ctx *c, struct ch_win *w, double now) {
             return 1;
         }
         w->wait = 0;
-        double t0 = now - (ch->h.period > 0.004 ? ch->h.period : 1.0 / 60);
+        double t0 = now - (ch->h.period > 0.002 ? ch->h.period : 1.0 / 60);
         w->pos.t0 = w->size.t0 = w->alpha.t0 = t0;
         w->pos.last = w->size.last = w->alpha.last = t0;
     }
     int was = w->pos.active | w->size.active | w->alpha.active;
     int an;
     if (w->held) {                                  // пачка ждёт кадров приложений: рамка стоит на старте,
-        an = 1;                                     // альфа идёт (её держать незачем)
-        step(c, &w->alpha, 1, now);
+        an = 1;                                     // geometry and fade begin in the same frame
     } else {
         an = step(c, &w->pos, 2, now);
         an |= step(c, &w->size, 2, now);
@@ -1050,9 +1706,47 @@ static int frame_win(struct ctx *c, struct ch_win *w, double now) {
 
     double a = w->alpha.v[0];
     if (!finite(a)) a = 1.0;
+    int virtual_source=cover_index(c,w->wid,1);
+    if(virtual_source>=0 && P8_SOURCE(c)[virtual_source]==(u64)win && c->by_id(P8_TAB(c)[virtual_source].wid))
+        c->set_alpha(0,win,0,0); // App-owned changes cannot reveal the redraw through the cover.
     if (a != w->cur_alpha) {
-        c->set_alpha(0, win, (float)(a < 0 ? 0 : a > 1 ? 1 : a), 0.0f);
+        if(cover_index(c,w->wid,1)<0)c->set_alpha(0, win, (float)(a < 0 ? 0 : a > 1 ? 1 : a), 0.0f);
         w->cur_alpha = a;
+    }
+
+    if (w->geo == 2) {
+        if (!native_allowed(c, w, win) || w->alpha.g[0] <= 0) {
+            native_cancel(c, w, win);
+            put_plain(c, w, win);
+            return w->alpha.active;
+        }
+        struct saved_window *s = saved_window(c, w);
+        int moving = w->pos.active | w->size.active;
+        if (!w->held && s->cfg_sent != 2) {
+            double r[4] = {w->pos.v[0], w->pos.v[1], w->size.v[0], w->size.v[1]};
+            int valid = finite(r[0]) && finite(r[1]) && finite(r[2]) && finite(r[3]) && r[2] >= 1 && r[3] >= 1;
+            int changed = !s->cfg_sent;
+            for (int i = 0; i < 4; i++) changed |= dabs(r[i] - s->cfg_rect[i]) > 0.001;
+            if (valid && (changed || !moving) && native_post_frame(c, w, win, r)) {
+                for (int i = 0; i < 4; i++) s->cfg_rect[i] = r[i];
+                s->cfg_stamp = ch->h.now;
+                s->cfg_sent = moving ? 1 : 2; // exactly one final even if app ignores it or clamps its minimum
+            }
+        }
+        put_plain(c, w, win); // actual A is presentation; no independent B translation, stretch, fill or crop
+        if (was && !an) {
+            w->done_t = now;
+            post_evt(ch, EV_DONE, w->wid, now, w->ax, w->ay, w->aw, w->ah);
+        }
+        int fits = dabs(w->ax - w->pos.g[0]) <= 1 && dabs(w->ay - w->pos.g[1]) <= 1 &&
+                   dabs(w->aw - w->size.g[0]) <= ch->h.settle_px && dabs(w->ah - w->size.g[1]) <= ch->h.settle_px;
+        double limit = ch->h.settle > 0 ? ch->h.settle : 0.25;
+        if (limit > 1) limit = 1;
+        int pending = s->cfg_sent == 2 && !fits && ch->h.now - s->cfg_stamp < limit;
+        if (w->settling && fits && !moving && !w->held)
+            post_evt(ch, EV_SETTLED, w->wid, now, w->ax, w->ay, w->aw, w->ah);
+        w->settling = moving || w->held || pending;
+        return an || pending;
     }
 
     // стабильность буфера: A не менялась N тиков подряд — приложение закончило перерисовку
@@ -1060,11 +1754,47 @@ static int frame_win(struct ctx *c, struct ch_win *w, double now) {
         w->stable++;
     else { w->stable = 0; w->pa[0] = w->ax; w->pa[1] = w->ay; w->pa[2] = w->aw; w->pa[3] = w->ah; }
 
+    if(saved_window(c,w)->cfg_sent==4 && !(w->pos.active|w->size.active) && !w->held) {
+        struct saved_window *s=saved_window(c,w);void *owner=c->owner?c->owner(win):0;
+        u64 object,original_owner;__builtin_memcpy(&object,&s->cfg_rect[0],8);__builtin_memcpy(&original_owner,&s->cfg_rect[1],8);
+        if((u64)win!=object || (u64)owner!=original_owner) {
+            post_evt(ch,EV_SNAPSHOT,w->wid,now,0,SNAP_CANCELLED,0,s->cfg_stamp);s->cfg_sent=0;
+        }
+        else if(owner && c->post) {
+            struct ch_cfgmsg message={.magic=s->cfg_bridge?CH_STREAM_MAGIC:CH_CFG_MAGIC,.wid=w->wid,
+                .x=w->pos.g[0],.y=w->pos.g[1],.w=w->size.g[0],.h=w->size.g[1],.t0=now};
+            c->post(owner,s->cfg_bridge?CH_STREAM_NOTIFY:CH_CFG_NOTIFY,&message,sizeof message);
+            post_evt(ch,EV_SNAPSHOT,w->wid,now,0,SNAP_CONFIGURED,0,s->cfg_stamp);s->cfg_sent=0;
+        }
+    }
+    if(cover_index(c,w->wid,1)>=0) {
+        if(was && !an){w->done_t=now;post_evt(ch,EV_DONE,w->wid,now,w->ax,w->ay,w->aw,w->ah);}
+        w->settling=1;
+        return 1;
+    }
     double bx = w->pos.v[0], by = w->pos.v[1], bw = w->size.v[0], bh = w->size.v[1];
+    if(w->geo==4 && !w->held && !(w->pos.active|w->size.active) &&
+       finite(bx) && finite(by) && bw>=1 && bh>=1) {
+        // The AppKit size was configured once before motion. Transfer only origin,
+        // then sample A before rendering this very WS frame: an old translation
+        // must never survive beside the newly moved native window for one frame.
+        double dx=bx-w->ax,dy=by-w->ay;
+        w->geo=1;w->settling=1; // exactly one attempt; retarget/forget cannot replay it
+        if(c->move && (dabs(dx)>=0.01 || dabs(dy)>=0.01)) {
+            unsigned wid=w->wid;
+            c->move(0,&wid,1,0,(float)dx,(float)dy);
+            if(!actual(c,w,&win)) {
+                post_evt(ch,EV_GONE,w->wid,now,0,0,0,0);slot_free(c,w,0);return 0;
+            }
+        }
+        // If native movement is rejected/clamped, the normal live transform below
+        // continues to own B; identity is installed only when sampled A matches.
+    }
     if (!an) {
         // конец popin, а буфер ещё не размера плитки: держать растяжение, пока приложение рисует (буфер меняется),
         // но не дольше ~150 мс стабильного буфера — иначе «растянуто → 1:1» за кадр [F3]
-        if (w->stretch && (dabs(w->aw - bw) > 1 || dabs(w->ah - bh) > 1) && w->stable < 9) {
+        if (w->stretch && (dabs(w->aw - bw) > 1 || dabs(w->ah - bh) > 1) &&
+            w->stable * ch->h.period < 0.15) {
             if (was) { w->done_t = now; post_evt(ch, EV_DONE, w->wid, now, w->ax, w->ay, w->aw, w->ah); }
             w->settling = 1;                          // дальше — обычная сверка «буфер в боксе», без ложного EV_MOVED
             an = 1;
@@ -1097,28 +1827,50 @@ static int frame_win(struct ctx *c, struct ch_win *w, double now) {
     }
 show:
     if (!(bw >= 1) || !(bh >= 1) || !finite(bx) || !finite(by)) { put_plain(c, w, win); return an; }
-    // Содержимое в видимой рамке B — как Hyprland при resize: буфер 1:1 от левого верхнего угла,
-    // лишнее обрезано сервером по B. Никакого растяжения (кроме открытия — stretch): буфер
-    // не меньше рамки обеспечивает демон (растущей оси размер сразу, сжимающейся — в конце).
-    // Растяжение — только у popin открытия (как m_animatingIn в Hyprland). При resize пачка стартует,
-    // когда приложение уже прислало кадр нового размера (held), поэтому старый кадр не тянется.
-    int old = 0;
-    int st = w->stretch || old;
+    // Oversized axes stay1:1 and crop. An already accepted undersized live
+    // buffer projects to current B only during size motion; no per-frame resize
+    // request or persistent opening/stretch ownership is introduced.
+    int st = w->stretch;
     double sx = st ? w->aw / bw : 1.0, sy = st ? w->ah / bh : 1.0;
+    unsigned projected=0;
+    if(!st)projected=live_resize_projection(c,w,bw,bh,&sx,&sy);
     if (sx < 0.02 || sx > 50 || sy < 0.02 || sy > 50) { put_plain(c, w, win); return an; }
     if (dabs(bw - w->aw) < 0.01 && dabs(bh - w->ah) < 0.01 && dabs(bx - w->ax) < 0.01 && dabs(by - w->ay) < 0.01) {
         put_plain(c, w, win);
     } else {
-        // Без масштаба: показывается только настоящий буфер 1:1. Где буфер больше рамки — обрезка по B;
-        // где меньше (приложение не успело перерисоваться) — край окна ждёт буфер, а не растягивает его.
-        // Как Hyprland: буфер 1:1 от левого верхнего угла рамки, видна часть B∩A; пустое место
-        // (буфер ещё меньше рамки) закрывает подложка цвета фона окна — без растяжения и без ожидания.
-        double cw = bw < w->aw ? bw : w->aw, ch_ = bh < w->ah ? bh : w->ah;
+        double source_w=bw*sx,source_h=bh*sy;
+        double cw = source_w < w->aw ? source_w : w->aw, ch_ = source_h < w->ah ? source_h : w->ah;
         put_xform(c, w, sx, sy, (w->ax - bx) * sx, (w->ay - by) * sy);
         int crop = !st && (dabs(cw - w->aw) > 0.5 || dabs(ch_ - w->ah) > 0.5);
         if (use_mask(c, w)) { put_clip(c, w, win, 0, 0, 0, 0, 0); put_mask(c, w, win, crop, cw, ch_); }
-        else { put_mask(c, w, win, 0, 0, 0); put_clip(c, w, win, crop, bx, by, cw, ch_); }
-        put_under(c, w, !st, bx, by, bw, bh, w->cur_alpha, cw, ch_);
+        else { put_mask(c, w, win, 0, 0, 0); put_clip(c, w, win, crop, bx, by, cw/sx, ch_/sy); }
+        put_under(c, w, !st, bx, by, bw, bh, w->cur_alpha, cw/sx, ch_/sy);
+        if(!st && !projected && live_edge_enabled(c,w)) {
+            struct edge_state *edge=&c->edges[w-ch->win];
+            struct edge_lease original=*live_edge_lease(c,w);
+            u32 original_permission=ch->h.pad_t;
+            void *anchor=edge->source_window;
+            void *owner=anchor && c->owner ? c->owner(anchor) : 0;
+            int result=edge_update(c->edge_api,edge,w->wid,w->aw,w->ah,
+                                  (struct edge_rect){bx,by,bw,bh},w->cur_alpha,c->key,1,ch->deco.radius);
+            if(result==EDGE_NO_PATCH && original_permission!=ch->h.pad_t) result=EDGE_INVALID;
+            if(result==EDGE_NO_PATCH && original_permission==CH_EDGE_PERMISSION) {
+                struct edge_lease *current=live_edge_lease(c,w);
+                int same=current->wid==original.wid && current->on==original.on &&
+                    current->generation==original.generation && current->expires==original.expires;
+                if(same && original.wid==w->wid && original.on==3 &&
+                   ch->h.now<original.expires && anchor && c->by_id(w->wid)==anchor &&
+                   (!c->owner || c->owner(anchor)==owner) && native_allowed(c,w,anchor))
+                    edge->source_window=anchor;
+                else result=EDGE_INVALID;
+            }
+            if(result<=EDGE_INVALID) {
+                // A failed helper revokes this window, not unrelated grants.
+                if(ch->h.pad_t!=CH_EDGE_PERMISSION) ch->h.pad_t=0;
+                live_edge_client(c,w,0);
+                if(w->geo==3) w->geo=1;
+            }
+        } else live_edge_drop(c,w);
     }
     return an;          // покой (в т.ч. «окно не ровно в плитке» со стабильным буфером) — без покадровых тиков
 }
@@ -1128,14 +1880,35 @@ show:
 // кадра считаются на te (момент показа), а не на время срабатывания таймера: опоздание
 // таймера на несколько мс не сдвигает выборку, шаг по времени ровно T.
 static double frame_grid(struct ctx *c, double now, double *T_out) {
+    // WindowServer's getter chooses the dominant display, including the main display
+    // when there is just one. Display ids are not guaranteed to start at 1.
+    if (c->display_id) {
+        void *win = c->ch->deco.focus ? c->by_id(c->ch->deco.focus) : 0;
+        if (!win) for (int i = 0; i < CH_NW; i++) {
+            struct ch_win *w = &c->ch->win[i];
+            if (w->used && w->geo) { win = c->by_id(w->wid); if (win) break; }
+        }
+        u32 id = c->display_id(win);
+        if (id) c->display = id;
+    }
     double p = 0, n = 0;
     if (c->vbl) c->vbl(c->display, &p, &n);
     double T = n - p;
-    if (!(T > 0.004 && T < 0.05)) { T = 1.0 / 60; n = now; }
+    if (!(T > 0.002 && T < 0.05) || !__builtin_isfinite(p) || !__builtin_isfinite(n)) {
+        // Missing samples leave the outputs untouched. Keep the last known phase and
+        // period; rebasing to now on every tick turns timer jitter into visual jitter.
+        T = c->ch->h.period;
+        if (!(T > 0.002 && T < 0.05)) T = 1.0 / 60; // only before the first valid display sample
+        n = c->ch->h.te > 0 ? c->ch->h.te : now;
+    }
     double lim = now + c->ch->h.margin;
-    double k = (double)(long)((lim - n) / T);
+    double quotient = (lim - n) / T;
+    // The VBL cache can be old. A geometry-sized bound on timestamps or the frame
+    // quotient breaks after long uptime and may produce a huge incremental loop.
+    if (!__builtin_isfinite(quotient) || quotient <= -1e15 || quotient >= 1e15) { n = lim; quotient = 0; }
+    double k = (double)(long)quotient;
     double te = n;
-    if (k > -1e7 && k < 1e7) te += k * T;
+    te += k * T;
     while (te <= lim) te += T;
     while (te - T > lim) te -= T;
     *T_out = T;
@@ -1171,22 +1944,62 @@ static int p8_make(struct ctx *c, char *src, int pending, double now) {   // pen
     // сбрасывался до order → рекурсия клонов → переполнение стека WS [V крэш 12:33:20]
     u32 was = c->in_cb;
     c->in_cb = 1;
+    struct ch_win *source=slot(ch,*(unsigned *)src,0);
+    double logical_alpha=source?source->cur_alpha:1;
+    // CaptureSurface bakes native alpha into its pixels. Normalize only within
+    // this serialized acquisition, then cover/reveal use the logical alpha once.
+    if(pending==3)c->set_alpha(0,src,1,0);
     char *cl = c->clone(src, fr, disp, 1);
-    if (!cl) { c->in_cb = was; return -1; }
+    if (!cl) { if(pending==3)c->set_alpha(0,src,(float)logical_alpha,0);c->in_cb = was; return -1; }
     c->set_level(cl, 0, *(int *)(src + 0x20), *(short *)(src + 0x28));
     unsigned cwid = c->get_id(cl);
+    if(pending==3)c->set_alpha(0,cl,(float)logical_alpha,0);
     if (pending == 2) c->order(0, cwid, -1, *(unsigned *)src);   // подкладка — под окном
-    else c->order(0, cwid, 1, pending ? 0 : *(unsigned *)src);  // ушедшее с экрана — поверх своего уровня
+    else if (pending == 1) c->order(0, cwid, 0, 0); // orderOut can be native tab selection; retain pixels invisibly
+    else c->order(0, cwid, 1, *(unsigned *)src); // confirmed close — visible above source
     c->in_cb = was;
     struct ch_win *w = slot(ch, cwid, 1);
-    if (!w) { p8_free_win(c, cl); return -1; }
+    if (!w) { p8_free_win(c, cl);if(pending==3)c->set_alpha(0,src,(float)logical_alpha,0); return -1; }
     double cur[2] = {fr.x, fr.y}, sz[2] = {fr.w, fr.h};
     warp(&w->pos, 2, cur); warp(&w->size, 2, sz);
     w->ax = fr.x; w->ay = fr.y; w->aw = fr.w; w->ah = fr.h;
     w->stretch = 1;
     struct p8c *e = &P8_TAB(c)[k];
     e->wid = cwid; e->src = *(unsigned *)src; e->t0 = now; e->live = 1; e->pending = pending;
+    P8_SOURCE(c)[k]=(u64)src;
+    if(pending==3) {
+        w->stretch=0;w->geo=1;
+        c->set_alpha(0,src,0,0); // Actual presentation hides; logical source alpha remains unchanged.
+    }
     return k;
+}
+
+static void cover_retire(struct ctx *c,int index,int result,double now) {
+    struct p8c *e=&P8_TAB(c)[index];
+    if(!e->live || e->pending!=3)return;
+    void *source=c->by_id(e->src);struct ch_win *sw=slot(c->ch,e->src,0);
+    unsigned clone_id=e->wid,source_id=e->src,epoch=P8_EPOCH(c)[index];
+    e->live=0; // The normal source presentation path may now perform the exact handoff.
+    if(source && sw && (u64)source==P8_SOURCE(c)[index]) {
+        if(result==SNAP_REVEALED) {
+            sw->settling=1;frame_win(c,sw,now);
+        } else {
+            void *present;
+            if(actual(c,sw,&present)) {
+                double p[2]={sw->ax,sw->ay},s[2]={sw->aw,sw->ah};
+                warp(&sw->pos,2,p);warp(&sw->size,2,s);sw->held=sw->settling=0;
+                put_plain(c,sw,present);
+            }
+        }
+        c->set_alpha(0,source,(float)sw->cur_alpha,0);
+        if(saved_window(c,sw)->cfg_sent>=3)saved_window(c,sw)->cfg_sent=0;
+    }
+    void *clone=c->by_id(clone_id);struct ch_win *cw=slot(c->ch,clone_id,0);
+    if(clone)c->set_alpha(0,clone,0,0);
+    post_evt(c->ch,EV_SNAPSHOT,source_id,now,clone_id,result,3,epoch);
+    P8_SOURCE(c)[index]=0;P8_EPOCH(c)[index]=0;
+    if(cw){if(clone)put_plain(c,cw,clone);slot_free(c,cw,clone);}
+    if(clone && !*(void **)((char *)clone+0x30))p8_free_win(c,clone);
 }
 
 // Запуск ухода клона: popin k% + fadeOut по кривым конфига; соседям — EV_GONE в этом же цикле демона.
@@ -1194,16 +2007,28 @@ static void p8_go(struct ctx *c, int k, double now) {
     struct ch *ch = c->ch;
     struct p8c *e = &P8_TAB(c)[k];
     struct ch_win *w = slot(ch, e->wid, 0);
+    if(e->pending==1) {
+        char *clone=c->by_id(e->wid);
+        if(clone && !*(void **)(clone+0x30)) {
+            u32 was=c->in_cb;c->in_cb=1;
+            c->order(0,e->wid,1,0);c->in_cb=was;
+        }
+    }
     e->pending = 0; e->t0 = now;
     if (w) {
-        double kk = hd(ch, 3) > 0.3 ? hd(ch, 3) : 0.92;
+        double kk = hd(ch, 3);
+        if (!__builtin_isfinite(kk)) kk = 0.92;
+        if (kk < 0) kk = 0; else if (kk > 1) kk = 1;
         double fx = w->pos.v[0], fy = w->pos.v[1], fw = w->size.v[0], fh = w->size.v[1];
-        double tp[2] = {fx + fw * (1 - kk) / 2, fy + fh * (1 - kk) / 2}, ts[2] = {fw * kk, fh * kk};
+        double tw = fw * kk, th = fh * kk;
+        if (tw < 5) tw = fw < 5 ? fw : 5;
+        if (th < 5) th = fh < 5 ? fh : 5;
+        double tp[2] = {fx + (fw - tw) / 2, fy + (fh - th) / 2}, ts[2] = {tw, th};
         u32 cs = (ch->h.reserved[0] >> 8) & 0xff, ca = (ch->h.reserved[0] >> 16) & 0xff;
-        retarget(ch, &w->pos, 2, tp, cs, hd(ch, 1), now);
-        retarget(ch, &w->size, 2, ts, cs, hd(ch, 1), now);
+        retarget(c, &w->pos, 2, tp, cs, hd(ch, 1), now);
+        retarget(c, &w->size, 2, ts, cs, hd(ch, 1), now);
         double z[1] = {0.0};
-        retarget(ch, &w->alpha, 1, z, ca, hd(ch, 2), now);
+        retarget(c, &w->alpha, 1, z, ca, hd(ch, 2), now);
     }
     c->nclone++;
     post_evt(ch, EV_CLONE, e->wid, now, e->src, 0, 0, 0);
@@ -1232,6 +2057,7 @@ static void p8_order_done(struct ctx *c) {
         if (win) for (int j = 0; j < nc; j++) tab |= came[j] == (u64)*(void **)(win + 0x30);
         int was = P8_ON(c)[i];
         P8_ON(c)[i] = (unsigned char)on;              // до клона: вложенный вызов не увидит тот же переход 1→0
+        if(was && !on) { live_edge_drop(c,w); live_edge_client(c,w,0); }
         if (was && !on && !tab && win && *(void **)(win + 0x30) && *(int *)(win + 0x20) == 0 &&
             w->cur_alpha > 0.05 && w->alpha.g[0] > 0.05 && (ch->h.reserved[0] & 2))
             p8_make(c, win, 1, ch->h.now);
@@ -1255,6 +2081,7 @@ void anim_will_release(u32 type, void *data, unsigned long len, struct ctx *c) {
     unsigned swid = *(unsigned *)src;
     int on = (int)((*(u64 *)(src + 0x928) >> 44) & 1), lvl = *(int *)(src + 0x20);
     struct ch_win *sw = slot(ch, swid, 0);
+    if(sw) { live_edge_drop(c,sw); live_edge_client(c,sw,0); }
     post_evt(ch, EV_REL, swid, ch->h.now, on, 1, lvl, (sw ? 1 : 0) + (sw && sw->geo ? 2 : 0));
     if (!(ch->h.reserved[0] & 2) || lvl != 0) return;
     for (int i = 0; i < P8_N; i++) {                           // снят при order-out — это закрытие: в путь
@@ -1282,19 +2109,46 @@ static void p8_tick(struct ctx *c, int stopping, double now) {
         if (!e->live) continue;
         struct ch_win *w = slot(ch, e->wid, 0);
         int done;
-        if (e->pending == 2) {                       // подкладка: пока окно едет (и пока не встало в бокс)
+        if(e->pending==3) {
+            struct ch_win *sw=slot(ch,e->src,0);void *source=c->by_id(e->src);
+            int invalid=stopping || !sw || !source || !c->by_id(e->wid) || (u64)source!=P8_SOURCE(c)[i] ||
+                !((*(u64 *)((char *)source+0x928)>>44)&1) ||
+                (sw->alpha.g[0]<=0 && !sw->alpha.active && sw->cur_alpha<=.01) || now-e->t0>30;
+            if(invalid){cover_retire(c,i,SNAP_CANCELLED,now);continue;}
+            int ready=!(sw->pos.active|sw->size.active|sw->alpha.active) && !sw->held && sw->stable>=2 &&
+                dabs(sw->ax-sw->pos.g[0])<=1 && dabs(sw->ay-sw->pos.g[1])<=1 &&
+                dabs(sw->aw-sw->size.g[0])<=ch->h.settle_px && dabs(sw->ah-sw->size.g[1])<=ch->h.settle_px &&
+                saved_window(c,sw)->cfg_sent==6;
+            if(ready)cover_retire(c,i,SNAP_REVEALED,now);
+            continue;
+        } else if (e->pending == 2) {                       // подкладка: пока окно едет (и пока не встало в бокс)
             struct ch_win *sw = slot(ch, e->src, 0);
-            done = stopping || !sw || now - e->t0 > 2.0 ||
+            double cap=30.0;
+            if(sw && finite(sw->pos.dur) && sw->pos.dur+1>cap) cap=sw->pos.dur+1;
+            if(sw && finite(sw->size.dur) && sw->size.dur+1>cap) cap=sw->size.dur+1;
+            void *source=c->by_id(e->src);
+            done = stopping || !sw || !source || (P8_SOURCE(c)[i] && P8_SOURCE(c)[i]!=(u64)source) || now - e->t0 > cap ||
                    (!(sw->pos.active | sw->size.active) && (!sw->settling || sw->stable >= 3));
         } else if (e->pending) {                     // не закрытие (Cmd+H, свёртывание, вкладка) — снять:
             void *sw = c->by_id(e->src);             // 0x3e9 не пришёл за 120 мс, или окно снова на экране
             done = stopping || now - e->t0 > 0.12 || (sw && ((*(u64 *)((char *)sw + 0x928) >> 44) & 1));
-        } else done = stopping || !w || !(w->pos.active | w->size.active | w->alpha.active) || now - e->t0 > 2.0;
+        } else {
+            double cap = 30.0, geometry_duration = hd(ch, 1), fade_duration = hd(ch, 2);
+            // Springs finish by their actual state. A bounded failsafe handles pathological
+            // custom springs; valid configured beziers can run up to 40s after time_scale.
+            if (__builtin_isfinite(geometry_duration) && geometry_duration + 1 > cap) cap = geometry_duration + 1;
+            if (__builtin_isfinite(fade_duration) && fade_duration + 1 > cap) cap = fade_duration + 1;
+            done = stopping || !w || !(w->pos.active | w->size.active | w->alpha.active) || now - e->t0 > cap;
+        }
         if (!done) continue;
         char *cl = c->by_id(e->wid);
-        if (w) w->used = 0;
+        if (w) {
+            if (cl) put_plain(c, w, cl);
+            slot_free(c, w, cl);
+        }
         if (cl && !*(void **)(cl + 0x30)) p8_free_win(c, cl);
         e->live = 0;
+        P8_SOURCE(c)[i]=0;
     }
 }
 
@@ -1326,22 +2180,56 @@ static void snap_frame(struct ctx *c, struct ch_win *cw, struct ch_win *sw) {
     put_clip(c, cw, cl, 1, kx, ky, kw, kh);
 }
 
+static void cover_frame(struct ctx *c,struct ch_win *cw,struct ch_win *sw) {
+    void *clone;if(!actual(c,cw,&clone))return;
+    double p[2]={sw->pos.v[0],sw->pos.v[1]},s[2]={sw->size.v[0],sw->size.v[1]},a[1]={sw->cur_alpha};
+    warp(&cw->pos,2,p);warp(&cw->size,2,s);warp(&cw->alpha,1,a);
+    cw->settling=0;cw->stretch=0;cw->geo=1;
+    put_xform(c,cw,1,1,cw->ax-p[0],cw->ay-p[1]);
+    put_clip(c,cw,clone,1,p[0],p[1],s[0],s[1]);
+    if(cw->cur_alpha!=a[0]){c->set_alpha(0,clone,(float)a[0],0);cw->cur_alpha=a[0];}
+}
+
 void anim_tick(struct ctx *c, double now) {
     struct ch *ch = c->ch;
     struct ch_hdr *h = &ch->h;
+    if(h->magic==CH_MAGIC && h->size==(u32)sizeof(struct ch)) {
+        h->version|=CH_CAP_TERMINAL_MOVE;
+        if((h->stop||c->dead) && effects_ready(c)) {
+            c->effects_api->destroy(c->effects_runtime);c->effects_runtime=0;
+        }
+        if(effects_ready(c))h->version|=CH_CAP_EFFECTS;
+        else h->version&=~CH_CAP_EFFECTS;
+        if(effects_ready(c)&&c->effects_api->shadow_supported&&c->effects_api->shadow_supported(c->effects_runtime))h->version|=CH_CAP_SHADOW;
+        else h->version&=~CH_CAP_SHADOW;
+        if(snapshot_ready(c))h->version|=CH_CAP_SNAPSHOT|CH_CAP_SNAPSHOT_COVER;
+        else h->version&=~(CH_CAP_SNAPSHOT|CH_CAP_SNAPSHOT_COVER);
+        if(SNAP_SEQUENCE(c)==0xffffffffu)h->version&=~CH_CAP_SNAPSHOT_COVER;
+    }
+    if((h->stop || c->dead) && c->edges && h->magic==CH_MAGIC && h->size==(u32)sizeof(struct ch)) {
+        // Teardown revokes preparation even while motion/hold flags remain set.
+        h->now=now;
+        for(int i=0;i<CH_NW;i++) if(ch->win[i].used) live_edge_client(c,&ch->win[i],0);
+    }
+    if((h->stop || c->dead) && c->edge_api && c->edges)
+        for(int i=0;i<CH_NW;i++) edge_remove(c->edge_api,&c->edges[i]);
     // канал не тот (другая версия структуры) — остановиться, ничего не читая дальше
-    if ((h->stop || c->dead) && c->cb_on) p8_tick(c, 1, now);   // снять колбэк, освободить клоны
+    if ((h->stop || c->dead) && h->magic == CH_MAGIC && h->size == (u32)sizeof(struct ch))
+        p8_tick(c, 1, now); // free clones even when the close callback was disabled mid-animation
     if (h->stop && !c->dead && !c->cleaned && h->magic == CH_MAGIC) {
         // остановка (переустановка/стоп демона): снять с окон всё своё — трансформ, маску, рамку, тень, радиус
         c->cleaned = 1;
+        h->now = now;
         for (int i = 0; i < CH_NW; i++) {
             struct ch_win *w = &ch->win[i];
             if (!w->used) continue;
             void *win = c->by_id(w->wid);
-            if (!win) continue;
+            if (!win) { slot_free(c, w, 0); continue; }
+            native_cancel(c, w, win);
             put_plain(c, w, win);
+            if (w->cur_alpha != 1.0) c->set_alpha(0, win, 1.0f, 0.0f);
             void *cwc = *(void **)((char *)win + 0x18);
-            layers_drop(c, w, cwc ? *(void **)((char *)cwc + 0x38) : 0);
+            layers_drop(c, w, cwc ? *(void **)((char *)cwc + 0x38) : 0, cwc ? *(void **)((char *)cwc + 0x98) : 0);
             radius_restore(c, w, win);
             if (c->sched_win) c->sched_win(0, win);
         }
@@ -1352,21 +2240,52 @@ void anim_tick(struct ctx *c, double now) {
     h->last_dt = now - h->now;
     h->ticks++;
     h->now = now;
+    if (h->te_prev > 0 && dabs(T - h->period) < 0.01 * T && te <= h->te_prev + 1e-6) {
+        // An order callback can request another tick before the next VBL. Sampling the
+        // same frame twice advances stability/holds and retargets from a past t0.
+        // Keep pending commands for the next frame instead of overwriting that frame.
+        c->resched(c->queue, c->self, c, c->session, 1, 1, h->te_prev + T * h->phase);
+        return;
+    }
     h->period = T;
     h->te = te;
 
     u32 head = __atomic_load_n(&h->cmd_head, __ATOMIC_ACQUIRE), tail = h->cmd_tail;
-    if (head - tail > CH_NCMD) { tail = head - CH_NCMD; h->errors++; }
+    if (head - tail > CH_NCMD) { tail = head - CH_NCMD; record_error(ch,0,0,ERR_CMD_RING); }
     // t0 пачки = момент показа прошлого кадра (te − T): первый показанный кадр анимации — ровно
     // через один период после старта, без скачка на 1–2 кадра (Hyprland стартует в кадре события)
     double t0 = te - T;
     if (t0 > now) t0 = now;
+    if(effects_ready(c))for(int i=0;i<CH_NW;i++)if(ch->win[i].used) {
+        // FORGET/CFG callbacks may restore P4 masks during command ingestion.
+        // Uncover their legal parent masks before those existing consumers run.
+        c->effects_api->suspend(c->effects_runtime,i,0);
+        c->effects_api->suspend(c->effects_runtime,i,1);
+    }
     for (; tail != head; tail++) apply_cmd(c, &ch->cmd[tail % CH_NCMD], t0);
     __atomic_store_n(&h->cmd_tail, tail, __ATOMIC_RELEASE);
+    if(h->reserved[0] & (1ull<<24)) {
+        // Animation master-off resolves current and freshly queued goals in
+        // this transaction. Keep engine ownership/scheduling and normal frame
+        // cleanup; stop would restore the user's old native geometry instead.
+        h->holding=0; h->hold_t=0;
+        for(int i=0;i<CH_NW;i++) {
+            struct ch_win *w=&ch->win[i];
+            if(!w->used) continue;
+            int changed=w->pos.active || w->size.active || w->alpha.active || w->held || w->wait==1;
+            if(w->geo) { warp(&w->pos,2,w->pos.g); warp(&w->size,2,w->size.g); }
+            warp(&w->alpha,1,w->alpha.g);
+            warp(&w->act,1,w->act.g); warp(&w->sact,1,w->sact.g);
+            w->held=w->needs=0;
+            if(w->wait==1) w->wait=0; // wait2 is unclaimed first-map admission, not an animation.
+            if(changed && w->geo) w->settling=1;
+        }
+    }
 
     // Новые окна: номера окон на сервере только растут — проверить следующие за наибольшим виденным.
     // Окно видно с момента создания, раньше, чем приложение его покажет: демон успевает его спрятать.
-    if (h->wid_max) {
+    if (h->wid_max && (now - c->scan_t >= 0.016 - 1e-6 || now < c->scan_t)) {
+        c->scan_t = now;
         u32 m = h->wid_max, miss = 0;
         for (u32 id = h->wid_max + 1; id <= h->wid_max + 64 && miss < 24; id++) {
             void *nw = c->by_id(id);
@@ -1387,6 +2306,7 @@ void anim_tick(struct ctx *c, double now) {
                     warp(&w->alpha, 1, z);
                     w->cur_alpha = 0.0;
                     c->set_alpha(0, nw, 0.0f, 0.0f);
+                    w->wait = 2; w->wait_t = now;  // bounded, unclaimed optimistic hide
                     pre = 1;
                 }
             }
@@ -1411,13 +2331,13 @@ void anim_tick(struct ctx *c, double now) {
         int opening = 0;                             // в пачке открытие (F_WAIT): ждём его кадр — не дольше 150 мс
         for (int i = 0; i < CH_NW; i++) {
             struct ch_win *w = &ch->win[i];
-            if (!w->used || !w->wait) continue;
+            if (!w->used || w->wait != 1) continue;
             opening = 1;
             void *win;
             if (!actual(c, w, &win)) continue;
             if (!(dabs(w->aw - w->size.g[0]) <= h->settle_px && dabs(w->ah - w->size.g[1]) <= h->settle_px)) wait = 1;
         }
-        double lim = opening ? (h->hold_max > 0.15 ? h->hold_max : 0.15) : h->hold_max > 0 ? h->hold_max : 0.017;   // не дольше кадра: Hyprland стартует сразу
+        double lim = opening ? (h->hold_max > 0.15 ? h->hold_max : 0.15) : h->hold_max > 0 ? h->hold_max : T;
         if (!wait || now - h->hold_t > lim) {
             double t0 = te - T;
             if (t0 > now) t0 = now;
@@ -1425,6 +2345,7 @@ void anim_tick(struct ctx *c, double now) {
                 struct ch_win *w = &ch->win[i];
                 if (!w->used || !w->held) continue;
                 w->held = 0;
+                if (w->wait == 1) w->wait = 0;     // the batch readiness check owns the release
                 w->pos.t0 = w->size.t0 = w->alpha.t0 = t0;
                 w->pos.last = w->size.last = w->alpha.last = t0;
                 w->a0[0] = w->aw; w->a0[1] = w->ah;
@@ -1433,18 +2354,51 @@ void anim_tick(struct ctx *c, double now) {
         }
     }
 
-    for (int i = 0; i < P8_N; i++) {                 // подкладки: дотяжка края окна в полосу «бокс B минус буфер»
-        struct p8c *e = &P8_TAB(c)[i];
-        if (!e->live || e->pending != 2) continue;
-        struct ch_win *sw = slot(ch, e->src, 0), *cw = slot(ch, e->wid, 0);
-        if (sw && cw) snap_frame(c, cw, sw);
-    }
     u32 n = 0;
+    unsigned char border_presented[CH_NW] = {0};
+    int decoration_ready = deco_ready(c);
     for (int i = 0; i < CH_NW; i++) {
         struct ch_win *w = &ch->win[i];
         if (!w->used) continue;
+        if(effects_ready(c)) {
+            // Let the existing P4 and helper paths observe their own legal masks
+            // before geometry ingestion; retain GPU caches/fade epoch privately.
+            c->effects_api->suspend(c->effects_runtime,i,0);
+            c->effects_api->suspend(c->effects_runtime,i,1);
+            if(effects_owns_corner(c,w)&&c->corner&&c->dbg_radius) {
+                void *prepared=c->by_id(w->wid);
+                if(prepared && c->corner(prepared)>0.01) {
+                    // Already ACKed client preparation owns upstream clipping.
+                    // Set native radius before edge_update creates its surface;
+                    // custom source/helper masks and matching rings own contour.
+                    c->dbg_radius(prepared,0);w->radius=0;w->rset|=1;
+                }
+            }
+        }
+        if(cover_index(c,w->wid,0)>=0)continue;
+        // The geometry transform and the ring belong to one presentation.
+        // Hold this window's explicit WS context scope across both updates;
+        // inner mask/ring commits cannot publish a half-updated presentation.
+        // Snapshot helpers retain their source-before-cover ordering below.
+        void *presentation_context = 0;
+        if (decoration_ready && (w->geo == 1 || w->geo == 4) &&
+            (w->pos.active || w->size.active || w->settling || w->held) && cover_index(c,w->wid,1)<0) {
+            void *presented = c->by_id(w->wid);
+            void *cwc = presented ? *(void **)((char *)presented + 0x18) : 0;
+            presentation_context = cwc ? *(void **)((char *)cwc + 0x38) : 0;
+        }
+        unsigned long long presentation_tx[4] = {0};
+        if (presentation_context) {
+            c->tx_ctor(presentation_tx,1);
+            c->tx_add(presentation_tx,presentation_context);
+        }
         int a = frame_win(c, w, te);
         n += a;
+        if (presentation_context) {
+            if (w->used) n += border_win(c,w,te);
+            border_presented[i] = 1;
+            layers_commit(c,presentation_tx);
+        }
         if (a && w->used) {                          // журнал траектории (П0): видимая рамка и альфа на te
             struct ch_traj *r = &ch->traj[h->traj_head % CH_NTRAJ];
             r->te = te; r->wid = w->wid; r->bx = w->pos.v[0]; r->by = w->pos.v[1];
@@ -1452,12 +2406,29 @@ void anim_tick(struct ctx *c, double now) {
             __atomic_store_n(&h->traj_head, h->traj_head + 1, __ATOMIC_RELEASE);
         }
     }
+    // Source geometry has now advanced to te. Underlay and border must consume
+    // that same sample; running this before frame_win leaked old pixels beyond B.
+    for (int i = 0; i < P8_N; i++) {
+        struct p8c *e = &P8_TAB(c)[i];
+        if (!e->live || (e->pending!=2 && e->pending!=3)) continue;
+        struct ch_win *sw = slot(ch, e->src, 0), *cw = slot(ch, e->wid, 0);
+        if (sw && cw){if(e->pending==3)cover_frame(c,cw,sw);else snap_frame(c, cw, sw);}
+    }
     {                                                // рамки: и в покое (фокус), CA — только при изменении
-        int ok = deco_ready(c);
+        int ok = decoration_ready;
         for (int i = 0; ok && i < CH_NW; i++) {
             struct ch_win *w = &ch->win[i];
-            if (w->used) n += border_win(c, w, te);
+            if (w->used) {
+                if (!border_presented[i]) n += border_win(c, w, te);
+                if(live_edge_enabled(c,w))
+                    edge_decorate(c->edge_api,&c->edges[i],(void*)w->bl_act,(void*)w->bl_sh,
+                                  w->size.v[0],w->size.v[1],ch->deco.sys_off==1?0:ch->deco.width);
+                n += effects_render_win(c,w,te);
+            }
         }
+    }
+    if(effects_ready(c))for(int i=0;i<CH_NW;i++)if(!ch->win[i].used) {
+        c->effects_api->drop(c->effects_runtime,i,0);c->effects_api->drop(c->effects_runtime,i,1);
     }
     p8_tick(c, 0, te);
     for (int i = 0; i < P8_N; i++) n += P8_TAB(c)[i].live;
@@ -1484,4 +2455,11 @@ void anim_frame(void *mctx, void *disp, void *z, struct ctx *c) {
     if (c->dead) return;
     c->ch->h.frames++;
     if (c->running) c->resched(c->queue, c->self, c, c->session, 1, 1, 0.0);
+}
+
+// Typed readonly contract for a reviewed installer/HOST, separate from FX APIs.
+unsigned anim_ctx_pending_offset(void) { return __builtin_offsetof(struct ctx,pending_edge_generation); }
+unsigned anim_ctx_size(void) { return sizeof(struct ctx); }
+u64 anim_edge_pending_generation(struct ctx *c,unsigned index) {
+    return c && index<CH_NW ? c->pending_edge_generation[index] : 0;
 }

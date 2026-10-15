@@ -1,5 +1,6 @@
 // Заголовок канала — hook/src/chan.h как есть (структуры не дублируются), плюс прототипы chanlib.c.
 #pragma once
+int hs_curve_compatible(unsigned id,unsigned type,double a,double b,double c,double d);
 #include "../../../../src/chan.h"
 
 unsigned ch_abi(void);
@@ -12,5 +13,11 @@ int ch_geom(int op, unsigned wid, unsigned flags, double x, double y, double w, 
 int ch_alpha(unsigned wid, unsigned flags, double a, double fa, unsigned calpha, double dalpha);
 int ch_forget(unsigned wid);
 int ch_under(unsigned wid, unsigned under);
+int ch_space(unsigned wid, unsigned long long sid);
+int ch_cfg(unsigned wid, double x, double y, double w, double h);
+int hs_snapshot_final(unsigned wid, unsigned flags, double x,double y,double w,double h,
+                      double fx,double fy,double fw,double fh,unsigned cp,unsigned cs,double dp,double ds);
+int ch_effects(unsigned flags, unsigned curve, const double *values);
+int ch_shadow(unsigned flags, unsigned curve, double duration, const double *values);
 void ch_commit(void);
 int ch_event(struct ch_evt *out);

@@ -98,6 +98,27 @@ int ch_alpha(unsigned wid, unsigned flags, double a, double fa, unsigned calpha,
     return 0;
 }
 
+int ch_effects(unsigned flags,unsigned curve,const double *values) {
+    if(!ch || !(ch->h.version&CH_CAP_EFFECTS) || !values)return -2;
+    struct ch_cmd *k=next_cmd();
+    if(!k)return -1;
+    k->op=OP_EFFECTS;k->flags=flags;k->cpos=curve;
+    k->x=values[0];k->y=values[1];k->w=values[2];k->h=values[3];
+    k->fx=values[4];k->fy=values[5];k->fw=values[6];k->fh=values[7];
+    k->dpos=values[8];k->dsize=values[9];k->dalpha=values[10];k->a=values[11];k->fa=values[12];
+    return 0;
+}
+int ch_shadow(unsigned flags,unsigned curve,double duration,const double *values) {
+    if(!ch||!(ch->h.version&CH_CAP_SHADOW)||!values)return -2;
+    struct ch_cmd *k=next_cmd();if(!k)return -1;
+    union {double d;u64 bits;} packed={.d=duration};
+    k->op=OP_SHADOW;k->flags=flags;k->cpos=curve;k->pad0=(u32)packed.bits;k->pad1=(u32)(packed.bits>>32);
+    k->x=values[0];k->y=values[1];k->w=values[2];k->h=values[3];
+    k->fx=values[4];k->fy=values[5];k->fw=values[6];k->fh=values[7];
+    k->dpos=values[8];k->dsize=values[9];k->dalpha=values[10];k->a=values[11];k->fa=values[12];
+    return 0;
+}
+
 int ch_forget(unsigned wid) {
     struct ch_cmd *k = next_cmd();
     if (!k) return -1;
@@ -122,11 +143,15 @@ int ch_space(unsigned wid, unsigned long long sid) {
 }
 
 // Конечная рамка окна приложению через WS (OP_CFG): движок шлёт её владельцу окна в тик старта пачки.
-int ch_cfg(unsigned wid, double x, double y, double w, double h) {
+int ch_cfg_flags(unsigned wid, unsigned flags, double x, double y, double w, double h) {
     struct ch_cmd *k = next_cmd();
     if (!k) return -1;
-    k->op = OP_CFG; k->wid = wid; k->x = x; k->y = y; k->w = w; k->h = h;
+    k->op = OP_CFG; k->wid = wid; k->flags = flags & F_STREAM;
+    k->x = x; k->y = y; k->w = w; k->h = h;
     return 0;
+}
+int ch_cfg(unsigned wid, double x, double y, double w, double h) {
+    return ch_cfg_flags(wid, 0, x, y, w, h);
 }
 
 // Цвет края окна (RGBA8, 0 — нет): им движок закрывает пустую полосу, пока буфер меньше видимой рамки.

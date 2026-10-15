@@ -1,6 +1,31 @@
 // Обёртки приватных функций SkyLight и CoreGraphics — 1:1 с ctypes-вызовами hook/hyprwm.py.
 #include <ApplicationServices/ApplicationServices.h>
 #include <stdint.h>
+#include <libproc.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+
+int hs_window_server_pid(void) {
+    int count = proc_listallpids(NULL, 0);
+    if (count <= 0 || count > 65536) return -1;
+    pid_t *pids = calloc((size_t)count + 64, sizeof *pids);
+    if (!pids) return -1;
+    int actual = proc_listallpids(pids, (count + 64) * sizeof *pids);
+    int result = -1;
+    for (int i = 0; i < actual && i < count + 64; i++) {
+        char path[PROC_PIDPATHINFO_MAXSIZE] = {0};
+        if (pids[i] <= 0 || proc_pidpath(pids[i], path, sizeof path) <= 0) continue;
+        if (!strcmp(path, "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer")) { result = pids[i]; break; }
+    }
+    free(pids); return result;
+}
+
+int hs_process_birth(int pid, uint64_t *seconds, uint64_t *micros) {
+    struct proc_bsdinfo info = {0};
+    if (pid <= 0 || proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof info) != sizeof info) return -1;
+    *seconds = info.pbi_start_tvsec; *micros = info.pbi_start_tvusec; return 0;
+}
 
 extern int SLSMainConnectionID(void);
 extern CGError SLSGetWindowOwner(int cid, uint32_t wid, int *owner);
@@ -17,6 +42,22 @@ static int cid;
 int hs_cid(void) {                     // соединение с WS — лениво, только когда демон реально работает
     if (!cid) cid = SLSMainConnectionID();
     return cid;
+}
+
+int hs_session_locked(void) {
+    CFDictionaryRef session = CGSessionCopyCurrentDictionary();
+    if (!session) return 1;
+    CFTypeRef locked = CFDictionaryGetValue(session, CFSTR("CGSSessionScreenIsLocked"));
+    CFTypeRef console = CFDictionaryGetValue(session, kCGSessionOnConsoleKey);
+    int result = (locked && CFEqual(locked,kCFBooleanTrue)) || !console || !CFEqual(console,kCFBooleanTrue);
+    CFRelease(session); return result;
+}
+
+int hs_window_connection(unsigned wid, int expected_pid) {
+    int owner = 0; pid_t pid = 0;
+    if (expected_pid <= 0 || SLSGetWindowOwner(hs_cid(), wid, &owner) || owner <= 0 ||
+        SLSConnectionGetPID(owner, &pid) || pid != expected_pid) return -1;
+    return owner;
 }
 
 int hs_win_pid_level(unsigned wid, int *pid, int *level) {
@@ -76,4 +117,100 @@ void hs_spotlight(void) {               // Cmd+Space
         CGEventPost((CGEventTapLocation)0, e);
         CFRelease(e);
     }
+}
+
+// Passive read of the existing AppKit publisher's birth-qualified notify values.
+// This never installs observers in another application or mutates any native window.
+#include <notify.h>
+#include <math.h>
+struct hs_resize_context {
+    uint64_t sequence, epoch;
+    uint32_t wid, phase;
+    double x,y,w,h,mx,my,time,event_time;
+    double accepted_x,accepted_y,accepted_w,accepted_h,accepted_time;
+    uint64_t sample;
+};
+struct resize_tokens { int pid; uint64_t sec,usec; int token[20]; };
+static struct resize_tokens resize_slots[8];
+static unsigned resize_next;
+static const char *resize_fields[20]={"seq","epoch","wid","phase","x","y","w","h","mx","my","time","event_time","down","live","accepted_x","accepted_y","accepted_w","accepted_h","accepted_time","sample"};
+static void resize_drop(struct resize_tokens *slot) {
+    if (slot->pid) for (unsigned i=0;i<20;i++) if(slot->token[i]>=0) notify_cancel(slot->token[i]);
+    memset(slot,0,sizeof *slot);
+}
+int hs_read_resize_context(int pid,double now,struct hs_resize_context *out) {
+    uint64_t sec=0,usec=0;
+    if (!out || !isfinite(now) || hs_process_birth(pid,&sec,&usec) || !sec) return -1;
+    struct resize_tokens *slot=NULL;
+    for(unsigned i=0;i<8;i++) {
+        if(resize_slots[i].pid==pid) {
+            if(resize_slots[i].sec==sec && resize_slots[i].usec==usec) slot=&resize_slots[i];
+            else resize_drop(&resize_slots[i]);
+        }
+    }
+    if(!slot) {
+        for(unsigned i=0;i<8;i++) if(!resize_slots[i].pid) {slot=&resize_slots[i];break;}
+        if(!slot) {slot=&resize_slots[resize_next++%8];resize_drop(slot);}
+        slot->pid=pid;slot->sec=sec;slot->usec=usec;
+        for(unsigned i=0;i<20;i++) slot->token[i]=-1;
+        for(unsigned i=0;i<20;i++) {
+            char name[160];snprintf(name,sizeof name,"hyprwm.native_resize.%d.%llu.%llu.%s",pid,(unsigned long long)sec,(unsigned long long)usec,resize_fields[i]);
+            if(notify_register_check(name,&slot->token[i])!=NOTIFY_STATUS_OK) {resize_drop(slot);return -2;}
+        }
+    }
+    for(unsigned attempt=0;attempt<2;attempt++) {
+        uint64_t values[20]={0},first=0,last=0;
+        if(notify_get_state(slot->token[0],&first)!=NOTIFY_STATUS_OK || !first || first&1) continue;
+        unsigned index;
+        for(index=0;index<20;index++) if(notify_get_state(slot->token[index],&values[index])!=NOTIFY_STATUS_OK) break;
+        if(index!=20 || notify_get_state(slot->token[0],&last)!=NOTIFY_STATUS_OK || first!=last || first!=values[0]) continue;
+        if(!values[1] || !values[2] || values[2]>UINT32_MAX || values[3]<1 || values[3]>4) continue;
+        struct hs_resize_context context={.sequence=first,.epoch=values[1],.wid=(uint32_t)values[2],.phase=(uint32_t)values[3]};
+        double *target=&context.x;
+        for(unsigned i=0;i<8;i++) memcpy(&target[i],&values[i+4],sizeof(double));
+        context.sample=values[19];
+        if(context.sample) {
+            double *actual=&context.accepted_x;
+            unsigned i;for(i=0;i<5;i++) {memcpy(&actual[i],&values[i+14],sizeof(double));if(!isfinite(actual[i]))break;}
+            if(i!=5 || context.accepted_w<=0 || context.accepted_h<=0 || now-context.accepted_time<0 || now-context.accepted_time>.25)continue;
+            int owner=0,level=0;
+            if(hs_win_pid_level(context.wid,&owner,&level) || owner!=pid || level!=0)continue;
+        }
+        if(!isfinite(context.time) || now-context.time<0 || now-context.time>.25) continue;
+        if(context.phase<=2) {
+            if(values[12]!=1 || values[13]!=1 || !isfinite(context.event_time) || now-context.event_time<0 || (context.phase==1 && now-context.event_time>.5) || context.event_time>context.time) continue;
+            unsigned i;for(i=0;i<6;i++) if(!isfinite(target[i])) break;
+            int owner=0,level=0;
+            if(i!=6 || context.w<=0 || context.h<=0 || hs_win_pid_level(context.wid,&owner,&level) || owner!=pid || level!=0) continue;
+        }
+        uint64_t finalSec=0,finalUsec=0;
+        if(hs_process_birth(pid,&finalSec,&finalUsec) || finalSec!=sec || finalUsec!=usec || notify_get_state(slot->token[0],&last)!=NOTIFY_STATUS_OK || last!=first) continue;
+        *out=context;return 0;
+    }
+    return -3;
+}
+
+uint64_t hs_overview10_mode(void) {
+    int token=-1; uint64_t mode=0;
+    if(notify_register_check("hyprwm.overview10.state",&token)!=NOTIFY_STATUS_OK) return UINT64_MAX;
+    int result=notify_get_state(token,&mode);notify_cancel(token);
+    return result==NOTIFY_STATUS_OK ? mode : UINT64_MAX;
+}
+
+int hs_notify_state(const char *name,uint64_t *value) {
+    if(!name || !value || strlen(name)>160)return -1;
+    int token=-1;
+    if(notify_register_check(name,&token)!=NOTIFY_STATUS_OK)return -2;
+    int status=notify_get_state(token,value);notify_cancel(token);
+    return status==NOTIFY_STATUS_OK ? 0 : -3;
+}
+
+int hs_notify_publish_state(const char *name,uint64_t value) {
+    if(!name || strlen(name)>160)return -1;
+    int token=-1;
+    if(notify_register_check(name,&token)!=NOTIFY_STATUS_OK)return -2;
+    int status=notify_set_state(token,value);
+    if(status==NOTIFY_STATUS_OK)status=notify_post(name);
+    notify_cancel(token);
+    return status==NOTIFY_STATUS_OK ? 0 : -3;
 }

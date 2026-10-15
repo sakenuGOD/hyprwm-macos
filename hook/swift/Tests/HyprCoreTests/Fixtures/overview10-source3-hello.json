@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "service_info": {
+    "state": 2,
+    "queued": 0,
+    "canceled_queued": 0,
+    "latest_request_seq": 320,
+    "generation": [
+      81148,
+      501,
+      1791946947,
+      121489
+    ],
+    "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "clients": 1,
+    "schema": 1,
+    "main_callback_timeout_ms": 600,
+    "image_uuid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "request_byte_limit": 65536,
+    "response_byte_limit": 262144,
+    "native_completion_proven": false,
+    "started": 0,
+    "endpoint": "/private/tmp/re-tools-overview10-501-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/actor.sock",
+    "image_path": "/Users/fsociety/Developer/re-tools/cache/continuation-20261014/product-polish-overview10-source3/libhypr-overview-pool10-v3.dylib",
+    "retained_results": 4,
+    "latest_mutation_seq": 320
+  },
+  "operation": "hello",
+  "generation": [
+    81148,
+    501,
+    1791946947,
+    121489
+  ],
+  "pending": false,
+  "main_evaluated": false,
+  "request_seq": 1,
+  "completed": true,
+  "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

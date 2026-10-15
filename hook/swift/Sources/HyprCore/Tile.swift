@@ -6,6 +6,8 @@ import Foundation
 public final class Node {
     public var wid: Int?                 // лист: номер окна
     public var split: String = "v"       // "v" — слева/справа, "h" — сверху/снизу
+    public var manualRatio = false
+    public var manualSplit = false
     public var ratio: Double?            // nil — ключа нет (в Python node.get("ratio", 0.5))
     public var a: Node!
     public var b: Node!
@@ -26,12 +28,17 @@ public final class Node {
         guard let j, case .object = j else { return nil }
         if let w = j["wid"] { return Node(leaf: w.int ?? 0) }
         guard let a = from(j["a"]), let b = from(j["b"]) else { return nil }
-        return Node(split: j["split"]?.string ?? "v", ratio: j["ratio"]?.double, a: a, b: b)
+        let node = Node(split: j["split"]?.string ?? "v", ratio: j["ratio"]?.double, a: a, b: b)
+        node.manualRatio = j["manual_ratio"]?.truthy ?? false
+        node.manualSplit = j["manual_split"]?.truthy ?? false
+        return node
     }
     public var json: JSON {
         if let w = wid { return .object([("wid", .int(w))]) }
         var kv: [(String, JSON)] = [("split", .string(split))]
         if let r = ratio { kv.append(("ratio", .double(r))) }
+        if manualRatio { kv.append(("manual_ratio", .bool(true))) }
+        if manualSplit { kv.append(("manual_split", .bool(true))) }
         kv.append(("a", a.json))
         kv.append(("b", b.json))
         return .object(kv)
@@ -54,6 +61,7 @@ public final class Dwindle {
     public var gapsIn: Double
     public var gapsOut: Gaps
     public var splitWidthMult: Double
+    public var minimumPolicy = "native"
     public var defaultRatio: Double
     public var mins: [Int: (Double, Double)] = [:]
 
@@ -78,12 +86,40 @@ public final class Dwindle {
         return n
     }
 
+    /// Closing a sibling gives a promoted subtree a different aspect box.
+    /// Re-evaluate its automatic splits there, keeping leaf order and ratios.
+    /// Explicit directions and manually dragged dividers retain their axis.
+    public func removeReorientingPromoted(_ tree:Node?,_ wid:Int,in area:Rect) -> Node? {
+        var promoted=Set<ObjectIdentifier>()
+        func remove(_ node:Node?) -> Node? {
+            guard let node else{return nil}
+            if let leaf=node.wid {return leaf==wid ? nil:node}
+            let a=remove(node.a),b=remove(node.b)
+            guard let a else {if let b {promoted.insert(ObjectIdentifier(b))};return b}
+            guard let b else {promoted.insert(ObjectIdentifier(a));return a}
+            node.a=a;node.b=b;return node
+        }
+        let result=remove(tree)
+        func orient(_ node:Node?,_ box:Rect,_ expanded:Bool) {
+            guard let node,!node.isLeaf else{return}
+            let expanded=expanded || promoted.contains(ObjectIdentifier(node))
+            if expanded && !node.manualSplit && !node.manualRatio {
+                node.split=box.w>box.h*splitWidthMult ? "v":"h"
+            }
+            let (a,b)=splitBox(box,node)
+            orient(node.a,a,expanded);orient(node.b,b,expanded)
+        }
+        orient(result,area,false)
+        return result
+    }
+
     /// Разделить лист target (или первый лист, если target == nil) пополам, новое окно — вторым.
     /// В Python «вставилось ли в a» определяется сравнением json.dumps до/после; это ровно
     /// «target == nil или target есть в a» (вставка в найденный лист всегда меняет дерево).
     public func insert(_ n: Node?, _ wid: Int, _ target: Int?, _ box: Rect) -> Node {
         guard let n else { return Node(leaf: wid) }
         if let w = n.wid {
+            if w == 0 { return Node(leaf: wid) }
             if let t = target, w != t { return n }
             let split = box.w > box.h * splitWidthMult ? "v" : "h"
             return Node(split: split, ratio: defaultRatio, a: n, b: Node(leaf: wid))
@@ -115,6 +151,10 @@ public final class Dwindle {
         let (x, y, w, h) = (box.x, box.y, box.w, box.h)
         let r = n.ratio ?? 0.5
         let (aw, ah) = need(n.a), (bw, bh) = need(n.b)
+        if minimumPolicy == "ratio" || n.manualRatio {
+            if n.split == "v" { return (Rect(x, y, w*r, h), Rect(x+w*r, y, w*(1-r), h)) }
+            return (Rect(x, y, w, h*r), Rect(x, y+h*r, w, h*(1-r)))
+        }
         if n.split == "v" {
             let wa = aw + bw <= w ? min(max(w * r, aw), max(w - bw, 0)) : w * aw / (aw + bw)
             return (Rect(x, y, wa, h), Rect(x + wa, y, w - wa, h))

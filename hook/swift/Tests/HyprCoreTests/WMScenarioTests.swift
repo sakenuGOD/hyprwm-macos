@@ -11,15 +11,64 @@ final class FakeWorld: SysAPI {
     var m = (0.0, 0.0)
     var md = false
     var front: Int?
+    var activeSpaceID:UInt64=0
     var tileableM: [Int: Int] = [:]
     var bounds: [Int: Rect] = [:]
     var alphaM: [Int: Double] = [:]
     var pidlevel: [Int: (Int, Int)] = [:]
     var calls: [JSON] = []
+    var contexts: [Int: (Int?, Int)] = [:]
+    var focusResult=0
+    var deferredFocus=false
+    var focusCallbacks:[(FocusRequest,(Bool)->Void)]=[]
+    var births: [Int: String] = [:]
+    var protectedPIDs = Set<Int>()
+    var tabProperties: [Int: TabProperty] = [:]
+    var propertyRead: (() -> Void)?
+    var locked = false
+    var overlay = false
+    var launch:LauncherIntent?
+    var capabilities:[Int:Int]=[:]
+    var applicationPaths:[Int:String]=[:]
+    var deferredClose=false
+    var closeCallbacks:[(CloseResult)->Void]=[]
+    var resizeContexts:[Int:NativeResizeContext]=[:]
+    var pointerHint:(wid:Int,pid:Int?)?
+    var nativeSnapshot:Snapshot?
+    func processUID(_ pid:Int) -> Int? {Int(getuid())}
+    var transferCatalog:PublicWorkspaceCatalog?
+    var transferRequests:[LauncherTransferFocus]=[]
+    var transferAccepted=true
+    var exitedPIDs=Set<Int>()
+    var windowPresenceM:[Int:Int]=[:]
+    func windowPresence(_ pid:Int,_ wid:Int) -> Int {windowPresenceM[wid] ?? -1}
+    func launcherCatalog() -> PublicWorkspaceCatalog? {transferCatalog}
+    func requestTransferFocus(_ request:LauncherTransferFocus,completion:@escaping(Bool)->Void) {transferRequests.append(request);completion(transferAccepted)}
+    func cancelTransferFocus() {}
+    func processExited(_ pid:Int) -> Bool {exitedPIDs.contains(pid)}
+    func pointerHit() -> (wid:Int,pid:Int?)? {pointerHint}
+    func requestFocus(_ request:FocusRequest,completion:@escaping(Bool)->Void) {
+        if deferredFocus {focusCallbacks.append((request,completion))}
+        else {completion(axFocus(request.pid,request.wid,raise:false)==0)}
+    }
+    func nativeResize(_ pid:Int) -> NativeResizeContext? { resizeContexts[pid] }
+    func requestClose(_ pid:Int,_ wid:Int,birth:String,completion:@escaping(CloseResult)->Void) {
+        if deferredClose { closeCallbacks.append(completion) } else { completion(CloseResult(code:wsClose(pid,wid))) }
+    }
+    func launcherIntent(after sequence:UInt64) -> LauncherIntent? { launch.flatMap { $0.sequence > sequence ? $0 : nil } }
+    func consumeLauncher(_ sequence:UInt64) { if launch?.sequence == sequence { launch=nil } }
+    func clientCapability(_ pid:Int) -> Int { capabilities[pid] ?? 0 }
+    func appPath(_ pid:Int) -> String? { applicationPaths[pid] }
+    func sessionLocked() -> Bool { locked }
+    func interactionOverlay() -> Bool { overlay }
+    func tabProperty(_ wid: Int, _ pid: Int) -> TabProperty? { propertyRead?(); return tabProperties[pid] }
+    func focusContext(_ pid: Int) -> (wid: Int?, flags: Int) { contexts[pid] ?? (nil, 4) }
+    func processBirth(_ pid: Int) -> String? { births[pid] }
+    func protectedProcess(_ pid: Int) -> Bool { protectedPIDs.contains(pid) }
 
     func now() -> Double { t }
     func sleep(_ s: Double) {}
-    func snapshot() throws -> Snapshot { throw CmdError("нет снимка в тесте") }
+    func snapshot() throws -> Snapshot {if let nativeSnapshot {return nativeSnapshot};throw CmdError("нет снимка в тесте") }
     func winPidLevel(_ wid: Int) -> (pid: Int?, level: Int?) { pidlevel[wid].map { ($0.0, $0.1) } ?? (nil, nil) }
     func frontPid() -> Int? { front }
     func winBounds(_ wid: Int) -> Rect? { bounds[wid] }
@@ -27,7 +76,7 @@ final class FakeWorld: SysAPI {
     func moveToSpace(_ wids: [Int], _ space: Int) {
         calls.append(.array([.string("move_to_space"), .array(wids.map { .int($0) }), .int(space)]))
     }
-    func activeSpace() -> UInt64 { 0 }
+    func activeSpace() -> UInt64 { activeSpaceID }
     func mouse() -> (Double, Double) { m }
     func mouseDown() -> Bool { md }
     func axTileable(_ pid: Int, _ wid: Int) -> Int {
@@ -39,7 +88,7 @@ final class FakeWorld: SysAPI {
     func axForget(_ wid: Int) { calls.append(.array([.string("ax_forget"), .int(wid)])) }
     func axFocus(_ pid: Int, _ wid: Int, raise: Bool) -> Int {
         calls.append(.array([.string("ax_focus"), .int(pid), .int(wid)]))
-        return 0
+        return focusResult
     }
     func axMenuPress(_ pid: Int, _ title: String) -> Int { calls.append(.string("menu?")); return 0 }
     func wsClose(_ pid: Int, _ wid: Int) -> Int {
@@ -57,14 +106,37 @@ final class FakeWorld: SysAPI {
 }
 
 final class FakeChannel: ChannelAPI {
+    var decorationFocused:Int?
+    func decorationFocus(_ wid:Int,fullscreen:Int) {decorationFocused=wid}
+    var terminalEnabled=false
+    var terminalGeometrySupported:Bool {terminalEnabled}
+    func geomTerminal(_ wid:Int,to:Rect,curves:(Int,Int),durations:(Double,Double),from:Rect?) -> Bool {
+        guard terminalEnabled else{return false}
+        geom(wid,to,curves.0,curves.1,dpos:durations.0,dsize:durations.1,frm:from,move:false,warp:false,stretch:false)
+        ops[ops.count-1]=ops.last!.setting("move_end",.bool(true));return true
+    }
+    var nativeRequests:[Int]=[]
+    var snapshotEnabled=false
+    var snapshotRequests:[Int]=[]
+    var snapshotSupported:Bool {snapshotEnabled}
+    var engineTime:Double {10}
+    var batchTime:Double=10
+    var batchAfterEnqueue:Double?
+    var snapshotBatchTime:Double {batchTime}
+    func snapshotGeometry(_ wid:Int,to:Rect,curves:(Int,Int),durations:(Double,Double),from:Rect?) -> Bool {
+        guard snapshotEnabled else{return false};snapshotRequests.append(wid);if let batchAfterEnqueue {batchTime=batchAfterEnqueue};return true
+    }
     var ops: [JSON] = []
     var eng: [EngWin] = []
     var evs: [EngEvent] = []
     var widMax = 0
-    var pending: Bool { false }
+    var nativeTick=7
+    var nativeActiveCount=1,nativeHolding=0
+    var ringPending=false
+    var pending: Bool { ringPending }
     var stats: EngStats {
         var s = EngStats()
-        s.ticks = 7; s.nactive = 1; s.errors = 0; s.tickUsMax = 147.25; s.tickUsLast = 3.04
+        s.ticks = nativeTick; s.nactive = nativeActiveCount; s.holding=nativeHolding; s.errors = 0; s.tickUsMax = 147.25; s.tickUsLast = 3.04
         return s
     }
     func geom(_ wid: Int, _ to: Rect, _ cpos: Int, _ csize: Int, dpos: Double, dsize: Double, frm: Rect?, move: Bool,
@@ -78,6 +150,13 @@ final class FakeChannel: ChannelAPI {
         ops.append(.object([("op", .string("alpha")), ("wid", .int(wid)), ("a", .double(a)), ("curve", .int(curve)),
                             ("dur", .double(dur)), ("frm", frm.map { .double($0) } ?? .null)]))
     }
+    func geometry(_ wid:Int,to:Rect,curves:(Int,Int),durations:(Double,Double),from:Rect?,warp:Bool,stretch:Bool,native:Bool,wait:Bool,hold:Bool) {
+        if native { nativeRequests.append(wid) }
+        geom(wid,to,curves.0,curves.1,dpos:durations.0,dsize:durations.1,frm:from,move:true,warp:warp,stretch:stretch)
+        if wait {ops[ops.count-1]=ops.last!.setting("wait",.bool(true))}
+        if hold {ops[ops.count-1]=ops.last!.setting("hold",.bool(true))}
+    }
+    func space(_ wid: Int, _ sid: Int) { ops.append(.object([("op", .string("space")), ("wid", .int(wid)), ("space", .int(sid))])) }
     func under(_ wid: Int, _ under: Int) { ops.append(.object([("op", .string("under")), ("wid", .int(wid)), ("under", .int(under))])) }
     func forget(_ wid: Int) { ops.append(.object([("op", .string("forget")), ("wid", .int(wid))])) }
     func commit() { ops.append(.object([("op", .string("commit"))])) }

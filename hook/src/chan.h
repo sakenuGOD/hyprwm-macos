@@ -11,6 +11,7 @@ typedef unsigned long long u64;
 #define CH_MAGIC  0x3531574d52505948ULL   // "HYPRWM15"
 #define CH_NW     64
 #define CH_NCURVE 16
+#define CH_INSTANT CH_NCURVE   // deliberately outside curve table; curve 0 is a real user curve
 #define CH_NCMD   256
 #define CH_NEVT   128
 #define CH_BAKED  255
@@ -18,18 +19,35 @@ typedef unsigned long long u64;
 #define CH_NCONN  32
 
 enum { CV_NONE = 0, CV_BEZIER = 1, CV_SPRING = 2 };
-enum { OP_GEOM = 1, OP_ALPHA = 2, OP_FORGET = 3, OP_WARP = 4, OP_UNDER = 5, OP_SPACE = 6, OP_FILL = 7, OP_RAISE = 8, OP_SNAP = 9, OP_CFG = 10 };
-   // CFG: конечная рамка окна (k.x..h) — приложению уведомлением WS в тик старта пачки (модуль hyprforce, native_hooks §1)
+enum { OP_GEOM = 1, OP_ALPHA = 2, OP_FORGET = 3, OP_WARP = 4, OP_UNDER = 5, OP_SPACE = 6, OP_FILL = 7, OP_RAISE = 8, OP_SNAP = 9, OP_CFG = 10, OP_EDGE = 11, OP_EFFECTS = 12, OP_SHADOW = 13 };
+// Advertised by the native consumer, never by a channel writer or old engine.
+#define CH_CAP_EFFECTS 0x80000000u
+#define CH_CAP_SHADOW 0x40000000u
+#define CH_CAP_SNAPSHOT 0x20000000u // Atomic old-buffer underlay; absent on older consumers.
+#define CH_CAP_SNAPSHOT_COVER 0x10000000u // Full frozen cover + typed acquisition/configure/handoff receipts.
+#define CH_CAP_TERMINAL_MOVE 0x08000000u // Live geometry transfers native origin at its final WS frame.
+// EDGE: flags=1 prepare, 2 grant an ACKed prepare, 0 revoke; x=exact integer nonce;
+// y on grant is actual client ACK timestamp+2s (monotonic seconds).
+// Production permission is independent of a per-window client preparation grant.
+#define CH_EDGE_PERMISSION 0xffffffffu
+   // CFG: explicit frame/cancel (w=h=0); F_NATIVE also sends intermediate frames via this CAP6 transport.
 #define CH_CFG_NOTIFY 0x7f17     // тип уведомления WS → приложение
 #define CH_CFG_MAGIC  0x47464348u // "HCFG"
+#define CH_STREAM_NOTIFY 0x7f18u  // additive configure-only bridge; distinct from retained CAP5 callback
+#define CH_STREAM_MAGIC 0x47464353u // "SCFG"
 struct ch_cfgmsg { u32 magic, wid; double x, y, w, h; double t0; };   // полезная нагрузка (0x30)
    // SNAP: подкладка-снимок окна под ним на время хода (сжатие: где бокс больше нового буфера — прежнее содержимое)
    // RAISE: окно над окном k.flags (wid; 0 — над всеми своего уровня), без активации — активное поверх соседей (Hyprland)
    // FILL: k.flags = цвет края окна RGBA8 (0 — нет): пустая полоса B−A закрашивается им (дотяжка края)   // UNDER: k.flags = wid подложки
    // SPACE: перенести окно на рабочий стол (k.x = id стола) изнутри WS — клиентский SLSMoveWindowsToManagedSpace чужие окна не двигает
-enum { F_FROM = 1, F_MOVE = 2, F_STRETCH = 4, F_WAIT = 8, F_HOLD = 16 };   // HOLD: сосед открытия — стоит, пока новое окно не готово (одна волна)   // WAIT: открытие — невидимо до кадра размера плитки (≤ wait_max)
+enum { F_FROM = 1, F_MOVE = 2, F_STRETCH = 4, F_WAIT = 8, F_HOLD = 16, F_NATIVE = 32, F_STREAM = 64, F_EDGE = 128, F_SNAPSHOT = 256, F_MOVE_END = 512 }; // MOVE_END: keep native origin until live visual geometry completes.
    // STRETCH: содержимое тянется на B (открытие, как m_animatingIn)           // флаги OP_GEOM / OP_ALPHA
-enum { EV_GONE = 1, EV_SETTLED = 2, EV_DONE = 3, EV_NEW = 4, EV_MOVED = 5, EV_REL = 6, EV_CLONE = 7 };
+enum { EV_GONE = 1, EV_SETTLED = 2, EV_DONE = 3, EV_NEW = 4, EV_MOVED = 5, EV_REL = 6, EV_CLONE = 7, EV_ERROR = 8, EV_SNAPSHOT = 9 };
+enum { SNAP_ACQUIRED=1, SNAP_DEFERRED=2, SNAP_REVEALED=3, SNAP_CANCELLED=4, SNAP_CONFIGURED=5 };
+// SNAPSHOT: source WID; x=clone WID, y=result, w=pending mode(3=cover), h=positive epoch.
+enum { ERR_SLOT = 1, ERR_CFG_OWNER = 2, ERR_SPACE_ABI = 3, ERR_SPACE_TARGET = 4, ERR_CMD_RING = 5 };
+// ERROR: exact failing opcode in x (0 for ring overflow), reason in y,
+// monotonically increasing error counter in w; WID is 0 for ring overflow.
    // REL: окно освобождается (0x3e9): x = на экране (бит 44), y = есть владелец, w = уровень, h = наш слот (1) / geo (2)
    // CLONE: снимок закрытия выставлен (wid = клон, x = исходное окно)   // MOVED: покоящееся окно ушло с цели (x,y,w,h = A)
    // NEW: на сервере появилось окно (номера растут)   // DONE: видимые анимации окна кончились (B = цель)
@@ -71,16 +89,16 @@ struct ch_win {                  // 0x1e8
     u32 stable, rset;            // stable: сколько тиков подряд A не менялась; rset: движок поставил окну радиус Hyprland
     double a0[2];                // размер буфера в момент старта анимации (старый кадр приложения)
     u32 held, needs;             // held: ждёт старта пачки; needs: ждём от приложения кадр нового размера
-    u32 geo, moved;              // geo: у окна есть цель-рамка (было OP_GEOM/WARP с F_MOVE); moved: EV_MOVED уже послан
+    u32 geo, moved;              // geo: 0=unowned, 1=visual, 2=native stream, 3=live edge, 4=terminal native-origin move; moved: EV_MOVED already sent
     double ub[6];                // последняя обрезка подложки: B (x,y,w,h) и видимая часть буфера (w,h)
-    u32 wait, fill;              // wait: открытие ждёт кадр приложения нужного размера (F_WAIT); fill: цвет края RGBA8
+    u32 wait, fill;              // wait: 1=F_WAIT frame readiness, 2=unclaimed prehide lease (≤150ms); fill: RGBA8
     double wait_t;               // с какого момента ждёт
     u64 mask;                    // CALayer маски на слое Hosting окна (0 — нет); живёт в WS
     double mrect[2];             // поставленный размер видимой части (cw, ch)
     double mhost[2];             // bounds слоя Hosting при постановке маски (y0, h): слой меняет размер позже формы окна
     struct ch_var act;           // П6: прогресс активной рамки 0..1 (кривая border, кроссфейд 600 мс)
-    u64 bl_in, bl_act;           // слои рамки в Server root окна: неактивное кольцо, градиент (маска — кольцо)
-    double bframe[4];            // поставленная рамка (координаты Hosting)
+    u64 bl_in, bl_act;           // hidden compatibility ring, single visible gradient (colors interpolate on focus)
+    double bframe[4];            // applied border rectangle in Server root coordinates
     double bop;                  // поставленная непрозрачность активного слоя
     struct ch_var sact;          // прогресс активной тени 0..1 (fadeShadow, 800 мс)
     u64 bl_sh;                   // слой тени (под системным Shadow), маска — кольцо (тень вне окна)
@@ -132,7 +150,7 @@ struct ch_hdr {                  // 0x100
     double hold_max;             // сколько ждать кадр приложения, с (потом старт всё равно)
     double tick_us_last, tick_us_max;   // стоимость тика (mach-тики → мкс по timebase, считает движок)
     u32 ticks_late, te_skips;    // тик позже 0.6·T после развёртки; шаг te ≠ T при анимации
-    u32 traj_head, pad_t;        // кольцо траектории: следующая запись
+    u32 traj_head, pad_t;        // 0=off; WID=device gate; CH_EDGE_PERMISSION=per-window grants
     double te_prev;              // te прошлого тика с анимацией
     u32 use_mask, mask_only;     // П4: обрезка B маской в CA-дереве окна вместо экранного клипа; mask_only — только это окно
     u32 mask_flip, mask_errs;    // mask_flip: ось Y слоя вверх (y = h − ch); mask_errs: сколько раз дерево не нашлось

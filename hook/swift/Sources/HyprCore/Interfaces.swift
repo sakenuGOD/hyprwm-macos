@@ -9,6 +9,9 @@ public struct WinInfo: Equatable {
     public var x, y, w, h: Double
     public var on: Bool
     public var space: Int
+    public var layer = 0
+    public var alpha = 1.0
+    public var nativeFullscreen = false
     public init(wid: Int, pid: Int, owner: String, name: String = "", x: Double, y: Double, w: Double, h: Double,
                 on: Bool, space: Int) {
         self.wid = wid; self.pid = pid; self.owner = owner; self.name = name
@@ -17,27 +20,38 @@ public struct WinInfo: Equatable {
     public var rect: Rect { Rect(x, y, w, h) }
 
     public static func from(_ j: JSON) -> WinInfo {
-        WinInfo(wid: j["wid"]?.int ?? 0, pid: j["pid"]?.int ?? 0, owner: j["owner"]?.string ?? "",
+        var window = WinInfo(wid: j["wid"]?.int ?? 0, pid: j["pid"]?.int ?? 0, owner: j["owner"]?.string ?? "",
                 name: j["name"]?.string ?? "", x: j["x"]?.double ?? 0, y: j["y"]?.double ?? 0,
                 w: j["w"]?.double ?? 0, h: j["h"]?.double ?? 0, on: (j["on"] ?? .null).truthy,
                 space: j["space"]?.int ?? 0)
+        window.layer = j["layer"]?.int ?? 0
+        window.alpha = j["alpha"]?.double ?? 1
+        window.nativeFullscreen = j["native_fullscreen"]?.truthy ?? false
+        return window
     }
 }
 
 public struct Snapshot {
     public var space: Int
+    public var locked = false
+    public var spaceType = 0
     public var stable: Bool
     public var area: Rect                // visible frame экрана (без меню-бара и дока)
     public var windows: [WinInfo]        // спереди назад, сначала окна на экране
+    public var nativeMetadata:JSON?
     public init(space: Int, stable: Bool, area: Rect, windows: [WinInfo]) {
         self.space = space; self.stable = stable; self.area = area; self.windows = windows
     }
     /// JSON из ws_snapshot().
     public static func parse(_ j: JSON) -> Snapshot {
         let v = j["visible"] ?? .object([])
-        return Snapshot(space: j["space"]?.int ?? 0, stable: (j["stable"] ?? .null).truthy,
+        var snapshot = Snapshot(space: j["space"]?.int ?? 0, stable: (j["stable"] ?? .null).truthy,
                         area: Rect(v["x"]?.double ?? 0, v["y"]?.double ?? 0, v["w"]?.double ?? 0, v["h"]?.double ?? 0),
                         windows: (j["windows"]?.array ?? []).map(WinInfo.from))
+        snapshot.locked = j["locked"]?.truthy ?? false
+        snapshot.spaceType = j["space_type"]?.int ?? 0
+        snapshot.nativeMetadata=j
+        return snapshot
     }
 }
 
@@ -46,6 +60,7 @@ public struct EngWin {
     public var wid: Int
     public var pos: (Double, Double), size: (Double, Double)
     public var posActive: Bool, sizeActive: Bool, alphaActive: Bool
+    public var geo=0
     public var settling: Bool
     public var curAlpha: Double
     public var held: Bool
@@ -75,16 +90,26 @@ public enum Ev { public static let gone = 1, settled = 2, done = 3, new = 4, mov
 
 /// Счётчики заголовка канала для status.
 public struct EngStats {
-    public var ticks = 0, nactive = 0, errors = 0, ticksLate = 0, teSkips = 0
+    public var ticks = 0, nactive = 0, errors = 0, ticksLate = 0, teSkips = 0, holding = 0
     public var tickUsMax = 0.0, tickUsLast = 0.0
     public init() {}
 }
 
 /// Канал демон -> движок (chan.py Chan).
 public protocol ChannelAPI: AnyObject {
+    var terminalGeometrySupported:Bool {get}
+    func geomTerminal(_ wid:Int,to:Rect,curves:(Int,Int),durations:(Double,Double),from:Rect?) -> Bool
     func geom(_ wid: Int, _ to: Rect, _ cpos: Int, _ csize: Int, dpos: Double, dsize: Double, frm: Rect?,
               move: Bool, warp: Bool, stretch: Bool)
     func alpha(_ wid: Int, _ a: Double, _ curve: Int, _ dur: Double, frm: Double?)
+    func geometry(_ wid: Int, to: Rect, curves: (Int,Int), durations: (Double,Double), from: Rect?, warp: Bool, stretch: Bool, native: Bool, wait: Bool, hold: Bool)
+    func configureNative(_ wid: Int, _ frame: Rect)
+    func snapshotGeometry(_ wid:Int,to:Rect,curves:(Int,Int),durations:(Double,Double),from:Rect?) -> Bool
+    var snapshotSupported:Bool { get }
+    var engineTime:Double { get }
+    var snapshotBatchTime:Double { get }
+    func decorationFocus(_ wid: Int, fullscreen: Int)
+    func space(_ wid: Int, _ sid: Int)
     func under(_ wid: Int, _ under: Int)
     func forget(_ wid: Int)
     func commit()
@@ -97,6 +122,18 @@ public protocol ChannelAPI: AnyObject {
 }
 
 public extension ChannelAPI {
+    var terminalGeometrySupported:Bool {false}
+    func geomTerminal(_ wid:Int,to:Rect,curves:(Int,Int),durations:(Double,Double),from:Rect?) -> Bool {false}
+    var snapshotSupported:Bool { false }
+    var engineTime:Double { 0 }
+    var snapshotBatchTime:Double { engineTime }
+    func snapshotGeometry(_ wid:Int,to:Rect,curves:(Int,Int),durations:(Double,Double),from:Rect?) -> Bool { false }
+    func geometry(_ wid: Int,to: Rect,curves: (Int,Int),durations: (Double,Double),from: Rect?,warp: Bool,stretch: Bool,native: Bool,wait: Bool,hold: Bool) {
+        geom(wid,to,curves.0,curves.1,dpos:durations.0,dsize:durations.1,frm:from,move:true,warp:warp,stretch:stretch)
+    }
+    func configureNative(_ wid: Int, _ frame: Rect) {}
+    func decorationFocus(_ wid: Int, fullscreen: Int) {}
+    func space(_ wid: Int, _ sid: Int) {}
     func geom(_ wid: Int, _ to: Rect, _ cpos: Int, _ csize: Int, dpos: Double = 0, dsize: Double = 0,
               frm: Rect? = nil, move: Bool = true, warp: Bool = false, stretch: Bool = false) {
         geom(wid, to, cpos, csize, dpos: dpos, dsize: dsize, frm: frm, move: move, warp: warp, stretch: stretch)
@@ -153,23 +190,93 @@ public protocol SysAPI: AnyObject {
     // AX (axlib.c)
     func axTileable(_ pid: Int, _ wid: Int) -> Int
     func axFrame(_ pid: Int, _ wid: Int, _ r: Rect) -> Int
+    func axSize(_ pid:Int,_ wid:Int,_ width:Double,_ height:Double) -> Int
     func axGetFrame(_ pid: Int, _ wid: Int) -> Rect?
     func axForget(_ wid: Int)
     func axFocus(_ pid: Int, _ wid: Int, raise: Bool) -> Int
     func axMenuPress(_ pid: Int, _ title: String) -> Int
     // winsnap.m
     func wsClose(_ pid: Int, _ wid: Int) -> Int
+    func requestClose(_ pid:Int,_ wid:Int,birth:String,completion:@escaping(CloseResult)->Void)
+    var closeBusy:Bool { get }
     func wsQuit(_ pid: Int) -> Int
     // exec
     func spotlight()
     func pgrep(_ name: String) -> Int?
     func spawn(_ argv: [String])
     func background(_ f: @escaping () -> Void)
+    func focusContext(_ pid: Int) -> (wid: Int?, flags: Int)
+    func requestFocus(_ request:FocusRequest,completion:@escaping(Bool)->Void)
+    func cancelFocus()
+    func setFocusCover(_ value:FocusCoverStamp?,wid:Int)
+    var focusBusy:Bool {get}
+    func pointerHit() -> (wid:Int,pid:Int?)?
+    func protectedProcess(_ pid: Int) -> Bool
+    func appPath(_ pid: Int) -> String?
+    func clientCapability(_ pid: Int) -> Int
+    func nativeResize(_ pid: Int) -> NativeResizeContext?
+    func interactionOverlay() -> Bool
+    func sessionLocked() -> Bool
+    func processBirth(_ pid: Int) -> String?
+    func tabProperty(_ wid: Int, _ pid: Int) -> TabProperty?
+    func launcherIntent(after sequence:UInt64) -> LauncherIntent?
+    func launcherAvailable() -> Int
+    func cacheLauncher(space:Int,frontPID:Int,windows:[WinInfo])
+    func consumeLauncher(_ sequence:UInt64)
+    func launcherCatalog() -> PublicWorkspaceCatalog?
+    func requestTransferFocus(_ request:LauncherTransferFocus,completion:@escaping(Bool)->Void)
+    func cancelTransferFocus()
+    var transferFocusBusy:Bool {get}
+    func processUID(_ pid:Int) -> Int?
+    func processExited(_ pid:Int) -> Bool
+    func windowPresence(_ pid:Int,_ wid:Int) -> Int
+    func invalidateWindowPresence(_ wid:Int)
+}
+
+public extension SysAPI {
+    func windowPresence(_ pid:Int,_ wid:Int) -> Int {-1}
+    func invalidateWindowPresence(_ wid:Int) {}
+    func axSize(_ pid:Int,_ wid:Int,_ width:Double,_ height:Double) -> Int {-1}
+    func requestFocus(_ request:FocusRequest,completion:@escaping(Bool)->Void) {completion(axFocus(request.pid,request.wid,raise:false)==0)}
+    func cancelFocus() {}
+    func setFocusCover(_ value:FocusCoverStamp?,wid:Int) {}
+    var focusBusy:Bool {false}
+    func pointerHit() -> (wid:Int,pid:Int?)? {nil}
+    func requestClose(_ pid:Int,_ wid:Int,birth:String,completion:@escaping(CloseResult)->Void) { completion(CloseResult(code:wsClose(pid,wid))) }
+    var closeBusy:Bool { false }
+    func focusContext(_ pid: Int) -> (wid: Int?, flags: Int) { (nil, 4) }
+    func protectedProcess(_ pid: Int) -> Bool { false }
+    func appPath(_ pid: Int) -> String? { nil }
+    func clientCapability(_ pid: Int) -> Int { 0 }
+    func nativeResize(_ pid: Int) -> NativeResizeContext? { nil }
+    func interactionOverlay() -> Bool { false }
+    func sessionLocked() -> Bool { false }
+    func processBirth(_ pid: Int) -> String? { nil }
+    func tabProperty(_ wid: Int, _ pid: Int) -> TabProperty? { nil }
+    func launcherIntent(after sequence:UInt64) -> LauncherIntent? { nil }
+    func launcherAvailable() -> Int { 0 }
+    func cacheLauncher(space:Int,frontPID:Int,windows:[WinInfo]) {}
+    func consumeLauncher(_ sequence:UInt64) {}
+    func launcherCatalog() -> PublicWorkspaceCatalog? {nil}
+    func requestTransferFocus(_ request:LauncherTransferFocus,completion:@escaping(Bool)->Void) {completion(false)}
+    func cancelTransferFocus() {}
+    var transferFocusBusy:Bool {false}
+    func processUID(_ pid:Int) -> Int? {nil}
+    func processExited(_ pid:Int) -> Bool {false}
 }
 
 /// Куда уходят задания configure (живой — Configurer с очередью на приложение; в тестах — запись).
 public protocol ConfigureSink: AnyObject {
     func submit(_ jobs: [CfgJob])
+    func cancelAll()
+    func cancel(_ wid: Int)
+    var idle:Bool { get }
+    func busy(_ wid:Int) -> Bool
+}
+public extension ConfigureSink { func cancelAll() {}
+    func cancel(_ wid: Int) {}
+    var idle:Bool { true }
+    func busy(_ wid:Int) -> Bool { false }
 }
 
 public struct CfgJob: Equatable {
@@ -177,6 +284,13 @@ public struct CfgJob: Equatable {
     public var owner: String
     public var to: Rect
     public var seq = 0
+    public var birth: String?
+    public var requireOwnership = false
+    /// C5 already posted its one final native configure; this job ONLY reads ACK.
+    public var verifyOnly = false
+    /// One logical configure at motion start. Physical origin belongs to the
+    /// native terminal handoff, never to a delayed AX position setter.
+    public var sizeOnly = false
     public init(wid: Int, pid: Int, owner: String, to: Rect) { self.wid = wid; self.pid = pid; self.owner = owner; self.to = to }
 }
 
@@ -188,6 +302,8 @@ public struct CfgResult {
     public var got: Rect?
     public var e: Int
     public var pre: Rect?
+    public var pid:Int?, birth:String?
+    public var isCurrent:(()->Bool)?
     public init(wid: Int, owner: String, to: Rect, got: Rect?, e: Int, pre: Rect?) {
         self.wid = wid; self.owner = owner; self.to = to; self.got = got; self.e = e; self.pre = pre
     }

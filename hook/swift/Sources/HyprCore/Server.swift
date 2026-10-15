@@ -30,76 +30,103 @@ public final class CommandServer {
         return true
     }
 
+    private final class Client {
+        let fd: Int32
+        let started = ProcessInfo.processInfo.systemUptime
+        var input: [UInt8] = []
+        var output: [UInt8]?
+        var sent = 0
+        init(_ fd: Int32) { self.fd = fd }
+    }
+    private var clients: [Client] = []
+    private var socketInode: UInt64 = 0
+
     public init(path: String) throws {
         self.path = path
-        unlink(path)
+        var existing = stat()
+        if lstat(path, &existing) == 0 {
+            guard existing.st_mode & S_IFMT == S_IFSOCK, existing.st_uid == getuid(), !Self.isAlive(path) else {
+                throw CmdError("control path is occupied or belongs to another owner: \(path)")
+            }
+            guard unlink(path) == 0 else { throw CmdError("cannot remove stale control socket") }
+        }
         let s = socket(AF_UNIX, SOCK_STREAM, 0)
         guard s >= 0 else { throw CmdError("socket: \(String(cString: strerror(errno)))") }
         var a = sockaddr_un()
-        guard CommandServer.fillAddr(&a, path) else { close(s); throw CmdError("слишком длинный путь сокета \(path)") }
-        let r = withUnsafePointer(to: &a) {
+        guard Self.fillAddr(&a, path) else { close(s); throw CmdError("control socket path is too long") }
+        let result = withUnsafePointer(to: &a) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(s, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }
         }
-        guard r == 0 else { close(s); throw CmdError("bind \(path): \(String(cString: strerror(errno)))") }
+        guard result == 0 else { close(s); throw CmdError("bind: \(String(cString: strerror(errno)))") }
         chmod(path, 0o600)
-        // SO_NOSIGPIPE — на слушающем сокете: принятые его наследуют. На принятом сокете, чей клиент уже
-        // закрылся, setsockopt не проходит (EINVAL), и ответ в закрытый сокет убил бы демон SIGPIPE.
         var one: Int32 = 1
         setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
-        guard listen(s, 8) == 0 else { close(s); throw CmdError("listen: \(String(cString: strerror(errno)))") }
-        _ = fcntl(s, F_SETFL, fcntl(s, F_GETFL) | O_NONBLOCK)   // drain() забирает всё ждущее и не блокируется
+        guard listen(s, 32) == 0 else { close(s); unlink(path); throw CmdError("listen failed") }
+        _ = fcntl(s, F_SETFL, fcntl(s, F_GETFL) | O_NONBLOCK)
+        _ = fcntl(s, F_SETFD, FD_CLOEXEC)
         fd = s
+        var info = stat()
+        if lstat(path, &info) == 0 { socketInode = UInt64(info.st_ino) }
     }
 
-    deinit { close(fd) }
+    deinit {
+        for client in clients { close(client.fd) }
+        close(fd)
+        var info = stat()
+        if lstat(path, &info) == 0 && UInt64(info.st_ino) == socketInode { unlink(path) }
+    }
 
-    /// Все ждущие подключения за раз (автоповтор бинда не морит голодом остальное — P42).
+    /// Bounded, nonblocking service: an incomplete command cannot stall animation or keyboard input.
     public func drain(_ handle: (String) throws -> String) {
-        while true {
+        for _ in 0..<16 {
             let c = accept(fd, nil, nil)
-            if c < 0 { return }                                  // EAGAIN: больше никого
-            serve(c, handle)
+            if c < 0 { break }
+            guard clients.count < 32 else { close(c); continue }
+            _ = fcntl(c, F_SETFL, fcntl(c, F_GETFL) | O_NONBLOCK)
+            _ = fcntl(c, F_SETFD, FD_CLOEXEC)
+            var one: Int32 = 1
+            setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
+            clients.append(Client(c))
         }
+        clients = clients.filter { serve($0, handle) }
     }
 
-    private func serve(_ c: Int32, _ handle: (String) throws -> String) {
-        defer { close(c) }
-        _ = fcntl(c, F_SETFL, fcntl(c, F_GETFL) & ~O_NONBLOCK)   // на BSD принятый сокет наследует O_NONBLOCK
-        var tv = timeval(tv_sec: 1, tv_usec: 0)                  // c.settimeout(1)
-        setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
-        setsockopt(c, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
-        var one: Int32 = 1
-        setsockopt(c, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
-        var buf = [UInt8]()
-        var ch: UInt8 = 0
-        while buf.count < 65536 {                                 // readline()
-            let n = read(c, &ch, 1)
-            if n <= 0 {
-                if n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    log("команда упала: TimeoutError('timed out')")
-                    return
+    private func serve(_ client: Client, _ handle: (String) throws -> String) -> Bool {
+        func finish() -> Bool { close(client.fd); return false }
+        guard ProcessInfo.processInfo.systemUptime-client.started < 1 else { return finish() }
+        if client.output == nil {
+            var bytes = [UInt8](repeating: 0, count: 4096)
+            for _ in 0..<16 {
+                let count = read(client.fd, &bytes, bytes.count)
+                if count == 0 && client.input.isEmpty { return finish() }
+                if count < 0 {
+                    if errno == EAGAIN || errno == EWOULDBLOCK { return true }
+                    return finish()
                 }
-                break
+                if count > 0 { client.input.append(contentsOf: bytes.prefix(count)) }
+                guard client.input.count <= 65536 else { return finish() }
+                if let newline = client.input.firstIndex(of: 10) {
+                    client.input = Array(client.input.prefix(newline)); break
+                }
+                if count == 0 { break }
+                if count < bytes.count { return true }
             }
-            buf.append(ch)
-            if ch == 0x0a { break }
+            guard !client.input.isEmpty else { return finish() }
+            let line = String(decoding: client.input, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            do { client.output = Array((try handle(line) + "\n").utf8) }
+            catch { log("command failed:", error); return finish() }
+            guard client.output!.count <= 1_048_576 else { return finish() }
         }
-        let line = String(decoding: buf, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        let t = Date()
-        do {
-            let out = try handle(line)
-            log(String(format: "команда '%@' -> %@ (%.2f с)", line, String(out.prefix(200)), Date().timeIntervalSince(t)))
-            let data = Array((out + "\n").utf8)
-            var off = 0
-            while off < data.count {
-                let n = data[off...].withUnsafeBufferPointer { write(c, $0.baseAddress, $0.count) }
-                if n <= 0 { break }
-                off += n
-            }
-        } catch {
-            log("команда упала: \(error)")
+        let output = client.output!
+        let count = output.withUnsafeBufferPointer { buffer in
+            write(client.fd, buffer.baseAddress!.advanced(by: client.sent), output.count-client.sent)
         }
+        if count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) { return true }
+        guard count > 0 else { return finish() }
+        client.sent += count
+        return client.sent == output.count ? finish() : true
     }
+
 }
 
 /// configure приложениям: последняя цель окна побеждает (серийный номер); одна последовательная очередь
@@ -118,6 +145,11 @@ public final class Configurer: ConfigureSink {
     var want: [Int: Want] = [:]
     var seq = 0
     var queues: [Int: DispatchQueue] = [:]
+    var scheduled=Set<Int>()
+    var running=0
+    var runningWIDs=Set<Int>()
+    public func busy(_ wid:Int) -> Bool { lock.lock();defer { lock.unlock() };return runningWIDs.contains(wid) || want[wid].map { !$0.taken } == true }
+    public var idle:Bool { lock.lock();defer { lock.unlock() };return running == 0 && !want.values.contains { !$0.taken } }
 
     public init(sys: SysAPI, deliver: @escaping (CfgResult) -> Void) {
         self.sys = sys
@@ -136,8 +168,23 @@ public final class Configurer: ConfigureSink {
                 q = DispatchQueue(label: "hyprwm.configure.\(j.pid)", qos: .userInteractive)
                 queues[j.pid] = q
             }
-            let wid = j.wid
-            q.async { [weak self] in self?.work(wid) }
+            let pid=j.pid
+            if scheduled.insert(pid).inserted { q.async { [weak self] in self?.drain(pid) } }
+        }
+    }
+
+    public func cancelAll() { lock.lock(); want.removeAll(); lock.unlock() }
+    public func cancel(_ wid: Int) { lock.lock(); want[wid] = nil; lock.unlock() }
+
+    func drain(_ pid:Int) {
+        while true {
+            lock.lock()
+            guard let next=want.values.filter({ $0.job.pid == pid && !$0.taken }).min(by: { $0.job.seq < $1.job.seq }) else {
+                scheduled.remove(pid);queues[pid]=nil;lock.unlock();return
+            }
+            next.taken=true;running+=1;let job=next.job;runningWIDs.insert(job.wid);lock.unlock()
+            cfgOne(job)
+            lock.lock();running-=1;runningWIDs.remove(job.wid);lock.unlock()
         }
     }
 
@@ -159,14 +206,17 @@ public final class Configurer: ConfigureSink {
     /// _cfg_one: поставить рамку и дождаться, что окно реально приняло.
     func cfgOne(_ j: CfgJob) {
         let (wid, seq, pid, to) = (j.wid, j.seq, j.pid, j.to)
+        func owned() -> Bool { !j.requireOwnership || (!sys.sessionLocked() && !sys.protectedProcess(pid) && sys.winPidLevel(wid).pid == pid && sys.processBirth(pid) == j.birth && j.birth != nil) }
+        guard latest(wid,seq), owned() else { return }
         let pre = sys.axGetFrame(pid, wid)
-        let e = sys.axFrame(pid, wid, to)
+        guard latest(wid, seq), owned() else { return }
+        let e = j.verifyOnly ? 0 : j.sizeOnly ? sys.axSize(pid,wid,to.w,to.h) : sys.axFrame(pid, wid, to)
         var got: Rect?
         var same = 0
         let t0 = sys.now()
         while e == 0 && sys.now() - t0 < 0.6 {
             sys.sleep(0.03)
-            if !latest(wid, seq) { return }                       // пришла новая цель — этот ответ не нужен
+            if !latest(wid, seq) || !owned() { return }                       // пришла новая цель — этот ответ не нужен
             guard let cur = sys.axGetFrame(pid, wid) else { continue }
             if abs(cur.w - to.w) <= TOL && abs(cur.h - to.h) <= TOL {
                 got = cur
@@ -180,6 +230,10 @@ public final class Configurer: ConfigureSink {
                 break
             }
         }
-        if latest(wid, seq) { deliver(CfgResult(wid: wid, owner: j.owner, to: to, got: got, e: e, pre: pre)) }
+        if latest(wid, seq) && owned() {
+            var result=CfgResult(wid:wid,owner:j.owner,to:to,got:got,e:e,pre:pre)
+            result.pid=pid;result.birth=j.birth;result.isCurrent={ [weak self] in self?.latest(wid,seq) == true }
+            deliver(result)
+        }
     }
 }

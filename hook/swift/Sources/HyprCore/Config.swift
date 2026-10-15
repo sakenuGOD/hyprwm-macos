@@ -68,7 +68,9 @@ public final class HyprConfig {
     /// Lua-шимом (rebuild=false — только читать, для тестов и сухих режимов).
     public static func load(configDir: String, rebuild: Bool = true, timeScale: Double = 1.2) throws -> HyprConfig {
         let cache = configDir + "/hypr_cfg.json"
-        let home = ProcessInfo.processInfo.environment["HYPR_HOME"] ?? (NSHomeDirectory() + "/arch-nebula/dotfiles/home")
+        let personal = NSHomeDirectory() + "/arch-nebula/dotfiles/home"
+        let implicit = FileManager.default.fileExists(atPath: personal + "/.config/hypr") ? personal : configDir + "/defaults"
+        let home = ProcessInfo.processInfo.environment["HYPR_HOME"] ?? implicit
         let fm = FileManager.default
         if rebuild {
             let cacheT = (try? fm.attributesOfItem(atPath: cache)[.modificationDate] as? Date)?.timeIntervalSince1970
@@ -120,9 +122,11 @@ public final class HyprConfig {
 
     public func makeDwindle() -> Dwindle {
         let (gi, go) = gaps()
-        return Dwindle(gapsIn: gi, gapsOut: go,
+        let tile = Dwindle(gapsIn: gi, gapsOut: go,
                        splitWidthMult: dwindleCfg["split_width_multiplier"]?.double ?? 1.0,
                        defaultRatio: (dwindleCfg["default_split_ratio"]?.double ?? 1.0) / 2.0)
+        tile.minimumPolicy = dwindleCfg["minimum_policy"]?.string ?? "native"
+        return tile
     }
 
     /// hyprcfg.animation(leaf): узел, заданный в конфиге, переопределяет всё; не заданный лист берёт
@@ -174,7 +178,8 @@ public final class HyprConfig {
 
     /// sorted(curves().items()) — по кодовым точкам имени, как сортирует Python.
     public func sortedCurves() -> [(String, Curve)] {
-        curves().sorted { Array($0.key.unicodeScalars.map(\.value)).lexicographicallyPrecedes($1.key.unicodeScalars.map(\.value)) }
+        let selected = raw["runtime_curve_names"]?.array.map { Set($0.compactMap(\.string)) }
+        return curves().filter { selected == nil || selected!.contains($0.key) }.sorted { Array($0.key.unicodeScalars.map(\.value)).lexicographicallyPrecedes($1.key.unicodeScalars.map(\.value)) }
             .map { ($0.key, $0.value) }
     }
 
@@ -182,7 +187,7 @@ public final class HyprConfig {
     public func anim(_ leaf: String) -> (curve: Int, dur: Double, on: Bool) {
         let a = animation(leaf)
         let s = HyprConfig.geomLeaves.contains(leaf) ? timeScale : 1.0
-        return (curveIDs[a.curve] ?? curveIDs["default"] ?? 0, a.speed * 0.1 * s, a.enabled)
+        return (curveIDs[a.curve] ?? curveIDs["default"] ?? 0, a.speed * 0.1 * s, a.enabled && (config["animations"]?["enabled"]?.truthy ?? true))
     }
 
     /// popin N% из style листа (re.search(r"popin\s+(\d+)", style)) -> N/100 или nil.
