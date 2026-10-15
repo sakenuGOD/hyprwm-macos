@@ -1,8 +1,8 @@
-// Границы демона с системой. Вся логика (WM) говорит с миром только через эти протоколы:
-// живые реализации — в цели hyprwm-swift (SkyLight/AX/канал), подделки — в тестах (WS не трогают).
+// Daemon/system boundaries. All WM logic interacts with the world through these protocols:
+// live implementations are in hyprwm-swift (SkyLight/AX/channel); test fakes never touch WS.
 import Foundation
 
-/// Окно из снимка (winsnap.m: CGWindowList + стол окна).
+/// Window from a snapshot (winsnap.m: CGWindowList plus window space).
 public struct WinInfo: Equatable {
     public var wid: Int, pid: Int
     public var owner: String, name: String
@@ -36,13 +36,13 @@ public struct Snapshot {
     public var locked = false
     public var spaceType = 0
     public var stable: Bool
-    public var area: Rect                // visible frame экрана (без меню-бара и дока)
-    public var windows: [WinInfo]        // спереди назад, сначала окна на экране
+    public var area: Rect                // screen visible frame (excluding menu bar and Dock)
+    public var windows: [WinInfo]        // front to back, on-screen windows first
     public var nativeMetadata:JSON?
     public init(space: Int, stable: Bool, area: Rect, windows: [WinInfo]) {
         self.space = space; self.stable = stable; self.area = area; self.windows = windows
     }
-    /// JSON из ws_snapshot().
+    /// JSON from ws_snapshot().
     public static func parse(_ j: JSON) -> Snapshot {
         let v = j["visible"] ?? .object([])
         var snapshot = Snapshot(space: j["space"]?.int ?? 0, stable: (j["stable"] ?? .null).truthy,
@@ -55,7 +55,7 @@ public struct Snapshot {
     }
 }
 
-/// Слот окна в движке (struct ch_win) — то, что демон из него читает.
+/// Engine window slot (struct ch_win): fields read by the daemon.
 public struct EngWin {
     public var wid: Int
     public var pos: (Double, Double), size: (Double, Double)
@@ -74,8 +74,8 @@ public struct EngWin {
         self.radius = radius; ax = a.x; ay = a.y; aw = a.w; ah = a.h
     }
     public var moving: Bool { posActive || sizeActive || settling }
-    public var visible: Rect { Rect(pos.0, pos.1, size.0, size.1) }   // видимая рамка B
-    public var real: Rect { Rect(ax, ay, aw, ah) }                      // фактическая рамка A
+    public var visible: Rect { Rect(pos.0, pos.1, size.0, size.1) }   // visible frame B
+    public var real: Rect { Rect(ax, ay, aw, ah) }                      // actual frame A
 }
 
 public struct EngEvent {
@@ -84,18 +84,18 @@ public struct EngEvent {
     public init(type: Int, wid: Int, t: Double, rect: Rect) { self.type = type; self.wid = wid; self.t = t; self.rect = rect }
 }
 
-/// Номера событий/флагов — из chan.h (EV_*). Дублируются здесь только как Int для протоколов;
-/// живой канал сверяет их с chan.h в тесте (ChannelABITests).
+/// Event/flag numbers from chan.h (EV_*). Duplicated here only as Int for protocols;
+/// ChannelABITests checks the live channel against chan.h.
 public enum Ev { public static let gone = 1, settled = 2, done = 3, new = 4, moved = 5 }
 
-/// Счётчики заголовка канала для status.
+/// Channel header counters for status.
 public struct EngStats {
     public var ticks = 0, nactive = 0, errors = 0, ticksLate = 0, teSkips = 0, holding = 0
     public var tickUsMax = 0.0, tickUsLast = 0.0
     public init() {}
 }
 
-/// Канал демон -> движок (chan.py Chan).
+/// Daemon -> engine channel (chan.py Chan).
 public protocol ChannelAPI: AnyObject {
     var terminalGeometrySupported:Bool {get}
     func geomTerminal(_ wid:Int,to:Rect,curves:(Int,Int),durations:(Double,Double),from:Rect?) -> Bool
@@ -116,7 +116,7 @@ public protocol ChannelAPI: AnyObject {
     func events() -> [EngEvent]
     func wins() -> [EngWin]
     var stats: EngStats { get }
-    /// cmd_tail != cmd_head: движок ещё не забрал опубликованную пачку
+    /// cmd_tail != cmd_head: the engine has not consumed the published batch yet
     var pending: Bool { get }
     var widMax: Int { get set }
 }
@@ -141,7 +141,7 @@ public extension ChannelAPI {
     func alpha(_ wid: Int, _ a: Double, _ curve: Int, _ dur: Double = 0) { alpha(wid, a, curve, dur, frm: nil) }
 }
 
-/// Обёртка движка (engine.py Engine).
+/// Engine wrapper (engine.py Engine).
 public protocol EngineAPI: AnyObject {
     var c: ChannelAPI { get }
     func anim(_ leaf: String) -> (curve: Int, dur: Double, on: Bool)
@@ -150,15 +150,15 @@ public protocol EngineAPI: AnyObject {
 }
 
 public extension EngineAPI {
-    /// wid -> фактическая рамка окна на сервере (без нашего трансформа).
+    /// wid -> actual server window frame (without our transform).
     func real() -> [Int: Rect] {
         var d: [Int: Rect] = [:]
-        for w in c.wins() { d[w.wid] = w.real }   // как dict-компрехеншен: последний побеждает
+        for w in c.wins() { d[w.wid] = w.real }   // dict comprehension: last value wins
         return d
     }
 }
 
-/// Подложки (deco.py).
+/// Backdrops (deco.py).
 public protocol DecoAPI: AnyObject {
     func ensure(_ wid: Int, _ owner: String, _ radius: Double)
     func place(_ wid: Int, _ rect: Rect) -> Int?
@@ -174,7 +174,7 @@ public final class NullDeco: DecoAPI {
     public func drop(_ wid: Int) {}
 }
 
-/// Всё, что демон спрашивает у системы (SkyLight, AX, CoreGraphics, процессы) и часы.
+/// Everything the daemon asks of the system (SkyLight, AX, CoreGraphics, processes), plus the clock.
 public protocol SysAPI: AnyObject {
     func now() -> Double
     func sleep(_ s: Double)
@@ -267,7 +267,7 @@ public extension SysAPI {
     func processExited(_ pid:Int) -> Bool {false}
 }
 
-/// Куда уходят задания configure (живой — Configurer с очередью на приложение; в тестах — запись).
+/// Configure job destination (live: Configurer with a queue per app; tests: recording).
 public protocol ConfigureSink: AnyObject {
     func submit(_ jobs: [CfgJob])
     func cancelAll()
@@ -296,7 +296,7 @@ public struct CfgJob: Equatable {
     public init(wid: Int, pid: Int, owner: String, to: Rect) { self.wid = wid; self.pid = pid; self.owner = owner; self.to = to }
 }
 
-/// Ответ configure (что окно реально приняло).
+/// Configure response (the frame the window actually accepted).
 public struct CfgResult {
     public var wid: Int
     public var owner: String
@@ -315,7 +315,7 @@ public var hyprLogSink: (String) -> Void = { line in
     FileHandle.standardOutput.write((line + "\n").data(using: .utf8)!)
 }
 
-/// Как log() в hyprwm.py: "HH:MM:SS.mmm сообщение".
+/// Like log() in hyprwm.py: "HH:MM:SS.mmm message".
 private let logTimeFormat: DateFormatter = {
     let f = DateFormatter()
     f.dateFormat = "HH:mm:ss"

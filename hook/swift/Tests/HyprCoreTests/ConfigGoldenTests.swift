@@ -1,5 +1,5 @@
-// Конфиг: hyprcfg.animation/curves/gaps/dwindle и engine.anim/ids — против ответа эталонного Python
-// на той же копии hypr_cfg.json.
+// Config: compare hyprcfg.animation/curves/gaps/dwindle and engine.anim/ids to reference Python output
+// using the same hypr_cfg.json copy.
 @testable import HyprCore
 import XCTest
 
@@ -15,7 +15,7 @@ final class ConfigGoldenTests: XCTestCase {
         let t = cfg.makeDwindle()
         XCTAssertEqual(t.splitWidthMult, g["dwindle"]!["swm"]!.double)
         XCTAssertEqual(t.defaultRatio, g["dwindle"]!["ratio"]!.double)
-        for (name, id) in g["ids"]!.object! { XCTAssertEqual(cfg.curveIDs[name], id.int, "номер кривой \(name)") }
+        for (name, id) in g["ids"]!.object! { XCTAssertEqual(cfg.curveIDs[name], id.int, "curve ID \(name)") }
         XCTAssertEqual(cfg.curveIDs.count, g["ids"]!.object!.count)
         for (leaf, a) in g["animations"]!.object! {
             let s = cfg.animation(leaf)

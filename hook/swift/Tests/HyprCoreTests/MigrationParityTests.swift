@@ -15,7 +15,7 @@ final class MigrationParityTests: XCTestCase {
     func testSaveRefusalRetainsVisibleTileAndDoesNotStartCloseAnimation() throws {
         let (wm,sys,eng,windows)=try world(), before=wm.sp(1).tree!.json
         let response=wm.closeAnim(area,1,windows,windows[0])
-        XCTAssertTrue(response.contains("запрошено")); XCTAssertEqual(wm.sp(1).tree!.json,before)
+        XCTAssertTrue(response.contains("requested")); XCTAssertEqual(wm.sp(1).tree!.json,before)
         XCTAssertTrue(wm.closing.isEmpty); XCTAssertTrue(wm.later.isEmpty); XCTAssertTrue(eng.ch.ops.isEmpty)
         XCTAssertTrue(sys.calls.contains(.array([.string("ws_close"),.int(101),.int(1)])))
         var sheet=windows[0]; sheet.wid=9; sheet.name="Save"; sys.tileableM[9]=0

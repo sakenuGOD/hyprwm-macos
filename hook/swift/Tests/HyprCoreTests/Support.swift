@@ -1,5 +1,5 @@
-// Общее для тестов: фикстуры (их делает tools/gen_fixtures.py из эталонного Python) и сравнение JSON
-// с допуском для чисел.
+// Shared test support: fixtures (tools/gen_fixtures.py generates them from reference Python) and JSON
+// comparison with numeric tolerance.
 import Foundation
 @testable import HyprCore
 import XCTest
@@ -14,7 +14,7 @@ enum Fx {
     }
 }
 
-/// Первое расхождение двух JSON (числа — с допуском, int == float) или nil.
+/// First JSON mismatch (numeric tolerance, int == float), or nil.
 func jsonDiff(_ a: JSON, _ b: JSON, _ path: String = "$", tol: Double = 1e-9) -> String? {
     switch (a, b) {
     case (.int, _), (.double, _):
@@ -22,12 +22,12 @@ func jsonDiff(_ a: JSON, _ b: JSON, _ path: String = "$", tol: Double = 1e-9) ->
         if x.isNaN && y.isNaN { return nil }
         return abs(x - y) <= tol * max(1, abs(x), abs(y)) ? nil : "\(path): \(pyFloat(x)) != \(pyFloat(y))"
     case let (.array(x), .array(y)):
-        if x.count != y.count { return "\(path): длина \(x.count) != \(y.count): \(a.dumps()) vs \(b.dumps())" }
+        if x.count != y.count { return "\(path): length \(x.count) != \(y.count): \(a.dumps()) vs \(b.dumps())" }
         for i in x.indices { if let d = jsonDiff(x[i], y[i], "\(path)[\(i)]", tol: tol) { return d } }
         return nil
     case let (.object(x), .object(y)):
         let kx = Set(x.map(\.0)), ky = Set(y.map(\.0))
-        if kx != ky { return "\(path): ключи \(kx.sorted()) != \(ky.sorted())" }
+        if kx != ky { return "\(path): keys \(kx.sorted()) != \(ky.sorted())" }
         for (k, v) in x { if let d = jsonDiff(v, b[k]!, "\(path).\(k)", tol: tol) { return d } }
         return nil
     default:

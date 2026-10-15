@@ -79,7 +79,7 @@ extension WM {
             else { self.closeRequests[wid]?.pressed=true }
             self.lastSnap=0
         }
-        return "запрошено закрытие \(wid) (queued)"
+        return "close requested \(wid) (queued)"
     }
     func observeCloseRequests(_ windows:[WinInfo],_ space:Int) {
         for (wid,request) in closeRequests {

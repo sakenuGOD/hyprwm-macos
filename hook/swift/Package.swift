@@ -1,7 +1,7 @@
 // swift-tools-version:5.9
-// hyprwm-swift — порт демона hook/hyprwm.py на Swift (MASTER.md §11 П1а).
-// C-код демона НЕ копируется: цели CChan/CAX/CSnap включают исходники из hook/src/ через шимы
-// (#include "../../../src/…"), заголовок канала — hook/src/chan.h как есть (одна ABI на обе стороны).
+// hyprwm-swift: Swift port of hook/hyprwm.py (MASTER.md section 11 P1a).
+// Daemon C code is NOT copied: CChan/CAX/CSnap include hook/src/ sources via shims
+// (#include "../../../src/…"); channel header hook/src/chan.h is unchanged (one ABI for both sides).
 import PackageDescription
 
 let sky: [LinkerSetting] = [.unsafeFlags(["-F/System/Library/PrivateFrameworks", "-framework", "SkyLight"])]
@@ -11,18 +11,18 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [.executable(name: "hyprwm-swift", targets: ["hyprwm-swift"])],
     targets: [
-        // канал демон<->движок: hook/src/chanlib.c + hook/src/chan.h (без фреймворков — годится и тестам)
+        // daemon <-> engine channel: hook/src/chanlib.c + hook/src/chan.h (no frameworks; usable in tests)
         .target(name: "CChan", path: "Sources/CChan"),
-        // AX (configure/фокус/меню) из hook/src/axlib.c + обёртки SkyLight/CG, которые в Python были ctypes
+        // AX (configure/focus/menu) from hook/src/axlib.c plus SkyLight/CG wrappers previously accessed via ctypes
         .target(name: "CAX", path: "Sources/CAX",
                 cSettings: [.unsafeFlags(["-Wno-deprecated-declarations"])],
                 linkerSettings: sky + [.linkedFramework("ApplicationServices"), .linkedFramework("CoreGraphics"),
                                        .linkedFramework("CoreFoundation")]),
-        // снимок окон из hook/src/winsnap.m (ARC)
+        // window snapshot from hook/src/winsnap.m (ARC)
         .target(name: "CSnap", path: "Sources/CSnap",
                 cSettings: [.unsafeFlags(["-fobjc-arc", "-Wno-deprecated-declarations"])],
                 linkerSettings: sky + [.linkedFramework("AppKit"), .linkedFramework("ApplicationServices")]),
-        // вся логика демона без обращения к системе (раскладка, конфиг, команды, sync/apply) — тестируется
+        // all daemon logic without system access (layout, config, commands, sync/apply), testable
         .target(name: "HyprCore", dependencies: ["CChan"], path: "Sources/HyprCore"),
         .executableTarget(name: "hyprwm-swift", dependencies: ["HyprCore", "CChan", "CAX", "CSnap"],
                           path: "Sources/hyprwm-swift",

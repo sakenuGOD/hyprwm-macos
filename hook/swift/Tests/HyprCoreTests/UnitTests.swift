@@ -1,5 +1,5 @@
-// Точечные тесты: разбор команд, протокол сокета (на временном пути), ABI канала (на временном файле,
-// не /tmp/hyprwm), вывод JSON как у Python, очередь configure «последняя цель побеждает».
+// Focused tests: command parsing, socket protocol (temporary path), channel ABI (temporary file,
+// not /tmp/hyprwm), Python-style JSON output, latest-target-wins configure queue.
 import CChan
 @testable import HyprCore
 import XCTest
@@ -25,33 +25,33 @@ final class CommandTests: XCTestCase {
                 WinInfo(wid: 22, pid: 2, owner: "Telegram", x: 740, y: 41, w: 700, h: 870, on: true, space: 3)]
         sys.tileableM = [11: 1, 22: 1]
         sys.m = (1000, 500)
-        _ = try wm.command("retile", area, 3, wins)        // оба окна — в раскладку
+        _ = try wm.command("retile", area, 3, wins)        // tile both windows
     }
 
     func cmd(_ s: String) throws -> String { try wm.command(s, area, 3, wins) }
 
     func testParsing() throws {
-        XCTAssertEqual(try cmd(""), "пусто")
-        XCTAssertEqual(try cmd("   "), "пусто")
-        XCTAssertEqual(try cmd("bogus x"), "не знаю команду: bogus x")
-        XCTAssertEqual(try cmd("focus"), "не знаю команду: focus")       // без стороны — как в Python
-        XCTAssertEqual(try cmd("resize 5"), "не знаю команду: resize 5")
-        XCTAssertThrowsError(try cmd("resize abc 1"))                    // float() -> ValueError: ответа нет
+        XCTAssertEqual(try cmd(""), "empty")
+        XCTAssertEqual(try cmd("   "), "empty")
+        XCTAssertEqual(try cmd("bogus x"), "unknown command: bogus x")
+        XCTAssertEqual(try cmd("focus"), "unknown command: focus")       // without direction, as in Python
+        XCTAssertEqual(try cmd("resize 5"), "unknown command: resize 5")
+        XCTAssertThrowsError(try cmd("resize abc 1"))                    // float() -> ValueError: no response
         XCTAssertEqual(try cmd("preselect l"), "preselect left")
         XCTAssertEqual(try cmd("preselect"), "preselect None")
         XCTAssertEqual(try cmd("preselect zz"), "preselect None")
-        XCTAssertEqual(try cmd("focus x"), "нет окна: x")
-        XCTAssertEqual(try cmd("unhide"), "скрытых нет")
-        XCTAssertEqual(try cmd("exec"), "нечего запускать")
+        XCTAssertEqual(try cmd("focus x"), "no window: x")
+        XCTAssertEqual(try cmd("unhide"), "no hidden windows")
+        XCTAssertEqual(try cmd("exec"), "nothing to launch")
         XCTAssertEqual(try cmd("\t togglesplit  \n"), "ok")
     }
 
     func testFocusAndLayout() throws {
         XCTAssertEqual(wm.target.keys.sorted(), [11, 22])
-        XCTAssertEqual(try cmd("focus r"), "фокус -> 22 (0)")
+        XCTAssertEqual(try cmd("focus r"), "focus -> 22 (0)")
         XCTAssertEqual(wm.ownFocus.pid, 2)
-        XCTAssertEqual(try cmd("focus left"), "нет окна: left")
-        XCTAssertEqual(try cmd("move r"), "ok")                          // 11 уходит направо
+        XCTAssertEqual(try cmd("focus left"), "no window: left")
+        XCTAssertEqual(try cmd("move r"), "ok")                          // 11 moves right
         let r = wm.layout(area, wm.sp(3))
         XCTAssertGreaterThan(r[11]!.x, r[22]!.x)
     }
@@ -66,17 +66,17 @@ final class CommandTests: XCTestCase {
     }
 
     func testHideUnhideRoundTrip() throws {
-        XCTAssertEqual(try cmd("hide 22"), "скрыто 22")
-        XCTAssertEqual(try cmd("hide 22"), "уже скрыто 22")
+        XCTAssertEqual(try cmd("hide 22"), "hidden 22")
+        XCTAssertEqual(try cmd("hide 22"), "already hidden 22")
         XCTAssertNil(wm.target[22])
-        XCTAssertEqual(try cmd("unhide all"), "возвращено [22]")
+        XCTAssertEqual(try cmd("unhide all"), "restored [22]")
         XCTAssertTrue(wm.hidden.isEmpty)
     }
 
     func testExec() throws {
-        XCTAssertEqual(try cmd("exec Ghostty --new"), "запуск Ghostty --new")   // pgrep ничего не нашёл -> open -a
+        XCTAssertEqual(try cmd("exec Ghostty --new"), "launch Ghostty --new")   // pgrep found nothing -> open -a
         XCTAssertEqual(sys.calls.last, .string("spawn?"))
-        XCTAssertEqual(try cmd("exec spotlight"), "лаунчер")
+        XCTAssertEqual(try cmd("exec spotlight"), "launcher")
     }
 }
 
@@ -110,14 +110,14 @@ final class SocketTests: XCTestCase {
         var st = stat()
         stat(path, &st)
         XCTAssertEqual(st.st_mode & 0o777, 0o600)
-        // две команды ждут — drain забирает обе за раз (P42)
+        // two pending commands: drain handles both at once (P42)
         let a = client(path, "status\n"), b = client(path, "  focus l  \n")
         var seen: [String] = []
         srv.drain { seen.append($0); return "ok:" + $0 }
         XCTAssertEqual(seen.filter { $0 != "" }.suffix(2), ["status", "focus l"])
         XCTAssertEqual(reply(a), "ok:status\n")
         XCTAssertEqual(reply(b), "ok:focus l\n")
-        // команда «упала» — соединение закрывается без ответа (как в Python)
+        // command failed: close the connection without a response (as in Python)
         let c = client(path, "resize abc 1\n")
         srv.drain { _ in throw CmdError("ValueError") }
         XCTAssertEqual(reply(c), "")
@@ -134,7 +134,7 @@ final class ChannelABITests: XCTestCase {
         let c = try LiveChannel(path: path, create: true)
         XCTAssertTrue(c.magicOK)
         XCTAssertTrue(c.sizeOK)
-        XCTAssertThrowsError(try LiveChannel(path: path, create: true))     // O_EXCL: существующий не пересоздаётся
+        XCTAssertThrowsError(try LiveChannel(path: path, create: true))     // O_EXCL: do not recreate an existing file
         XCTAssertEqual(MemoryLayout<ch_win>.stride, Int(ch_off(0)))
         XCTAssertEqual(MemoryLayout<ch_cmd>.stride, Int(ch_off(2)))
         XCTAssertEqual(MemoryLayout<ch_hdr>.stride, Int(ch_off(7)))
@@ -144,7 +144,7 @@ final class ChannelABITests: XCTestCase {
         XCTAssertFalse(c.pending)
         c.geom(42, Rect(10, 20, 300, 400), 3, 3, frm: Rect(1, 2, 3, 4), move: true, warp: false, stretch: true)
         c.alpha(42, 0.0, 5, 0.3, frm: 1.0)
-        XCTAssertFalse(c.pending)                                           // не опубликовано до commit
+        XCTAssertFalse(c.pending)                                           // not published until commit
         c.commit()
         XCTAssertTrue(c.pending)
         let cmdBase = c.base + MemoryLayout<ch_hdr>.stride + Int(CH_NCURVE) * MemoryLayout<ch_curve>.stride
@@ -159,10 +159,10 @@ final class ChannelABITests: XCTestCase {
         XCTAssertEqual(k1.flags, UInt32(F_FROM))
         XCTAssertEqual([k1.a, k1.fa, k1.dalpha], [0, 1, 0.3])
         XCTAssertEqual(k1.calpha, 5)
-        // движок «забрал» пачку
+        // engine consumed the batch
         c.raw.pointee.cmd_tail = c.raw.pointee.cmd_head
         XCTAssertFalse(c.pending)
-        // событие от движка
+        // event from the engine
         let evBase = cmdBase + Int(CH_NCMD) * MemoryLayout<ch_cmd>.stride
         evBase.assumingMemoryBound(to: ch_evt.self).pointee = ch_evt(type: UInt32(EV_MOVED), wid: 42, t: 1.5, x: 1, y: 2, w: 3, h: 4)
         c.raw.pointee.evt_head = 1
@@ -172,7 +172,7 @@ final class ChannelABITests: XCTestCase {
         XCTAssertEqual(evs[0].rect, Rect(1, 2, 3, 4))
         XCTAssertEqual(c.raw.pointee.evt_tail, 1)
         XCTAssertTrue(c.events().isEmpty)
-        // слот окна
+        // window slot
         XCTAssertTrue(c.wins().isEmpty)
         let wp = (c.base + Int(ch_off(1))).assumingMemoryBound(to: ch_win.self)
         wp[3].used = 1; wp[3].wid = 77; wp[3].ax = 5; wp[3].aw = 600; wp[3].cur_alpha = 0.5; wp[3].pos.active = 1
@@ -203,14 +203,14 @@ final class JSONTests: XCTestCase {
         XCTAssertEqual(o.dumps(ensureASCII: false), "{\"spaces\": {\"3\": {\"tree\": {\"split\": \"v\", \"ratio\": 0.5, \"a\": {\"wid\": 1}, \"b\": {\"wid\": 2}}, \"focus\": 1, \"full\": null, \"presel\": null}}, \"floating\": [], \"hidden\": [{\"wid\": 5, \"pid\": null, \"owner\": \"Телеграм \\\"x\\\"\\n\", \"space\": 3, \"rect\": [1.0, 2.5, 1e-05, 1e+16, 123456.789]}]}")
         let m = JSON.object([("Telegram", .array([.double(470), .int(0)])), ("X", .array([.double(0.1), .double(1e22)]))])
         XCTAssertEqual(m.dumps(), "{\"Telegram\": [470.0, 0], \"X\": [0.1, 1e+22]}")
-        // разбор и обратно — то же самое
+        // parse and serialize: identical result
         XCTAssertEqual(try JSON.parse(o.dumps(indent: 1)).dumps(indent: 1), o.dumps(indent: 1))
     }
 
     func testLiveStateFileShape() throws {
-        // реальный файл состояния Python-демона (только чтение) читается и пишется обратно без потерь
+        // read-only real Python daemon state file round-trips without loss
         let p = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../hyprwm.state.json").standardized
-        guard let d = FileManager.default.contents(atPath: p.path) else { throw XCTSkip("нет \(p.path)") }
+        guard let d = FileManager.default.contents(atPath: p.path) else { throw XCTSkip("missing \(p.path)") }
         let j = try JSON.parse(d)
         for (_, s) in j["spaces"]?.object ?? [] {
             XCTAssertEqual(SpaceState.from(s).json.dumps(), s.dumps())
@@ -219,7 +219,7 @@ final class JSONTests: XCTestCase {
 }
 
 final class ConfigurerTests: XCTestCase {
-    /// Подделка AX: окно «упирается» в минимум 470×584; первая рамка задерживается, пока не пришли новые цели.
+    /// AX fake: window stops at minimum 470×584; delay the first frame until newer targets arrive.
     final class AXSys: SysAPI {
         let lock = NSLock()
         var frames: [Rect] = []
@@ -269,17 +269,17 @@ final class ConfigurerTests: XCTestCase {
         let lock = NSLock()
         let c = Configurer(sys: sys) { r in lock.lock(); results.append(r); lock.unlock(); got.signal() }
         c.submit([CfgJob(wid: 1, pid: 9, owner: "Telegram", to: Rect(0, 0, 300, 300))])
-        Thread.sleep(forTimeInterval: 0.05)                    // первое задание висит в ax_frame
+        Thread.sleep(forTimeInterval: 0.05)                    // first job is blocked in ax_frame
         c.submit([CfgJob(wid: 1, pid: 9, owner: "Telegram", to: Rect(0, 0, 350, 300))])
         c.submit([CfgJob(wid: 1, pid: 9, owner: "Telegram", to: Rect(0, 0, 400, 300))])
         sys.gate.signal()
         XCTAssertEqual(got.wait(timeout: .now() + 5), .success)
         Thread.sleep(forTimeInterval: 0.1)
         lock.lock(); defer { lock.unlock() }
-        XCTAssertEqual(results.count, 1, "ответ только на последнюю цель")
+        XCTAssertEqual(results.count, 1, "response only for the latest target")
         XCTAssertEqual(results[0].to, Rect(0, 0, 400, 300))
-        XCTAssertEqual(results[0].got, Rect(0, 0, 470, 584))   // окно встало на свой минимум
-        XCTAssertEqual(sys.frames.map(\.w), [300, 400], "промежуточная цель 350 пропущена")
+        XCTAssertEqual(results[0].got, Rect(0, 0, 470, 584))   // window reached its minimum
+        XCTAssertEqual(sys.frames.map(\.w), [300, 400], "intermediate target 350 skipped")
     }
     func testEarlySizeOnlyKeepsLogicalDestinationAndNeverCallsPositionSetter() throws {
         let sys=AXSys(),done=expectation(description:"one size accepted")

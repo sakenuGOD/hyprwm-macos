@@ -5,7 +5,7 @@ final class CloseSplitPromotionTests:XCTestCase {
     func testProductionExplicitHidePromotesAutomaticPairImmediatelyAndPreservesHideIntent() throws {
         let f=ProductionPolicyTests(),(wm,sys,eng,windows)=try f.world(three(0.65))
         sys.births[103]="103:40:50";sys.front=103;sys.contexts[103]=(3,0)
-        XCTAssertEqual(wm.hide(f.area,1,windows,3),"скрыто 3")
+        XCTAssertEqual(wm.hide(f.area,1,windows,3),"hidden 3")
         XCTAssertEqual(wm.sp(1).tree?.split,"v");XCTAssertEqual(wm.sp(1).tree?.ratio,0.65)
         let rects=wm.layout(f.area,wm.sp(1)),a=try XCTUnwrap(rects[1]),b=try XCTUnwrap(rects[2])
         XCTAssertEqual(a.y,b.y);XCTAssertEqual(a.h,b.h);XCTAssertLessThan(a.x+a.w,b.x)
@@ -20,7 +20,7 @@ final class CloseSplitPromotionTests:XCTestCase {
             let restored=try XCTUnwrap(Node.from(root.json))
             let f=ProductionPolicyTests(),(wm,sys,_,windows)=try f.world(restored)
             sys.births[103]="103:40:50";sys.front=103;sys.contexts[103]=(3,0)
-            XCTAssertEqual(wm.hide(f.area,1,windows,3),"скрыто 3")
+            XCTAssertEqual(wm.hide(f.area,1,windows,3),"hidden 3")
             XCTAssertEqual(wm.sp(1).tree?.split,"h");XCTAssertEqual(wm.sp(1).tree?.ratio,0.7)
             XCTAssertEqual(wm.sp(1).tree?.manualSplit,manualAxis);XCTAssertEqual(wm.sp(1).tree?.manualRatio,!manualAxis)
         }

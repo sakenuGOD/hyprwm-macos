@@ -37,7 +37,7 @@ extension WM {
             cfgSink?.idle != false && !sys.closeBusy && !sys.focusBusy && !sys.transferFocusBusy && workspaceBusy?() != true && !eng.c.pending && eng.c.stats.holding == 0
     }
     func restoreHidden(_ area: Rect, _ destination: Int?, _ windows: [WinInfo]?, everything: Bool, which: HiddenPick?) -> String {
-        guard !hidden.isEmpty else { return "скрытых нет" }
+        guard !hidden.isEmpty else { return "no hidden windows" }
         let todo: [Hidden]
         switch which {
         case let .filter(f)?: todo=hidden.filter(f)
@@ -83,8 +83,8 @@ extension WM {
             restored.append(wid)
         }
         if !restored.isEmpty || !requested.isEmpty { c.commit(); save() }
-        if !requested.isEmpty { return "ожидаю перенос \(pyList(requested)); возвращено \(pyList(restored))" }
-        return "возвращено \(pyList(restored))"
+        if !requested.isEmpty { return "waiting for transfer \(pyList(requested)); restored \(pyList(restored))" }
+        return "restored \(pyList(restored))"
     }
 
     func completeRestores(_ area: Rect, _ space: Int, _ windows: [WinInfo]) {

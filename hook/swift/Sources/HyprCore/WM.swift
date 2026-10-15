@@ -1,27 +1,27 @@
-// Демон тайлинга — порт класса WM из hook/hyprwm.py (снимок-эталон: hook/swift/REFERENCE_hyprwm.py).
+// Tiling daemon: port of WM from hook/hyprwm.py (reference snapshot: hook/swift/REFERENCE_hyprwm.py).
 //
-// Кто что делает (как в Python):
-// - демон: дерево dwindle на каждый рабочий стол macOS, события (открытие/закрытие окна, бинды) ->
-//   целевые рамки -> ОДНА пачка команд движку (все окна события стартуют в одном кадре, как в Hyprland);
-// - движок (src/anim4.c внутри WS) ведёт видимую рамку и альфу по кривым Hyprland;
-// - приложению конечный размер сообщается один раз (configure через AX), без его анимации.
+// Responsibilities (as in Python):
+// - daemon: one dwindle tree per macOS desktop; events (window open/close, bindings) ->
+//   target frames -> ONE engine batch (all event windows start in one frame, like Hyprland);
+// - engine (src/anim4.c inside WS): visible frames and alpha along Hyprland curves;
+// - app: receives the final size once (configure via AX), without animating it.
 //
-// Отличие устройства от Python (целевая архитектура fable_plan §2.1–2.2):
-// - один владелец состояния окна — этот объект, и он живёт только на главной очереди. Потоков, которые
-//   трогают состояние, нет: ответы configure приходят на главную очередь событием (cfgQ), а не через
-//   общий queue.Queue из чужого потока;
-// - configure — последовательная очередь на приложение, «последняя цель побеждает» (Configurer);
-// - команды сокета обрабатываются сразу по событию готовности сокета (DispatchSource), а такт 16 мс —
-//   таймер (не select с опросом).
-// Методы ниже повторяют Python строка в строку; где поведение сознательно отличается — помечено «ОТЛИЧИЕ».
+// Architectural differences from Python (target architecture fable_plan sections 2.1–2.2):
+// - this object exclusively owns window state and lives only on the main queue. No worker threads
+//   touch state: configure responses arrive as main-queue events (cfgQ), rather than through
+//   a shared queue.Queue from another thread;
+// - configure uses a serial queue per app; the latest target wins (Configurer);
+// - socket commands run immediately on readiness (DispatchSource); the 16 ms tick uses
+//   a timer instead of select polling.
+// Methods below mirror Python line by line; intentional behavioral differences are marked DIFFERENCE.
 import Foundation
 
-public let TOL = 6.0               // допуск размера, pt (Terminal округляет до сетки символов)
+public let TOL = 6.0               // size tolerance, pt (Terminal rounds to its character grid)
 public let RESIZABLE = 1 << 3      // NSWindowStyleMaskResizable
 public let DIRS: [String: String] = ["l": "left", "r": "right", "u": "up", "d": "down",
                                      "left": "left", "right": "right", "up": "up", "down": "down"]
 
-/// Состояние рабочего стола: {tree, focus, full, presel[, fullmode]} — ссылочное, как dict в Python.
+/// Desktop state: {tree, focus, full, presel[, fullmode]}, reference semantics like Python dict.
 public final class SpaceState {
     public var tree: Node?
     public var focus: Int?
@@ -48,7 +48,7 @@ public final class SpaceState {
     }
 }
 
-/// Скрытое окно (special:hidden): {wid, pid, owner, space, rect}.
+/// Hidden window (special:hidden): {wid, pid, owner, space, rect}.
 public struct Hidden: Equatable {
     public var wid: Int
     public var pid: Int?
@@ -174,34 +174,34 @@ public final class WM {
 
     public var spaces = OrderedMap<String, SpaceState>()   // space -> {tree, focus, full, presel}
     public var floating = Set<Int>()
-    // owner -> [w, h]; числа хранятся как JSON (int/float), чтобы minsize_app.json был байт-в-байт как у Python
+    // owner -> [w, h]; JSON numbers retain int/float types so minsize_app.json matches Python byte for byte
     public var mins = OrderedMap<String, [JSON]>()
-    public var owner: [Int: String] = [:]                  // wid -> имя приложения
-    public var cfgQ: [CfgResult] = []                      // ответы configure (кладёт главная очередь)
+    public var owner: [Int: String] = [:]                  // wid -> app name
+    public var cfgQ: [CfgResult] = []                      // configure responses (posted by the main queue)
     public var info: [Int: [Int: WinTypeInfo]] = [:]       // pid -> wid -> {type, style}
-    public var miss: [Int: (Int, Double)] = [:]            // wid -> (попыток, когда)
-    public var target: [Int: Rect] = [:]                   // wid -> последняя цель, отданная движку
-    public var pids: [Int: Int] = [:]                      // wid -> pid (для узнавания вкладок)
-    public var goneT: [Int: Double] = [:]                  // wid -> когда движок сообщил, что окна нет
-    public var newbies = OrderedMap<Int, Double>()         // wid -> когда движок увидел новое окно
-    public var optimistic = OrderedMap<Int, Double>()      // wid -> когда спрятано заранее
-    public var hidden: [Hidden] = []                       // скрытые (special:hidden)
-    public var restoring = Set<Int>()                      // возвращаемые из скрытых: drift + fadeIn
-    public var later: [(Double, () -> Void)] = []          // [(когда, функция)]
+    public var miss: [Int: (Int, Double)] = [:]            // wid -> (attempts, time)
+    public var target: [Int: Rect] = [:]                   // wid -> last target sent to the engine
+    public var pids: [Int: Int] = [:]                      // wid -> pid (to identify tabs)
+    public var goneT: [Int: Double] = [:]                  // wid -> time the engine reported the window gone
+    public var newbies = OrderedMap<Int, Double>()         // wid -> time the engine saw a new window
+    public var optimistic = OrderedMap<Int, Double>()      // wid -> time hidden optimistically
+    public var hidden: [Hidden] = []                       // hidden windows (special:hidden)
+    public var restoring = Set<Int>()                      // restoring hidden windows: drift + fadeIn
+    public var later: [(Double, () -> Void)] = []          // [(time, function)]
     public var closing = Set<Int>()
-    public var frontPid: Int?                              // переднее приложение
-    public var ownFocus: (pid: Int?, t: Double) = (nil, 0) // активацию сделали мы сами (follow_mouse)
-    public var dimSince: [Int: Double] = [:]               // wid -> когда замечено «α<1 без причины»
-    public var movedT: [Int: [Double]] = [:]               // wid -> [когда] возвращали в плитку по EV_MOVED
+    public var frontPid: Int?                              // frontmost app
+    public var ownFocus: (pid: Int?, t: Double) = (nil, 0) // activation initiated by us (follow_mouse)
+    public var dimSince: [Int: Double] = [:]               // wid -> time unexplained alpha < 1 was observed
+    public var movedT: [Int: [Double]] = [:]               // wid -> [times] returned to tile after EV_MOVED
     public var floatRules: [JSON]
     public var snaps = 0
-    // getattr(self, "_…") из Python
+    // Python getattr(self, "_…")
     public var mp: (Double, Double)?
     public var fwant: Int?
     var ft = 0.0
     var sampled = 0.0
     var errorsSeen = 0
-    // состояние главного цикла (локальные переменные run() в Python)
+    // main-loop state (Python run() local variables)
     var lastSpace: Int?
     var lastEng: Double
     var wasDown = false
@@ -221,7 +221,7 @@ public final class WM {
         if let d = FileManager.default.contents(atPath: statePath), let st = try? JSON.parse(d) {
             for (k, v) in st["spaces"]?.object ?? [] { spaces[k] = SpaceState.from(v) }
             floating = Set((st["floating"]?.array ?? []).compactMap(\.int))
-            for hj in st["hidden"]?.array ?? [] {                  // без дублей (старый баг: прятали уже скрытое)
+            for hj in st["hidden"]?.array ?? [] {                  // deduplicate (old bug: hiding already-hidden windows)
                 let h = Hidden.from(hj)
                 if hidden.allSatisfy({ $0.wid != h.wid }) { hidden.append(h) }
             }
@@ -232,12 +232,12 @@ public final class WM {
         floatRules = cfg.floatRules
         let (gi, go) = cfg.gaps()
         let wm = cfg.animation("windowsMove"), wi = cfg.animation("windowsIn")
-        log("конфиг: зазоры", pyFloat(gi), "{'top': \(pyFloat(go.top)), 'right': \(pyFloat(go.right)), 'bottom': \(pyFloat(go.bottom)), 'left': \(pyFloat(go.left))}",
+        log("config: gaps", pyFloat(gi), "{'top': \(pyFloat(go.top)), 'right': \(pyFloat(go.right)), 'bottom': \(pyFloat(go.bottom)), 'left': \(pyFloat(go.left))}",
             "windowsMove", "\(wm.kind) \(wm.curve) \(pyFloat(wm.speed))", "windowsIn", "\(wi.kind) \(wi.curve) \(pyFloat(wi.speed)) '\(wi.style)'",
-            "правил float:", floatRules.count)
+            "float rules:", floatRules.count)
     }
 
-    // ── состояние ────────────────────────────────────────────────────────
+    // State
     public var stateJSON: JSON {
         .object([("spaces", .object(spaces.map { ($0.0, $0.1.json) })),
                  ("floating", .array(floating.sorted().map { .int($0) })),
@@ -247,8 +247,8 @@ public final class WM {
 
     public func save() {
         guard saveEnabled else { return }
-        // ОТЛИЧИЕ: запись через временный файл + rename (Python писал поверх — при падении посреди
-        // записи файл мог остаться обрезанным). Формат тот же: json.dump(indent=1) / json.dump().
+        // DIFFERENCE: write via temporary file + rename (Python overwrote in place; a crash during
+        // writing could leave a truncated file). Same format: json.dump(indent=1) / json.dump().
         writeAtomic(statePath, stateJSON.dumps(indent: 1))
         writeAtomic(minsizePath, minsJSON.dumps())
     }
@@ -259,7 +259,7 @@ public final class WM {
             try s.write(toFile: tmp, atomically: false, encoding: .utf8)
             if rename(tmp, path) != 0 { throw CmdError("rename: \(String(cString: strerror(errno)))") }
         } catch {
-            log("не записать \(path): \(error)")
+            log("cannot write \(path): \(error)")
         }
     }
 
@@ -272,17 +272,17 @@ public final class WM {
         return s
     }
 
-    // ── какие окна тайлить ───────────────────────────────────────────────
-    /// Тайлить ли окно: обычное окно с изменяемым размером (спрашиваем приложение напрямую, ~1 мс).
-    /// Окна, которых приложение ещё не показало, переспрашиваются с паузой (backoff).
+    // Which windows to tile
+    /// Tile a normal resizable window? Query the app directly (~1 ms).
+    /// Retry windows the app has not shown yet, with backoff.
     public func wmInfo(_ pid: Int, _ wid: Int) -> WinTypeInfo? {
         let now = sys.now()
         let i = info[pid]?[wid]
-        // положительный ответ — навсегда; отрицательный — переспросить: только что созданное окно
-        // бывает ещё не AXStandardWindow / без settable размера (S5.2); первые ~3 с раз в 0.25 с
+        // Positive answers are permanent; retry negative answers: a newly created window
+        // may not yet be AXStandardWindow / size-settable (S5.2); every 0.25 s for the first ~3 s.
         if let i, (!options.production && (i.type == "primary" || i.n >= 12)) || now - i.t < 0.25 { return i }
         let (n, t) = miss[wid] ?? (0, 0)
-        // окна ещё нет у приложения: первую секунду — каждый такт, потом с паузой (P26)
+        // The app does not have the window yet: every tick for the first second, then backoff (P26).
         if now - t < (n < 60 ? 0.0 : min(0.05 * pow(2.0, Double(n - 60)), 1.0)) { return nil }
         let r = sys.axTileable(pid, wid)
         if r < 0 {
@@ -303,7 +303,7 @@ public final class WM {
     }
 
     private func search(_ p: String, _ s: String) -> Bool? {
-        guard let re = regex(p) else { return nil }        // re.error -> правило пропускается
+        guard let re = regex(p) else { return nil }        // re.error -> skip the rule
         return re.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)) != nil
     }
 
@@ -347,9 +347,9 @@ public final class WM {
         return rule == nil
     }
 
-    // ── раскладка ────────────────────────────────────────────────────────
+    // Layout
     public func layout(_ area: Rect, _ s: SpaceState) -> OrderedMap<Int, Rect> {
-        // минимумы известны ДО раскладки (по приложению) — окно сразу получает место, в которое влезает
+        // Know per-app minima BEFORE layout, so each window immediately receives enough room.
         tile.mins = [:]
         for n in Dwindle.leaves(s.tree) {
             if let o = owner[n.wid!], let m = mins[o], m.count >= 2 { tile.mins[n.wid!] = (m[0].double ?? 0, m[1].double ?? 0) }
@@ -362,9 +362,9 @@ public final class WM {
         for (wid, b) in tile.boxes(s.tree, area) { rects[wid] = tile.withGaps(b, area) }
         if let f = s.full, rects.contains(f) {
             let go = tile.gapsOut
-            if s.fullmode == "fullscreen" {                       // весь экран без зазоров
+            if s.fullmode == "fullscreen" {                       // entire screen, without gaps
                 rects[f] = area
-            } else {                                              // maximized: рабочая область минус gaps_out
+            } else {                                              // maximized: work area minus gaps_out
                 rects[f] = Rect(area.x + go.left, area.y + go.top, area.w - go.left - go.right, area.h - go.top - go.bottom)
             }
         }
@@ -373,7 +373,7 @@ public final class WM {
         return out
     }
 
-    /// Цели всех окон стола -> одна пачка движку (общий t0) + конечные размеры приложениям.
+    /// All desktop window targets -> one engine batch (shared t0) plus final app sizes.
     public func apply(_ area: Rect, _ space: Int, _ wins: [WinInfo], force: Bool = false, opening: [Int] = []) {
         guard enabled, !options.production || (!sys.sessionLocked() && overviewFrozen?() != true && nativeSpaceType != 4 && !nativeSuspendedSpaces.contains(String(space))) else { return }
         let s = sp(space)
@@ -403,7 +403,7 @@ public final class WM {
             if !options.production { c.commit() }
         }
         var vis: [Int: Rect] = [:]
-        for w in wins {                                           // видимая рамка: у покоящегося окна = реальная
+        for w in wins {                                           // visible frame equals actual frame for a stationary window
             if let ew = engW[w.wid], ew.moving { vis[w.wid] = ew.visible } else { vis[w.wid] = real[w.wid] ?? w.rect }
         }
         for (wid, to) in rects {
@@ -434,7 +434,7 @@ public final class WM {
                     let scale = cfg.animation("windowsIn").style == "fade" ? 1 : (pop ?? 0)
                     let width = min(to.w,max(5,to.w*scale)), height=min(to.h,max(5,to.h*scale))
                     frm = Rect(to.x+(to.w-width)/2,to.y+(to.h-height)/2,width,height)
-                } else if let pop, pop != 0 {                            // popin: от pop% цели, масштаб от центра
+                } else if let pop, pop != 0 {                            // popin: start at pop% of target, scaling from the center
                     let sw = max(5.0, to.w * pop), sh = max(5.0, to.h * pop)
                     frm = Rect(to.x + (to.w - sw) / 2, to.y + (to.h - sh) / 2, sw, sh)
                 }
@@ -445,8 +445,8 @@ public final class WM {
                 if fiOn && !noAnimation { c.alpha(wid, options.production ? windowOpacity(cw,space) : 1.0, fiC, fiD, frm: 0.0) }
                 else if options.production { c.alpha(wid,windowOpacity(cw,space),16,0) }
             } else {
-                // стартовая ВИДИМАЯ рамка явно: приложение может встать в цель раньше, чем движок
-                // заберёт команду (AX быстрее тика) — тогда движок взял бы уже новую рамку = телепорт
+                // Set the initial VISIBLE frame explicitly: the app may reach its target before the engine
+                // consumes the command (AX is faster than a tick), otherwise the engine sees the new frame and teleports.
                 var frm: Rect?
                 let ew = engW[wid]
                 if ew == nil || !ew!.moving { frm = restoreFrom.removeValue(forKey: wid) ?? vis[wid] }
@@ -482,8 +482,8 @@ public final class WM {
             if !capturedSnapshot { snapshotConfigures[wid]=nil }
             posted.append(wid)
             if nativeFrames || capturedSnapshot { continue }
-            // Приложению — конечный размер один раз. При живом движении
-            // позиция принадлежит атомарному завершению в WindowServer.
+            // Give the app its final size once. During live movement,
+            // position belongs to atomic completion in WindowServer.
             let a = real[wid] ?? cw.rect
             if opening.contains(wid) || a.maxDiff(to) > 1 {
                 if let j=job(cw.pid,wid,to) {
@@ -496,11 +496,11 @@ public final class WM {
         if !posted.isEmpty {
             c.commit()
             if options.production { claimAdmission(posted) }
-            let t = sys.now()                                     // движок принимает пачку в ближайшем тике
+            let t = sys.now()                                     // the engine accepts the batch on its next tick
             if !options.production { while c.pending && sys.now() - t < 0.05 { sys.sleep(0.001) } }
         }
         if !jobs.isEmpty { configure(jobs) }
-        if !posted.isEmpty { log(String(format: "событие: %d окон в движок, configure %d", posted.count, jobs.count)) }
+        if !posted.isEmpty { log(String(format: "event: %d windows to engine, configure %d", posted.count, jobs.count)) }
         if !posted.isEmpty || force { save() }
     }
 
@@ -514,14 +514,14 @@ public final class WM {
         return result
     }
 
-    /// Конечный размер приложениям — сразу после того, как движок принял пачку (очередь на приложение).
+    /// Final app sizes immediately after the engine accepts the batch (one queue per app).
     public func configure(_ jobs: [CfgJob]) {
         guard !options.production || overviewFrozen?() != true else {return}
         cfgSink?.submit(jobs)
     }
 
-    /// Ответы configure: окно стабильно стоит больше цели — это его минимум; запомнить по приложению.
-    /// -> true, если раскладку надо пересчитать (ретаргет в этом же цикле).
+    /// Configure responses: a stable window larger than its target has reached its minimum; remember per app.
+    /// Returns true when layout must be recomputed (retarget in this same cycle).
     public func configured() -> Bool {
         var changed = false
         while !cfgQ.isEmpty {
@@ -531,7 +531,7 @@ public final class WM {
                       sys.winPidLevel(r.wid).pid == pid, sys.processBirth(pid) == birth else { continue }
             }
             if r.e != 0 {
-                log("configure окна \(r.wid): ошибка \(r.e)")
+                log("configure window \(r.wid): error \(r.e)")
                 continue
             }
             guard let got = r.got, target[r.wid] == r.to else { continue }
@@ -540,24 +540,24 @@ public final class WM {
             // full-width browser into a permanent constraint on every split.
             if options.production,let previous=r.pre,
                abs(previous.w-got.w)<=TOL,abs(previous.h-got.h)<=TOL {continue}
-            // Минимум: окно стабильно (поток дождался тишины) и по оси осталось больше цели (S2).
+            // Minimum: window settled (worker waited for quiet), but remains larger than target on an axis (S2).
             let m = mins[r.owner] ?? [.int(0), .int(0)]
             let (mw, mh) = (m[0], m[1])
-            // max(mw, got) Python: при равенстве остаётся mw (и его тип int/float)
+            // Python max(mw, got): ties retain mw and its int/float type
             let nw: JSON = got.w > r.to.w + TOL && got.w > (mw.double ?? 0) ? .double(got.w) : mw
             let nh: JSON = got.h > r.to.h + TOL && got.h > (mh.double ?? 0) ? .double(got.h) : mh
             if nw.double != mw.double || nh.double != mh.double {
                 mins[r.owner] = [nw, nh]
-                log("минимум \(r.owner): [\(pyNum(nw)), \(pyNum(nh))] (окно \(r.wid): \(r.pre.map { pyIntTuple([$0.w, $0.h]) } ?? "None") -> \(pyIntTuple([got.w, got.h])), цель \(pyFloatTuple([r.to.w, r.to.h])))")
+                log("minimum \(r.owner): [\(pyNum(nw)), \(pyNum(nh))] (window \(r.wid): \(r.pre.map { pyIntTuple([$0.w, $0.h]) } ?? "None") -> \(pyIntTuple([got.w, got.h])), target \(pyFloatTuple([r.to.w, r.to.h])))")
                 changed = true
             } else if abs(got.w - r.to.w) > TOL || abs(got.h - r.to.h) > TOL {
-                log("окно \(r.owner) \(r.wid) стоит \(pyIntTuple([got.w, got.h])) вместо \(pyFloatTuple([r.to.w, r.to.h])) — держу в плитке")
+                log("window \(r.owner) \(r.wid) has size \(pyIntTuple([got.w, got.h])) instead of \(pyFloatTuple([r.to.w, r.to.h])) — keeping tiled")
             }
         }
         return changed
     }
 
-    /// Дерево стола <- его видимые окна. -> (изменилось ли, новые окна).
+    /// Desktop tree <- its visible windows. Returns (changed, new windows).
     public func sync(_ area: Rect, _ space: Int, _ wins: [WinInfo]) -> (Bool, [Int]) {
         let nativeChanged = options.production && updateNativeFullscreen(wins, space)
         if options.production && (nativeSpaceType == 4 || nativeSuspendedSpaces.contains(String(space))) { admission?.suspend(); return (nativeChanged, []) }
@@ -590,13 +590,13 @@ public final class WM {
         let idSet = Set(ids)
         var have = Set(Dwindle.leaves(s.tree).map { $0.wid! })
         var changed = nativeChanged || !admitted.opened.isEmpty, opened: [Int] = admitted.opened
-        // Вкладки (Ghostty, Finder, Safari): у macOS это отдельные окна одной группы, видна одна.
-        // Ушло окно X и в этот же момент появилось окно того же приложения на его месте —
-        // это переключение вкладки: новое окно занимает лист X, раскладка не меняется.
-        // ОТЛИЧИЕ: в Python порядок gone — порядок хеш-множества (не задан); здесь — по возрастанию wid.
+        // Tabs (Ghostty, Finder, Safari) are separate macOS windows in one group; only one is visible.
+        // If window X disappears as another window from the same app appears in its place,
+        // this is a tab switch: the new window takes leaf X without changing layout.
+        // DIFFERENCE: Python gone order follows an unspecified hash-set order; here it is ascending wid.
         var gone = have.subtracting(idSet).sorted()
         let alive = Set(wins.map(\.wid))
-        // ушедшие «на задний план» (вкладку заслонила другая) или закрытые (Cmd+W вкладки — показалась соседняя)
+        // backgrounded (covered by another tab) or closed (Cmd+W reveals the adjacent tab)
         let offscreen = Set(gone.filter { x in !hid.contains(x) && (!alive.contains(x) || wins.contains { $0.wid == x && !$0.on }) })
         for w in live {
             if have.contains(w.wid) { continue }
@@ -608,21 +608,21 @@ public final class WM {
                 twin = gone.first { x in pids[x] == w.pid && target[x] != nil && target[x]!.maxDiff(w.rect) <= TOL && (!options.production || offscreen.contains(x)) }
             }
             if twin == nil && !options.production {
-                // рамка новой вкладки в первые кадры бывает ещё не рамкой группы; признак надёжнее: окно того
-                // же приложения в этот же момент ушло с экрана, но живо (не закрыто) — его заслонила вкладка
+                // A new tab may not match its group frame for the first few frames. A better signal is a window
+                // from the same app disappearing simultaneously while still alive (not closed): another tab covered it.
                 twin = gone.first { x in pids[x] == w.pid && offscreen.contains(x) }
             }
             guard let tw = twin else { continue }
             for n in Dwindle.leaves(s.tree) where n.wid == tw { n.wid = w.wid }
             gone.removeAll { $0 == tw }
             have.remove(tw); have.insert(w.wid)
-            // ОТЛИЧИЕ: в Python self.target.pop(twin) без умолчания — KeyError (падение демона), если у старой
-            // вкладки цели уже нет (её снял EV_GONE/EV_MOVED/unhide). Здесь просто не переносим цель.
+            // DIFFERENCE: Python self.target.pop(twin) without a default raises KeyError (daemon crash) if the old
+            // tab has no target (cleared by EV_GONE/EV_MOVED/unhide). Here we simply do not transfer a target.
             if let t = target.removeValue(forKey: tw) { target[w.wid] = t }
             if s.focus == tw { s.focus = w.wid }
             if s.full == tw { s.full = w.wid }
-            // Вкладка у macOS появляется мгновенно — без анимации. Её могли спрятать до popin
-            // (hide_newbies): вернуть альфу. Старой вкладке — освободить слот движка.
+            // macOS tabs appear instantly, without animation. A tab may have been hidden before popin
+            // (hide_newbies): restore alpha. Free the old tab engine slot.
             let c = eng.c
             if options.production, let slot = target[w.wid] {
                 // Tab switch changes content identity, not layout. Reveal the selected native window in the
@@ -637,7 +637,7 @@ public final class WM {
             dimSince[w.wid] = nil
             deco.drop(tw)
             deco.ensure(w.wid, w.owner, 0)
-            log("вкладка \(w.owner): \(tw) -> \(w.wid) (место в раскладке то же)")
+            log("tab \(w.owner): \(tw) -> \(w.wid) (same layout position)")
         }
         for w in live { pids[w.wid] = w.pid }
         if options.production {pruneCloseDepartures(wins,space)}
@@ -651,7 +651,7 @@ public final class WM {
             tabMissingSince[wid] = nil
             if options.production && (!alive.contains(wid) || confirmedClose) { closed.insert(wid) }
             let g = goneT.removeValue(forKey: wid)
-            log("окно \(wid) ушло из раскладки" + (g.map { String(format: " (через %.0f мс после движка)", (sys.now() - $0) * 1000) } ?? " (движок не сообщал)"))
+            log("window \(wid) left layout" + (g.map { String(format: " (%.0f ms after engine)", (sys.now() - $0) * 1000) } ?? " (not reported by engine)"))
             s.tree = options.production && closed.contains(wid)
                 ? tile.removeReorientingPromoted(s.tree,wid,in:area) : Dwindle.remove(s.tree,wid)
             if options.production {
@@ -666,7 +666,7 @@ public final class WM {
             changed = true
         }
         have.formIntersection(idSet)
-        // активное окно (Hyprland делит именно его) — самое переднее тайловое окно стола
+        // Active window (the one Hyprland splits): frontmost tiled window on this desktop.
         if options.production, let oldFocus, tabMissingSince[oldFocus] != nil, s.tree?.contains(oldFocus) == true {
             s.focus=oldFocus // The tab/close admission grace retains focus identity as well as the leaf.
         } else if options.production {
@@ -684,7 +684,7 @@ public final class WM {
             have.insert(w.wid)
             s.focus = w.wid
             opened.append(w.wid)
-            log("новое окно \(w.owner) (\(w.wid)) -> в раскладку")
+            log("new window \(w.owner) (\(w.wid)) -> into layout")
             deco.ensure(w.wid, w.owner, 0)
             changed = true
         }
@@ -700,8 +700,8 @@ public final class WM {
         return (changed, opened)
     }
 
-    /// dwindle-вставка: preselect задаёт сторону; без него — сторона по курсору (force_split 0)
-    /// или по точке point (перенос направлением: focal за краем окна).
+    /// Dwindle insertion: preselect sets the side; otherwise use the cursor (force_split 0)
+    /// or point (directional move: focal point beyond the window edge).
     public func insert(_ s: SpaceState, _ wid: Int, _ target: Int?, _ area: Rect, point: (Double, Double)? = nil) -> Node {
         let pre = s.presel
         let bx = target != nil ? tile.boxes(s.tree, area) : OrderedMap<Int, Rect>()
@@ -722,10 +722,10 @@ public final class WM {
         return tree
     }
 
-    // ── команды (бинды) ──────────────────────────────────────────────────
+    // Commands (bindings)
     static func isDigits(_ s: String) -> Bool { !s.isEmpty && s.unicodeScalars.allSatisfy { $0.value >= 48 && $0.value <= 57 } }
 
-    /// Python float(): ValueError -> исключение (команда «падает», ответа нет — как в Python).
+    /// Python float(): ValueError -> exception (command fails without a response, as in Python).
     static func pyFloatParse(_ s: String) throws -> Double {
         let t = s.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "_", with: "")
         let low = t.lowercased()
@@ -738,7 +738,7 @@ public final class WM {
 
     public func command(_ line: String, _ area: Rect, _ space: Int, _ wins: [WinInfo]) throws -> String {
         let a = options.production ? try CommandArguments.parse(line) : line.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-        guard let cmd = a.first else { return "пусто" }
+        guard let cmd = a.first else { return "empty" }
         if options.production && cmd != "status" && overviewFrozen?() == true { return "Mission Control active: mutation deferred" }
         if options.production && cmd != "status" && sys.sessionLocked() { return "session locked: mutation refused" }
         if let result = try controlHandler?(a.count == 1 ? cmd : line) { return result }
@@ -764,15 +764,15 @@ public final class WM {
             let d = DIRS[a[1]]
             var tgt: Int?
             if let cur, cur != 0, let d { tgt = Dwindle.neighbour(rects, cur, d) }
-            guard let tgt else { return "нет окна: \(a[1])" }
+            guard let tgt else { return "no window: \(a[1])" }
             if cmd == "focus" {
                 guard let pid = wins.first(where: { $0.wid == tgt })?.pid else { throw CmdError("StopIteration") }
                 if options.production,let window=wins.first(where:{$0.wid==tgt}) {
-                    return queueFocus(window,space:space,reason:.keyboard) ? "фокус -> \(tgt) (queued)" : "focus refused"
+                    return queueFocus(window,space:space,reason:.keyboard) ? "focus -> \(tgt) (queued)" : "focus refused"
                 }
                 ownFocus = (pid, sys.now())
-                let r = sys.axFocus(pid, tgt, raise: false)        // именно окно; z тайловых не меняем (Hyprland)
-                return "фокус -> \(tgt) (\(r))"
+                let r = sys.axFocus(pid, tgt, raise: false)        // focus the specific window; preserve tiled z-order (Hyprland)
+                return "focus -> \(tgt) (\(r))"
             }
             moveDir(s, area, cur!, d!, rects)
         } else if cmd == "togglesplit" {
@@ -803,11 +803,11 @@ public final class WM {
         } else if cmd == "close" {
             let requested = a.count > 1 && WM.isDigits(a[1]) ? try CommandArguments.windowID(a[1]) : nil
             let w = requested.map { requested in wins.first { $0.wid == requested } } ?? nativeWindow ?? front(wins, space)
-            guard let w else { return "нет окна" }
+            guard let w else { return "no window" }
             return closeAnim(area, space, wins, w)
         } else if cmd == "quit" {
-            guard let w = nativeWindow ?? front(wins, space) else { return "нет окна" }
-            return "завершить \(w.owner) -> \(sys.wsQuit(w.pid))"
+            guard let w = nativeWindow ?? front(wins, space) else { return "no window" }
+            return "quit \(w.owner) -> \(sys.wsQuit(w.pid))"
         } else if cmd == "hide" {
             return hide(area, space, wins, a.count > 1 && WM.isDigits(a[1]) ? try CommandArguments.windowID(a[1]) : nativeWindow?.wid)
         } else if cmd == "unhide" {
@@ -830,7 +830,7 @@ public final class WM {
             mins.removeAll()
             info.removeAll()
         } else if cmd != "retile" {
-            return "не знаю команду: \(line)"
+            return "unknown command: \(line)"
         }
         let (_, opened) = sync(area, space, wins)
         apply(area, space, wins, force: cmd == "retile" || cmd == "reset", opening: opened)
@@ -865,8 +865,8 @@ public final class WM {
             .setting("engine", result["engine"]!.setting("holding",.int(st.holding)).setting("pending_commands",.bool(eng.c.pending))) : result
     }
 
-    /// movewindow Hyprland (dwindle moveTargetInDirection): окно вынимается из дерева и вставляется у узла,
-    /// ближайшего к точке на 1 px за серединой его стороны; сторона — по этой точке.
+    /// Hyprland movewindow (dwindle moveTargetInDirection): remove the window and insert it beside the node
+    /// nearest a point 1 px beyond its side midpoint; that point determines the side.
     func moveDir(_ s: SpaceState, _ area: Rect, _ cur: Int, _ d: String, _ rects: OrderedMap<Int, Rect>) {
         let r = rects[cur]!
         let g = tile.gapsIn + 1
@@ -894,9 +894,9 @@ public final class WM {
         s.tree = insert(s, cur, near, area, point: focal)
     }
 
-    /// killactive как в Hyprland: окно уходит из раскладки (соседи едут в том же кадре), само сжимается
-    /// до popin 92% от центра (windowsOut) и гаснет (fadeOut); приложение закрывается в конце.
-    /// Не закрылось (диалог «Сохранить?») — вернуть в раскладку.
+    /// Hyprland killactive: remove from layout (neighbors move in the same frame), shrink the window
+    /// to 92% popin from its center (windowsOut), fade out (fadeOut), then close the app window.
+    /// If it stays open (Save? dialog), restore it to layout.
     public func closeAnim(_ area: Rect, _ space: Int, _ wins: [WinInfo], _ w: WinInfo) -> String {
         if options.production {
             guard !sys.protectedProcess(w.pid), sys.winPidLevel(w.wid).pid == w.pid,
@@ -916,7 +916,7 @@ public final class WM {
         closing.insert(wid)
         c.geom(wid, to, oc, oc, dpos: on ? od : 0, dsize: on ? od : 0, frm: cur, move: false, stretch: true)
         c.alpha(wid, 0.0, fc, fon ? fd : 0.0)
-        apply(area, space, wins)                                  // соседи — в том же кадре
+        apply(area, space, wins)                                  // neighbors move in the same frame
         c.commit()
         let done = max(on ? od : 0, fon ? fd : 0)
         let pid = w.pid
@@ -924,26 +924,26 @@ public final class WM {
         later.append((sys.now() + done + 0.6, { [unowned self] in
             self.closing.remove(wid)
             if self.sys.winBounds(wid) != nil && c.wins().contains(where: { $0.wid == wid }) {
-                log("окно \(wid) не закрылось — возвращаю")
-                self.restoring.insert(wid)                        // sync вставит обратно: drift из сжатой рамки +
-                self.target[wid] = nil                            // fadeIn, а не второй popin (P32)
+                log("window \(wid) did not close; restoring")
+                self.restoring.insert(wid)                        // sync reinserts it: drift from the shrunken frame +
+                self.target[wid] = nil                            // fadeIn, rather than a second popin (P32)
                 self.later.append((self.sys.now() + 1.5, { [unowned self] in self.restoreCheck(wid) }))
             }
         }))
-        return String(format: "закрываю %d (%.0f мс)", wid, done * 1000)
+        return String(format: "closing %d (%.0f ms)", wid, done * 1000)
     }
 
-    /// Окно в фокусе: самое переднее видимое окно этого стола. Скрытые/закрываемые/невидимые (α≈0) — мимо.
+    /// Focused window: frontmost visible window on this desktop. Skip hidden/closing/invisible (alpha≈0).
     public func front(_ wins: [WinInfo], _ space: Int) -> WinInfo? {
         let skip = Set(hidden.map(\.wid)).union(closing)
         let dim = Set(eng.c.wins().filter { $0.curAlpha < 0.05 && !$0.alphaActive }.map(\.wid))
         return wins.first { $0.on && $0.space == space && $0.w >= 120 && $0.h >= 120 && !skip.contains($0.wid) && !dim.contains($0.wid) }
     }
 
-    /// M+W: окно гаснет на месте (fadeOut), соседи сразу занимают место; потом уводим за экран.
+    /// M+W: fadeOut in place; neighbors fill the space immediately; then move off-screen.
     public func hide(_ area: Rect, _ space: Int, _ wins: [WinInfo], _ wid0: Int? = nil) -> String {
         let w = (wid0 != nil && wid0 != 0) ? wins.first { $0.wid == wid0 } : front(wins, space)
-        guard let w else { return "нет окна" }
+        guard let w else { return "no window" }
         if options.production && (sys.protectedProcess(w.pid) || wmInfo(w.pid, w.wid)?.type != "primary" || sys.processBirth(w.pid) == nil) { return "protected or unverified window" }
         let birth=options.production ? sys.processBirth(w.pid):nil
         let parts=birth?.split(separator:":").compactMap{Int($0)} ?? []
@@ -951,7 +951,7 @@ public final class WM {
         if options.production { cfgSink?.cancel(w.wid) }
         if options.production {revokeSnapshotLease(w.wid);if focusPending?.wid==w.wid{cancelFocusRecovery()}}
         let wid = w.wid
-        if hidden.contains(where: { $0.wid == wid }) { return "уже скрыто \(wid)" }
+        if hidden.contains(where: { $0.wid == wid }) { return "already hidden \(wid)" }
         restoring.remove(wid)
         let s = sp(space)
         let rect = eng.real()[wid] ?? w.rect
@@ -968,7 +968,7 @@ public final class WM {
         let (foC, foD, foOn) = eng.anim("fadeOut")
         let fadeHide = foOn && (!options.production || !windowPolicy(w).noAnimation)
         eng.c.alpha(wid, 0.0, fadeHide ? foC : (options.production ? 16 : foC), fadeHide ? foD : 0.0)
-        apply(area, space, wins)                                  // соседи — в том же кадре, что и затухание
+        apply(area, space, wins)                                  // neighbors move in the same frame as the fade
         eng.c.commit()
         let park = Rect(area.x + area.w + 200, rect.y, rect.w, rect.h)
         if options.production {
@@ -982,21 +982,21 @@ public final class WM {
         }))
         }
         save()
-        return "скрыто \(wid)"
+        return "hidden \(wid)"
     }
 
-    /// M+Shift+W: последнее скрытое — назад в раскладку ТЕКУЩЕГО стола: drift из прежнего места + fadeIn.
-    /// which — выбрать (список wid или фильтр). everything — все сразу и мгновенно (при остановке демона).
+    /// M+Shift+W: restore the last hidden window to the CURRENT desktop: drift from its old position + fadeIn.
+    /// which selects windows (wid list or filter). everything restores all instantly (daemon shutdown).
     public func unhide(_ area: Rect, _ space: Int?, _ wins: [WinInfo]?, everything: Bool = false, which: HiddenPick? = nil) -> String {
         if options.production { return restoreHidden(area,space,wins,everything:everything,which:which) }
-        if hidden.isEmpty { return "скрытых нет" }
+        if hidden.isEmpty { return "no hidden windows" }
         let todo: [Hidden]
         switch which {
         case let .filter(f)?: todo = hidden.filter(f)
         case let .wids(ws)?: todo = hidden.filter { ws.contains($0.wid) }
         case nil: todo = everything ? hidden : [hidden.last!]
         }
-        if todo.isEmpty { return "таких скрытых нет" }
+        if todo.isEmpty { return "no matching hidden windows" }
         let c = eng.c
         var restored: [Int] = []
         for h in todo {
@@ -1005,13 +1005,13 @@ public final class WM {
             if let i = hidden.firstIndex(of: h) { hidden.remove(at: i) }
             let wid = h.wid
             if let space, (h.space.map(String.init) ?? "None") != String(space) {
-                sys.moveToSpace([wid], space)                       // скрыли на другом столе — вернуть сюда (P28)
+                sys.moveToSpace([wid], space)                       // hidden on another desktop: move here (P28)
             }
-            if let r = Rect(h.rect) { c.geom(wid, r, 0, 0, move: true, warp: true) }   // невидимым — на прежнее место
+            if let r = Rect(h.rect) { c.geom(wid, r, 0, 0, move: true, warp: true) }   // restore the old position while invisible
             let w = (wins ?? []).first { $0.wid == wid }
             if everything {
                 c.alpha(wid, 1.0, 0, 0.0)
-            } else if let w, !tileable(w) {                        // плавающее — проявить на месте
+            } else if let w, !tileable(w) {                        // floating window: fade in where it is
                 let (fiC, fiD, fiOn) = eng.anim("fadeIn")
                 c.alpha(wid, 1.0, fiC, fiOn ? fiD : 0.0)
             } else {
@@ -1023,47 +1023,47 @@ public final class WM {
         }
         c.commit()
         save()
-        return "возвращено \(pyList(restored))"
+        return "restored \(pyList(restored))"
     }
 
-    /// Возвращаемое окно так и не попало в раскладку (не тайлится, другой стол) — просто показать.
+    /// A restored window never entered layout (not tileable, other desktop): simply show it.
     func restoreCheck(_ wid: Int) {
         if options.production, let record = restoreChecks.removeValue(forKey: wid), !hiddenRecordLive(record) { restoring.remove(wid); return }
         if restoring.contains(wid) && hidden.allSatisfy({ $0.wid != wid }) {
             restoring.remove(wid)
             eng.c.alpha(wid, 1.0, 0, 0.0)
             eng.c.commit()
-            log("возврат окна \(wid): в раскладку не попало — показываю на месте")
+            log("restoring window \(wid): not in layout; showing in place")
         }
     }
 
-    /// Приложение стало передним не нашим фокусом (Dock, Cmd+Tab, open, уведомление): его скрытые окна
-    /// возвращаются в раскладку текущего стола — как Hyprland при активации окна со special:hidden (P44).
+    /// An app became frontmost through external focus (Dock, Cmd+Tab, open, notification): restore its hidden
+    /// windows to the current desktop, like Hyprland activating a window on special:hidden (P44).
     public func onActivate(_ area: Rect, _ space: Int, _ wins: [WinInfo], _ pid: Int) {
         if options.production { activateOnCurrentSpace(area, space, wins, pid); return }
         if hidden.isEmpty { return }
         for i in hidden.indices where hidden[i].pid == nil { hidden[i].pid = sys.winPidLevel(hidden[i].wid).pid }
         let mine = hidden.filter { $0.pid == pid }.map(\.wid)
         if mine.isEmpty { return }
-        // Клик по видимому окну того же приложения — не повод возвращать скрытое. Возвращаем, если у
-        // приложения на этом столе нет видимых окон (Dock/Cmd+Tab/open) или macOS вывел вперёд именно скрытое.
+        // Clicking a visible window from the same app does not restore hidden windows. Restore if the app
+        // has no visible windows here (Dock/Cmd+Tab/open), or macOS brought the hidden window itself forward.
         let hid = Set(hidden.map(\.wid))
         let own = wins.filter { $0.pid == pid && $0.on && $0.w >= 120 && $0.h >= 120 }
         let visible = own.filter { !hid.contains($0.wid) && $0.space == space }
         if visible.isEmpty || (!own.isEmpty && hid.contains(own[0].wid)) {
-            log("приложение \(pid) активировано извне — возвращаю скрытые: \(unhide(area, space, wins, which: .wids(mine)))")
+            log("app \(pid) activated externally; restoring hidden windows: \(unhide(area, space, wins, which: .wids(mine)))")
         }
     }
 
-    /// Страховка (P44): все скрытые — назад (команда rescue; при старте демона скрытые остаются скрытыми —
-    /// keepHidden); окна, оставшиеся невидимыми или за экраном без причины, — показать и вернуть на экран.
+    /// Safety net (P44): restore all hidden windows (rescue command; daemon startup keeps them hidden via
+    /// keepHidden); show unexplained invisible/off-screen windows and bring them back on-screen.
     public func rescue(_ area: Rect, _ space: Int, _ wins: [WinInfo], keepHidden: Bool = false) -> String {
         var out: [String] = []
         let alive = Set(wins.map(\.wid))
         if !options.production {hidden=hidden.filter{alive.contains($0.wid)}} // Unknown native metadata cannot revoke a ledger row.
         if !hidden.isEmpty && !keepHidden {
             out.append(unhide(area, space, wins, which: .filter { _ in true }))
-        } else if !hidden.isEmpty {                                 // скрытые должны быть скрыты: α=0 и за экраном
+        } else if !hidden.isEmpty {                                 // hidden windows must remain hidden: alpha=0 and off-screen
             let c = eng.c
             for h in hidden {
                 if options.production && !hiddenRecordLive(h) { continue }
@@ -1079,7 +1079,7 @@ public final class WM {
                         c.alpha(h.wid,0,0,0)
                         if let r {c.geom(h.wid,Rect(area.x+area.w+200,r.y,r.w,r.h),0,0,move:true,warp:true)}
                     }
-                    out.append("спрятано снова \(h.wid)")
+                    out.append("hidden again \(h.wid)")
                 }
             }
             c.commit()
@@ -1094,7 +1094,7 @@ public final class WM {
             let r = sys.winBounds(wid) ?? w.rect
             let off = r.x >= area.x + area.w - 20 || r.x + r.w <= area.x + 20 || r.y >= area.y + area.h - 20
             if (a == nil || a! >= 0.999) && !off { continue }
-            if !restoring.contains(wid) && !tileable(w) { continue }   // служебные невидимые окна приложений не трогаем
+            if !restoring.contains(wid) && !tileable(w) { continue }   // leave invisible utility windows belonging to apps alone
             if off && !restoring.contains(wid) {
                 c.geom(wid, Rect(area.x + 40, area.y + 40, min(r.w, area.w - 80), min(r.h, area.h - 80)), 0, 0, move: true, warp: true)
             }
@@ -1103,13 +1103,13 @@ public final class WM {
             fixed.append(wid)
         }
         c.commit()
-        if !fixed.isEmpty { out.append("показаны \(pyList(fixed))") }
+        if !fixed.isEmpty { out.append("shown \(pyList(fixed))") }
         save()
-        return out.isEmpty ? "всё видно" : out.joined(separator: "; ")
+        return out.isEmpty ? "all visible" : out.joined(separator: "; ")
     }
 
-    /// Движок: покоящееся тайловое окно ушло с цели. Плитка главнее: вернуть тем же drift, но не больше
-    /// 3 раз за 10 с на окно. Перетаскивание мышью — не сюда (realign после отпускания).
+    /// Engine: a stationary tiled window drifted off target. Tiling takes priority: restore with the same drift,
+    /// at most 3 times per window per 10 s. Mouse drags are handled by realign after release.
     public func onMoved(_ wid: Int, _ a: Rect) -> Bool {
         guard !sys.mouseDown(),let destination=target[wid],!closing.contains(wid) else {return false}
         if options.production {
@@ -1123,12 +1123,12 @@ public final class WM {
         let hist = (movedT[wid] ?? []).filter { now - $0 < 10 }
         if hist.count >= 3 { return false }
         movedT[wid] = hist + [now]
-        log("окно \(wid) ушло с плитки \(target[wid]!) -> \(pyIntTuple(a.arr)) — возвращаю")
+        log("window \(wid) left tile \(target[wid]!) -> \(pyIntTuple(a.arr)) — restoring")
         target[wid] = nil
         return true
     }
 
-    /// Страж: окно в слоте движка стоит с α<1 без анимации и без причины дольше 1 с — вернуть α=1.
+    /// Watchdog: a slotted window has unexplained alpha<1 with no animation for over 1 s; restore alpha=1.
     public func alphaGuard(_ wins: [WinInfo]) {
         if options.production { if let last { refreshWindowOpacity(last.space,wins) }; return }
         let now = sys.now()
@@ -1150,11 +1150,11 @@ public final class WM {
         }
         if !fix.isEmpty {
             c.commit()
-            log("страж: α=1 окнам \(pyList(fix)) (оставались невидимыми без причины)")
+            log("watchdog: alpha=1 for windows \(pyList(fix)) (remained invisible without reason)")
         }
     }
 
-    /// resizeactive Hyprland: двигается разделитель ближайшего сплита по оси на dx/dy pt.
+    /// Hyprland resizeactive: move the nearest split divider on an axis by dx/dy pt.
     func resizeActive(_ s: SpaceState, _ area: Rect, _ cur: Int?, _ dx: Double, _ dy: Double) {
         var path: [(Node, Rect)] = []
         func walk(_ n: Node?, _ box: Rect) -> Bool {
@@ -1167,7 +1167,7 @@ public final class WM {
             return false
         }
         _ = walk(s.tree, area)
-        // max/min Python: при NaN возвращается первый аргумент
+        // Python max/min returns the first argument for NaN
         func pmax(_ a: Double, _ b: Double) -> Double { b > a ? b : a }
         func pmin(_ a: Double, _ b: Double) -> Double { b < a ? b : a }
         for (d, split) in [(dx, "v"), (dy, "h")] {
@@ -1179,22 +1179,22 @@ public final class WM {
         }
     }
 
-    /// exec из дотфайла. «Ghostty --new» — новое окно терминала (пункт меню New Window через AX);
-    /// «-e prog» — терминал с программой; «spotlight» — лаунчер.
+    /// exec from dotfiles. Ghostty --new opens a terminal window (New Window menu item via AX);
+    /// -e prog opens a terminal running a program; spotlight opens the launcher.
     func execApp(_ args: [String]) -> String {
-        guard let app = args.first else { return "нечего запускать" }
+        guard let app = args.first else { return "nothing to launch" }
         let rest = Array(args.dropFirst())
         if app == "spotlight" {
             sys.spotlight()
-            return "лаунчер"
+            return "launcher"
         }
         if rest.first == "--new" {
-            if let pid = sys.pgrep(app.lowercased()) {           // обход меню AX — не в главном цикле (S5.3)
+            if let pid = sys.pgrep(app.lowercased()) {           // AX menu traversal runs outside the main loop (S5.3)
                 let sys = self.sys
                 sys.background {
                     if sys.axMenuPress(pid, "New Window") != 0 { sys.spawn(["open", "-a", app]) }
                 }
-                return "новое окно \(app)"
+                return "new window \(app)"
             }
             sys.spawn(["open", "-a", app])
         } else if rest.first == "-e" {
@@ -1202,11 +1202,11 @@ public final class WM {
         } else {
             sys.spawn(["open", "-a", app])
         }
-        return "запуск \(args.joined(separator: " "))"
+        return "launch \(args.joined(separator: " "))"
     }
 
-    /// Новое окно, которое пойдёт в раскладку, прячется ДО первого показа (альфа 0), чтобы macOS не показал
-    /// его на «своём» месте; дальше sync вставляет его в дерево, и оно вырастает popin в плитке.
+    /// Hide a new tileable window BEFORE its first display (alpha 0), so macOS does not show it
+    /// at its own position; sync then inserts it into the tree and it grows into its tile via popin.
     public func hideNewbies(_ space: Int, _ wins: [WinInfo]) {
         if options.production && cfg.raw["runtime"]?["prehide"]?.truthy != true {
             let live = Set(wins.filter(\.on).map(\.wid))
@@ -1223,7 +1223,7 @@ public final class WM {
             for n in Dwindle.leaves(sp.tree) { tiledApps.insert(owner[n.wid!]); tiledPids.insert(pids[n.wid!]) }
         }
         func tab(_ pid: Int?, _ wid: Int) -> Bool {
-            // вкладка: новое окно встаёт ровно на рамку тайлового окна того же приложения — его не прятать
+            // tab: new window exactly matches a tiled window from the same app; do not hide it
             guard let r = sys.winBounds(wid) else { return false }
             return target.contains { pids[$0.key] == pid && $0.value.maxDiff(r) <= TOL }
         }
@@ -1234,7 +1234,7 @@ public final class WM {
                 continue
             }
             if w == nil || w!.w < 120 || w!.h < 120 {
-                // окна ещё нет в списке: спросить сервер напрямую — обычный уровень и тайловое приложение
+                // not listed yet: ask the server directly for normal level and tileable app
                 let (pid, lv) = sys.winPidLevel(wid)
                 if lv == 0 && tiledPids.contains(pid) && !optimistic.contains(wid) && !tab(pid, wid) {
                     optimistic[wid] = sys.now()
@@ -1257,20 +1257,20 @@ public final class WM {
                 touched = true
                 newbies[wid] = nil
                 optimistic[wid] = nil
-                log(String(format: "новое окно %@ %d спрятано до popin (через %.0f мс после создания)", w1.owner, wid, (sys.now() - t) * 1000))
+                log(String(format: "new window %@ %d hidden before popin (%.0f ms after creation)", w1.owner, wid, (sys.now() - t) * 1000))
             } else if info[w1.pid]?[wid] != nil {
-                newbies[wid] = nil                                  // точно не тайлится
+                newbies[wid] = nil                                  // definitely not tileable
                 if optimistic.removeValue(forKey: wid) != nil {
                     c.alpha(wid, 1.0, 0, 0.0)
                     touched = true
                 }
             } else if tiledApps.contains(w1.owner) && !optimistic.contains(wid) {
-                optimistic[wid] = sys.now()                         // приложение тайлится — спрятать сразу
+                optimistic[wid] = sys.now()                         // tileable app: hide immediately
                 c.alpha(wid, 0.0, 0, 0.0, frm: 0.0)
                 touched = true
             }
         }
-        for (wid, t) in optimistic {                               // так и не стало тайловым — вернуть видимость
+        for (wid, t) in optimistic {                               // never became tileable: restore visibility
             if !newbies.contains(wid) && sys.now() - t > 1.5 {
                 optimistic[wid] = nil
                 c.alpha(wid, 1.0, 0, 0.0)
@@ -1280,7 +1280,7 @@ public final class WM {
         if touched { c.commit() }
     }
 
-    /// input:follow_mouse = 1: фокус у окна под курсором, как только курсор на него зашёл.
+    /// input:follow_mouse = 1: focus the window as soon as the cursor enters it.
     public func followMouse(_ space: Int, _ wins: [WinInfo]) {
         var nativeNoKey=false
         var nativeKey:Int?
@@ -1315,8 +1315,8 @@ public final class WM {
         }
         let frontW = wins.first { $0.on && $0.space == space && $0.w >= 120 && $0.h >= 120 }
         if ProcessInfo.processInfo.environment["HYPRWM_DEBUG"].map({ !$0.isEmpty }) == true {
-            log("курсор", "(\(pyFloat(p.0)), \(pyFloat(p.1)))", "верх", top.map { String($0.wid) } ?? "None",
-                "перед", frontW.map { String($0.wid) } ?? "None", "тайлы", tiled.sorted())
+            log("cursor", "(\(pyFloat(p.0)), \(pyFloat(p.1)))", "top", top.map { String($0.wid) } ?? "None",
+                "front", frontW.map { String($0.wid) } ?? "None", "tiles", tiled.sorted())
         }
         guard let top, tiled.contains(top.wid) else {
             // A move can arrive before its receiver enters the fresh census.
@@ -1336,17 +1336,17 @@ public final class WM {
             }
             return
         }
-        // без AXRaise z-порядок не меняется, поэтому «уже в фокусе» — по нашей памяти
+        // Without AXRaise z-order stays unchanged, so use our own memory for already-focused state.
         if !nativeNoKey,fwant == top.wid && (frontPid == top.pid || sys.now() - ft < 0.3) { return }
         if !nativeNoKey,fwant == nil, let f = frontW, f.wid == top.wid { return }
         fwant = top.wid; ft = sys.now()
         ownFocus = (top.pid, sys.now())
-        let r = sys.axFocus(top.pid, top.wid, raise: false)       // без AXRaise: Hyprland не меняет z тайловых (Q3)
+        let r = sys.axFocus(top.pid, top.wid, raise: false)       // without AXRaise: Hyprland preserves tiled z-order (Q3)
         s.focus = top.wid
-        log("фокус за курсором -> \(top.owner) \(top.wid) (\(r))")
+        log("focus follows cursor -> \(top.owner) \(top.wid) (\(r))")
     }
 
-    /// После отпускания мыши: окно, утащенное из своей плитки, вернуть (как Hyprland после drag).
+    /// After mouse release, restore a window dragged away from its tile (like Hyprland after drag).
     public func realign(_ area: Rect, _ space: Int, _ wins: [WinInfo]) -> Bool {
         let s = sp(space)
         let rects = layout(area, s)
@@ -1364,8 +1364,8 @@ public final class WM {
         return moved
     }
 
-    // ── события движка ───────────────────────────────────────────────────
-    /// Разбор кольца событий (из run() в Python). -> было ли EV_MOVED, требующее ретаргета.
+    // Engine events
+    /// Drain the event ring (Python run()). Returns whether EV_MOVED requires retargeting.
     public func handleEvents(_ evs: [EngEvent]) -> Bool {
         var drifted = false
         for ev in evs {
@@ -1386,7 +1386,7 @@ public final class WM {
                 goneT[wid] = sys.now()
                 target[wid] = nil
                 deco.drop(wid)
-                sys.axForget(wid)                                 // AX-кэш не копит мёртвые окна (P7)
+                sys.axForget(wid)                                 // AX cache does not accumulate dead windows (P7)
                 dimSince[wid] = nil
                 for pid in Array(info.keys) { info[pid]![wid] = nil }
                 miss[wid] = nil
@@ -1396,7 +1396,7 @@ public final class WM {
         return drifted
     }
 
-    /// Отложенные действия, срок которых настал.
+    /// Run due deferred actions.
     public func runDue() {
         let now = sys.now()
         let due = later.filter { $0.0 <= now }.map(\.1)
@@ -1404,13 +1404,13 @@ public final class WM {
         for f in due { f() }
     }
 
-    /// Ближайший срок отложенного действия (для таймера главной очереди).
+    /// Next deferred deadline (for the main-queue timer).
     public var nextDue: Double? { later.map(\.0).min() }
 
-    // ── такт главного цикла (тело while True в WM.run) ──────────────────
-    /// socketReady — по сокету пришла команда (в Python: select вернул сокет).
+    // Main-loop tick (while True body in WM.run)
+    /// socketReady: a command arrived on the socket (Python: select returned the socket).
     public func tick(socketReady r: Bool) {
-        if (r || options.production), let l = last { server?.drain { try self.command($0, l.area, l.space, l.wins) } }   // команды — сразу, до снимка
+        if (r || options.production), let l = last { server?.drain { try self.command($0, l.area, l.space, l.wins) } }   // commands run immediately, before the snapshot
         if options.production {pruneDepartedHidden()}
         if enabled {overviewRefresh?()}
         let overviewActive=overviewFrozen?() == true
@@ -1426,21 +1426,21 @@ public final class WM {
         workspaceWasLocked=false
         let snapshotExpired=options.production && expireSnapshotJobs()
         runDue()
-        if sys.now() - lastEng > 2.0 {                             // WindowServer перезапускался?
+        if sys.now() - lastEng > 2.0 {                             // Did WindowServer restart?
             lastEng = sys.now()
             if !eng.alive() {
                 target.removeAll()
                 snapshotConfigures.removeAll();snapshotReceipts.removeAll();clearSnapshotLeases()
                 if options.production {cfgSink?.cancelAll();workspaceCancel?()}
-                do { try eng.ensure(startup: false) } catch { log("движок: \(error)") }
+                do { try eng.ensure(startup: false) } catch { log("engine: \(error)") }
             }
             let e = eng.c.stats.errors
             if e != errorsSeen {
                 errorsSeen = e
-                log("движок: ошибок \(e) (слотов занято \(eng.c.wins().count) из 64)")
+                log("engine: errors \(e) (slots used \(eng.c.wins().count) of 64)")
             }
         }
-        // Полный снимок окон — только когда что-то могло измениться (Q2); иначе сверка раз в 250 мс.
+        // Full window snapshots only when something may have changed (Q2); otherwise reconcile every 250 ms.
         let evs = eng.c.events()
         let drifted = handleEvents(evs) || snapshotExpired
         let fp = sys.frontPid()
@@ -1452,7 +1452,7 @@ public final class WM {
         var freshFocusSnapshot:Snapshot?
         if need {
             let d: Snapshot
-            do { d = try sys.snapshot() } catch { admission?.suspend(); log("снимок окон: \(error)"); return }
+            do { d = try sys.snapshot() } catch { admission?.suspend(); log("window snapshot: \(error)"); return }
             workspaceSampleSequence+=1
             var witness=d
             witness.nativeMetadata=d.nativeMetadata?.setting("sample_sequence",.int(workspaceSampleSequence))
@@ -1475,9 +1475,9 @@ public final class WM {
                     dragSession = nil; frontPid = fp; lastSp = spNow; lastSnap = sys.now()
                     last = (d.area,d.space,d.windows); return
                 }
-            }                               // стол переключается посреди снимка
+            }                               // desktop switched during the snapshot
             space = d.space; area = d.area
-            wins = d.windows.filter { $0.owner != "hyprdeco" }     // без подложек
+            wins = d.windows.filter { $0.owner != "hyprdeco" }     // exclude backdrops
             lastSnap = sys.now(); lastSp = spNow
             snaps += 1
             if r && last == nil { server?.drain { try self.command($0, area, space, wins) } }
@@ -1495,17 +1495,17 @@ public final class WM {
                 cancelFocusRecovery()
                 if launcherIntent==nil {spaceFocusRetry=SpaceFocusRetry(space:space,started:sys.now(),deadline:sys.now()+1.5)}
             }
-            log("рабочий стол", space)
+            log("desktop", space)
             lastSpace = space
         }
         if options.production,let freshFocusSnapshot {restoreSpaceFocus(freshFocusSnapshot)}
         if options.production,let freshFocusSnapshot {pollCloseFocusRetry(freshFocusSnapshot)}
-        if !rescued {                                             // после (пере)запуска: невидимые без причины — показать
+        if !rescued {                                             // after (re)start: show unexplained invisible windows
             rescued = true
-            log("старт: \(rescue(area, space, wins, keepHidden: true))")
+            log("startup: \(rescue(area, space, wins, keepHidden: true))")
         }
         let top = wins.map(\.wid).max() ?? 0
-        // номера новых окон сканирует движок и сам ведёт wid_max; демон только будит застрявший скан (S5.5)
+        // The engine scans new window IDs and maintains wid_max; the daemon only wakes a stuck scan (S5.5).
         if top > eng.c.widMax + 24 || eng.c.widMax == 0 { eng.c.widMax = top }
         if let fp, fp != 0, fp != frontPid {
             let prev = frontPid
@@ -1547,9 +1547,9 @@ public final class WM {
         }
         var (changed, opened) = sync(area, space, wins)
         changed = changed || drifted || overviewRetilePending
-        let cf = configured()                                     // окно не приняло размер — ретаргет сразу
+        let cf = configured()                                     // window rejected size: retarget immediately
         changed = changed || cf
-        if wasDown && !md {                                       // отпустили кнопку: окно могли утащить мышью
+        if wasDown && !md {                                       // button released: a window may have been dragged
             let interaction = options.production && endInteraction(area, space, wins)
             let ra = interaction || realign(area, space, wins)
             changed = changed || ra

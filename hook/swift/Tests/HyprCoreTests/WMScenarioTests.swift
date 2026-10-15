@@ -1,8 +1,8 @@
-// Дифференциальный тест демона: 160 случайных сценариев по 60 шагов (sync с вкладками, команды,
-// новые/закрытые окна, hide_newbies, follow_mouse, отложенные действия, ответы configure, страж,
-// realign, on_activate, rescue), прогнанных эталонным классом WM из REFERENCE_hyprwm.py с подделками.
-// Swift-порт с такими же подделками должен на каждом шаге дать: тот же ответ, ту же пачку команд в канал,
-// те же задания configure, те же системные вызовы (ax_tileable/ax_focus/ws_close/…) и то же состояние.
+// Daemon differential test: 160 random 60-step scenarios (sync with tabs, commands,
+// new/closed windows, hide_newbies, follow_mouse, deferred actions, configure responses, watchdog,
+// realign, on_activate, rescue), run through reference WM in REFERENCE_hyprwm.py with fakes.
+// The Swift port with matching fakes must produce the same response, channel command batch,
+// configure jobs, system calls (ax_tileable/ax_focus/ws_close/…), and state at each step.
 @testable import HyprCore
 import XCTest
 
@@ -68,7 +68,7 @@ final class FakeWorld: SysAPI {
 
     func now() -> Double { t }
     func sleep(_ s: Double) {}
-    func snapshot() throws -> Snapshot {if let nativeSnapshot {return nativeSnapshot};throw CmdError("нет снимка в тесте") }
+    func snapshot() throws -> Snapshot {if let nativeSnapshot {return nativeSnapshot};throw CmdError("no test snapshot") }
     func winPidLevel(_ wid: Int) -> (pid: Int?, level: Int?) { pidlevel[wid].map { ($0.0, $0.1) } ?? (nil, nil) }
     func frontPid() -> Int? { front }
     func winBounds(_ wid: Int) -> Rect? { bounds[wid] }
@@ -181,7 +181,7 @@ final class JobRecorder: ConfigureSink {
     }
 }
 
-/// Мир, как его описал генератор, — в подделки.
+/// Load the generator world into the fakes.
 func install(_ w: JSON, _ sys: FakeWorld, _ ch: FakeChannel) -> (Rect, Int, [WinInfo]) {
     sys.t = w["now"]!.double!
     let m = w["mouse"]!.array!
@@ -208,7 +208,7 @@ func install(_ w: JSON, _ sys: FakeWorld, _ ch: FakeChannel) -> (Rect, Int, [Win
     return (Rect.j(w["area"])!, w["space"]!.int!, w["wins"]!.array!.map(WinInfo.from))
 }
 
-/// state(wm) из генератора.
+/// state(wm) from the generator.
 func stateJSON(_ wm: WM) -> JSON {
     func ints(_ a: [Int]) -> JSON { .array(a.map { .int($0) }) }
     func opt(_ v: Int?) -> JSON { v.map { .int($0) } ?? .null }
@@ -282,29 +282,29 @@ final class WMScenarioTests: XCTestCase {
                     res = .bool(m)
                 case "activate": wm.onActivate(area, space, wins, op["pid"]!.int!)
                 case "rescue": res = .string(wm.rescue(area, space, wins, keepHidden: op["keep_hidden"]!.truthy))
-                default: XCTFail("операция \(kind)")
+                default: XCTFail("operation \(kind)")
                 }
-                let ctx = "сценарий \(seed) шаг \(i) \(op.dumps(ensureASCII: false))"
+                let ctx = "scenario \(seed) step \(i) \(op.dumps(ensureASCII: false))"
                 var want = st["res"]!
                 if kind == "cmd", let s = res.string, s.hasPrefix("{"), let w = want.string {
-                    res = try JSON.parse(s)                       // status: сравнить как JSON
+                    res = try JSON.parse(s)                       // status: compare as JSON
                     want = try JSON.parse(w)
                 }
-                if let d = jsonDiff(res, want) { XCTFail("\(ctx): ответ \(d)"); return }
-                if let d = jsonDiff(.array(eng.ch.ops), st["chan"]!) { XCTFail("\(ctx): канал \(d)"); return }
+                if let d = jsonDiff(res, want) { XCTFail("\(ctx): response \(d)"); return }
+                if let d = jsonDiff(.array(eng.ch.ops), st["chan"]!) { XCTFail("\(ctx): channel \(d)"); return }
                 if let d = jsonDiff(.array(rec.jobs), st["jobs"]!) { XCTFail("\(ctx): configure \(d)"); return }
-                if let d = jsonDiff(.array(sys.calls), st["calls"]!) { XCTFail("\(ctx): вызовы \(d)"); return }
-                if let d = jsonDiff(stateJSON(wm), st["state"]!) { XCTFail("\(ctx): состояние \(d)"); return }
+                if let d = jsonDiff(.array(sys.calls), st["calls"]!) { XCTFail("\(ctx): calls \(d)"); return }
+                if let d = jsonDiff(stateJSON(wm), st["state"]!) { XCTFail("\(ctx): state \(d)"); return }
                 stepsChecked += 1
             }
-            // файлы состояния — байт в байт как у Python (json.dump(indent=1) / json.dump())
+            // state files match Python byte for byte (json.dump(indent=1) / json.dump())
             let saved = sc["saved"]!
             let gotState = try? String(contentsOfFile: tmp.path + "/state.json", encoding: .utf8)
             let gotMins = try? String(contentsOfFile: tmp.path + "/mins.json", encoding: .utf8)
-            XCTAssertEqual(gotState, saved["state"]!.string, "сценарий \(seed): hyprwm.state.json")
-            XCTAssertEqual(gotMins, saved["mins"]!.string, "сценарий \(seed): minsize_app.json")
+            XCTAssertEqual(gotState, saved["state"]!.string, "scenario \(seed): hyprwm.state.json")
+            XCTAssertEqual(gotMins, saved["mins"]!.string, "scenario \(seed): minsize_app.json")
         }
-        print("сверено шагов: \(stepsChecked), видов команд: \(cmds.sorted())")
+        print("steps checked: \(stepsChecked), command types: \(cmds.sorted())")
         XCTAssertGreaterThan(stepsChecked, 5000)
     }
 }

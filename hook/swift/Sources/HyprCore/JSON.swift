@@ -1,6 +1,6 @@
-// JSON с сохранением порядка ключей и различием int/float — чтобы файлы состояния
-// (hyprwm.state.json, minsize_app.json) и ответ status были в том же виде, что пишет Python
-// (json.dump(indent=1) / json.dumps(ensure_ascii=False)), а Python-демон читал их без отличий.
+// JSON preserving key order and int/float distinctions so state files
+// (hyprwm.state.json, minsize_app.json) and status responses match Python output
+// (json.dump(indent=1) / json.dumps(ensure_ascii=False)) and the Python daemon reads them identically.
 import Foundation
 
 public enum JSON: Equatable {
@@ -18,7 +18,7 @@ public enum JSON: Equatable {
         case let (.bool(a), .bool(b)): return a == b
         case let (.int(a), .int(b)): return a == b
         case let (.double(a), .double(b)): return a == b
-        case let (.int(a), .double(b)), let (.double(b), .int(a)): return Double(a) == b   // как в Python: 1 == 1.0
+        case let (.int(a), .double(b)), let (.double(b), .int(a)): return Double(a) == b   // As in Python: 1 == 1.0
         case let (.string(a), .string(b)): return a == b
         case let (.array(a), .array(b)): return a == b
         case let (.object(a), .object(b)):
@@ -29,7 +29,7 @@ public enum JSON: Equatable {
         }
     }
 
-    // ── доступ ──────────────────────────────────────────────────────────
+    // Access
     public subscript(key: String) -> JSON? {
         if case let .object(kv) = self { return kv.first(where: { $0.0 == key })?.1 }
         return nil
@@ -44,7 +44,7 @@ public enum JSON: Equatable {
     public var array: [JSON]? { if case let .array(a) = self { return a }; return nil }
     public var object: [(String, JSON)]? { if case let .object(o) = self { return o }; return nil }
     public var isNull: Bool { if case .null = self { return true }; return false }
-    /// Истинность по правилам Python (bool(x)).
+    /// Truthiness by Python rules (bool(x)).
     public var truthy: Bool {
         switch self {
         case .null: return false
@@ -57,7 +57,7 @@ public enum JSON: Equatable {
         }
     }
 
-    // ── разбор ──────────────────────────────────────────────────────────
+    // Parsing
     public struct ParseError: Error, CustomStringConvertible {
         public let description: String
     }
@@ -70,7 +70,7 @@ public enum JSON: Equatable {
         p.ws()
         let v = try p.value()
         p.ws()
-        if p.i != b.count { throw ParseError(description: "лишние символы на позиции \(p.i)") }
+        if p.i != b.count { throw ParseError(description: "trailing characters at position \(p.i)") }
         return v
     }
 
@@ -78,15 +78,15 @@ public enum JSON: Equatable {
         let b: [UInt8]
         var i = 0
         mutating func ws() { while i < b.count, [0x20, 0x09, 0x0a, 0x0d].contains(b[i]) { i += 1 } }
-        func err(_ m: String) -> ParseError { ParseError(description: "JSON: \(m) на позиции \(i)") }
+        func err(_ m: String) -> ParseError { ParseError(description: "JSON: \(m) at position \(i)") }
         mutating func lit(_ s: String, _ v: JSON) throws -> JSON {
             let u = Array(s.utf8)
-            guard i + u.count <= b.count, Array(b[i..<i + u.count]) == u else { throw err("ожидалось \(s)") }
+            guard i + u.count <= b.count, Array(b[i..<i + u.count]) == u else { throw err("expected \(s)") }
             i += u.count
             return v
         }
         mutating func value() throws -> JSON {
-            guard i < b.count else { throw err("конец данных") }
+            guard i < b.count else { throw err("end of input") }
             switch b[i] {
             case UInt8(ascii: "{"):
                 i += 1; ws()
@@ -94,18 +94,18 @@ public enum JSON: Equatable {
                 if i < b.count, b[i] == UInt8(ascii: "}") { i += 1; return .object(kv) }
                 while true {
                     ws()
-                    guard i < b.count, b[i] == UInt8(ascii: "\"") else { throw err("ожидался ключ") }
+                    guard i < b.count, b[i] == UInt8(ascii: "\"") else { throw err("expected key") }
                     let k = try str()
                     ws()
-                    guard i < b.count, b[i] == UInt8(ascii: ":") else { throw err("ожидалось :") }
+                    guard i < b.count, b[i] == UInt8(ascii: ":") else { throw err("expected :") }
                     i += 1; ws()
                     let v = try value()
                     if let j = kv.firstIndex(where: { $0.0 == k }) { kv[j].1 = v } else { kv.append((k, v)) }
                     ws()
-                    guard i < b.count else { throw err("конец объекта") }
+                    guard i < b.count else { throw err("end of object") }
                     if b[i] == UInt8(ascii: ",") { i += 1; continue }
                     if b[i] == UInt8(ascii: "}") { i += 1; return .object(kv) }
-                    throw err("ожидалось , или }")
+                    throw err("expected , or }")
                 }
             case UInt8(ascii: "["):
                 i += 1; ws()
@@ -115,10 +115,10 @@ public enum JSON: Equatable {
                     ws()
                     a.append(try value())
                     ws()
-                    guard i < b.count else { throw err("конец массива") }
+                    guard i < b.count else { throw err("end of array") }
                     if b[i] == UInt8(ascii: ",") { i += 1; continue }
                     if b[i] == UInt8(ascii: "]") { i += 1; return .array(a) }
-                    throw err("ожидалось , или ]")
+                    throw err("expected , or ]")
                 }
             case UInt8(ascii: "\""): return .string(try str())
             case UInt8(ascii: "t"): return try lit("true", .bool(true))
@@ -146,11 +146,11 @@ public enum JSON: Equatable {
             let t = String(decoding: b[s..<i], as: UTF8.self)
             if !isFloat, let v = Int(t) { return .int(v) }
             if let d = Double(t) { return .double(d) }
-            throw err("неверное число \(t)")
+            throw err("invalid number \(t)")
         }
         mutating func hex4() throws -> UInt32 {
             guard i + 4 <= b.count, let v = UInt32(String(decoding: b[i..<i + 4], as: UTF8.self), radix: 16)
-            else { throw err("неверный \\u") }
+            else { throw err("invalid \\u") }
             i += 4
             return v
         }
@@ -158,12 +158,12 @@ public enum JSON: Equatable {
             i += 1
             var out = [UInt8]()
             while true {
-                guard i < b.count else { throw err("незакрытая строка") }
+                guard i < b.count else { throw err("unterminated string") }
                 let c = b[i]
                 if c == UInt8(ascii: "\"") { i += 1; break }
                 if c != UInt8(ascii: "\\") { out.append(c); i += 1; continue }
                 i += 1
-                guard i < b.count else { throw err("обрыв escape") }
+                guard i < b.count else { throw err("truncated escape") }
                 let e = b[i]; i += 1
                 switch e {
                 case UInt8(ascii: "n"): out.append(0x0a)
@@ -187,8 +187,8 @@ public enum JSON: Equatable {
         }
     }
 
-    // ── вывод (как json.dumps в Python) ─────────────────────────────────
-    /// indent == nil — в одну строку с разделителями ", " и ": "; indent == n — как json.dump(indent=n).
+    // Output (like Python json.dumps)
+    /// indent == nil: one line with ", " and ": " separators; indent == n: like json.dump(indent=n).
     public func dumps(indent: Int? = nil, ensureASCII: Bool = true) -> String {
         var o = ""
         write(&o, indent: indent, level: 0, ascii: ensureASCII)
@@ -254,12 +254,12 @@ public enum JSON: Equatable {
     }
 }
 
-/// repr(float) в Python: кратчайшее представление, целые — с «.0».
+/// Python repr(float): shortest representation, with ".0" for integral values.
 public func pyFloat(_ d: Double) -> String {
     if d.isNaN { return "NaN" }
     if d.isInfinite { return d > 0 ? "Infinity" : "-Infinity" }
     var s = "\(d)"
-    if let e = s.firstIndex(of: "e") {                     // Swift: 1e-05 / 1e+16 — как Python
+    if let e = s.firstIndex(of: "e") {                     // Swift: 1e-05 / 1e+16, matching Python
         let mant = s[..<e], ex = s[s.index(after: e)...]
         var exs = String(ex)
         let sign = exs.hasPrefix("-") ? "-" : "+"
@@ -272,7 +272,7 @@ public func pyFloat(_ d: Double) -> String {
     return s
 }
 
-/// str(x) для числа так, как его напечатал бы Python (int — без точки).
+/// Format a number like Python str(x) (no decimal point for int).
 public func pyNum(_ j: JSON) -> String {
     switch j {
     case let .int(i): return String(i)

@@ -1,6 +1,6 @@
-// Такт главного цикла (тело while True из WM.run) на подделках: гейт снимка (Q2), команда до первого
-// снимка, ответ configure -> ретаргет, EV_GONE, стартовый rescue. Эталона Python для run() нет (это
-// бесконечный цикл с select) — поведение сверяется с кодом REFERENCE_hyprwm.py вручную, здесь — инварианты.
+// Main-loop tick (WM.run while True body) with fakes: snapshot gate (Q2), command before the first
+// snapshot, configure response -> retarget, EV_GONE, startup rescue. No Python run() oracle exists (it is
+// an infinite select loop); behavior is checked manually against REFERENCE_hyprwm.py, with invariants here.
 @testable import HyprCore
 import XCTest
 
@@ -55,7 +55,7 @@ final class TickTests: XCTestCase {
         let path = tmp + "/ctl"
         wm.server = try CommandServer(path: path)
 
-        // команда пришла до первого снимка: обрабатывается после снимка, в том же такте
+        // command arrived before the first snapshot: process after snapshot in the same tick
         let cl = SocketTests().client(path, "status\n")
         wm.tick(socketReady: true)
         let reply = SocketTests().reply(cl)
@@ -63,32 +63,32 @@ final class TickTests: XCTestCase {
         XCTAssertEqual(st["space"]?.int, 3)
         XCTAssertEqual(sys.snapCalls, 1)
         XCTAssertEqual(wm.snaps, 1)
-        // окна в раскладке, подложка hyprdeco отфильтрована, пачка ушла в движок, configure обоим
+        // windows tiled, hyprdeco backdrop filtered, batch sent to engine, configure both windows
         XCTAssertEqual(Set(wm.target.keys), [11, 22])
         XCTAssertEqual(Set(rec.jobs.map { $0.array![0].int! }), [11, 22])
         XCTAssertTrue(eng.ch.ops.contains { $0["op"]?.string == "commit" })
-        XCTAssertEqual(eng.ch.widMax, 22)        // как в Python: по окнам без подложек
+        XCTAssertEqual(eng.ch.widMax, 22)        // as in Python: windows excluding backdrops
         XCTAssertTrue(FileManager.default.fileExists(atPath: tmp + "/s.json"))
 
-        // ничего не изменилось и не прошло 250 мс — снимка нет (Q2)
+        // nothing changed and 250 ms has not elapsed: no snapshot (Q2)
         sys.inner.t += 0.016
         wm.tick(socketReady: false)
         XCTAssertEqual(sys.snapCalls, 1)
         sys.inner.t += 0.3
         wm.tick(socketReady: false)
-        XCTAssertEqual(sys.snapCalls, 2, "сверка раз в 250 мс")
+        XCTAssertEqual(sys.snapCalls, 2, "reconcile every 250 ms")
 
-        // ответ configure: Telegram не сжался — минимум выучен, ретаргет в этом же такте
+        // configure response: Telegram did not shrink; learn minimum and retarget in this tick
         let to = wm.target[22]!
         rec.jobs = []; eng.ch.ops = []
         wm.cfgQ.append(CfgResult(wid: 22, owner: "Telegram", to: to, got: Rect(to.x, to.y, to.w + 100, to.h), e: 0, pre: nil))
         sys.inner.t += 0.016
         wm.tick(socketReady: false)
-        XCTAssertEqual(sys.snapCalls, 3, "ответ configure — повод для снимка")
+        XCTAssertEqual(sys.snapCalls, 3, "configure response triggers snapshot")
         XCTAssertEqual(wm.mins["Telegram"]?[0].double, to.w + 100)
-        XCTAssertNotEqual(wm.target[22], to, "раскладка пересчитана с минимумом")
+        XCTAssertNotEqual(wm.target[22], to, "layout recomputed with minimum")
 
-        // EV_GONE: окно закрылось — цель снята, AX-кэш забыт, раскладка без него
+        // EV_GONE: window closed; clear target and AX cache, remove from layout
         sys.snap.windows.removeAll { $0.wid == 11 }
         eng.ch.evs = [EngEvent(type: Ev.gone, wid: 11, t: 0, rect: Rect(0, 0, 0, 0))]
         sys.inner.t += 0.016
@@ -97,7 +97,7 @@ final class TickTests: XCTestCase {
         XCTAssertTrue(sys.inner.calls.contains(.array([.string("ax_forget"), .int(11)])))
         XCTAssertEqual(Dwindle.leaves(wm.sp(3).tree).map(\.wid), [22])
 
-        // нестабильный снимок (стол переключается) — такт ничего не делает
+        // unstable snapshot (desktop switching): tick does nothing
         sys.snap.stable = false
         let before = eng.ch.ops.count
         sys.inner.t += 0.3
