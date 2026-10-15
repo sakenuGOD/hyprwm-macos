@@ -1,5 +1,5 @@
-// Живая система: SkyLight/CG/AX через C-цели (hook/src/axlib.c, winsnap.m и обёртки sys.c).
-// Всё, что здесь, обращается к WindowServer — в тестах не используется.
+// Live system: SkyLight/CG/AX through C targets (hook/src/axlib.c, winsnap.m, and sys.c wrappers).
+// Everything here accesses WindowServer and is not used in tests.
 import AppKit
 import CAX
 import CSnap
@@ -300,10 +300,10 @@ final class LiveSys: SysAPI {
 
     func snapshot() throws -> Snapshot {
         var n = ws_snapshot(&buf, Int32(buf.count))
-        if n < 0 {                                   // ОТЛИЧИЕ: Python падал «не влез в буфер»; здесь буфер растёт
+        if n < 0 {                                   // DIFFERENCE: Python failed when the buffer was too small; this implementation grows it
             buf = [CChar](repeating: 0, count: Int(-n) + 4096)
             n = ws_snapshot(&buf, Int32(buf.count))
-            if n < 0 { throw CmdError("снимок окон не влез в буфер") }
+            if n < 0 { throw CmdError("window snapshot exceeded the buffer") }
         }
         let j = try buf.withUnsafeBufferPointer { p in
             try JSON.parse(Array(UnsafeRawBufferPointer(start: p.baseAddress, count: Int(n))))
@@ -377,7 +377,7 @@ final class LiveSys: SysAPI {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         p.arguments = argv
-        do { try p.run() } catch { log("запуск \(argv): \(error)") }
+        do { try p.run() } catch { log("launch \(argv): \(error)") }
     }
 
     func background(_ f: @escaping () -> Void) { DispatchQueue.global(qos: .userInitiated).async(execute: f) }

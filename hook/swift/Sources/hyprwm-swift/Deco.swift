@@ -1,15 +1,15 @@
-// Окна-подложки (build/hyprdeco) — порт deco.py: отдельный процесс, управление строками по stdin,
-// ответ «wid <окно> <подложка>» по stdout. Ступенька до CA-слоя в дереве окна (MASTER §9.3).
+// Backing windows (build/hyprdeco), ported from deco.py: a separate process controlled by stdin lines,
+// with "wid <window> <backing>" replies on stdout. A step toward a CA layer in the window tree (MASTER §9.3).
 import Foundation
 import HyprCore
 
 final class Deco: DecoAPI {
-    // фон приложений, которые рисуют свой цвет (Ghostty: Catppuccin Mocha base, background-opacity 0.85)
+    // Backgrounds for applications that draw their own color (Ghostty: Catppuccin Mocha base, background-opacity 0.85)
     static let colors: [String: (Double, Double, Double, Double)] = ["Ghostty": (0x1e / 255.0, 0x1e / 255.0, 0x2e / 255.0, 0.85)]
     let p = Process()
     let inp = Pipe(), outp = Pipe()
     let lock = NSLock()
-    var wids: [Int: Int] = [:]          // wid окна -> wid подложки (пишет поток чтения)
+    var wids: [Int: Int] = [:]          // Window wid -> backing wid (written by the reader thread)
     var asked = Set<Int>()
     var radius: [Int: Double] = [:]
 
@@ -38,7 +38,7 @@ final class Deco: DecoAPI {
     }
 
     private func send(_ s: String) {
-        do { try inp.fileHandleForWriting.write(contentsOf: (s + "\n").data(using: .utf8)!) } catch { log("подложки:", error) }
+        do { try inp.fileHandleForWriting.write(contentsOf: (s + "\n").data(using: .utf8)!) } catch { log("backing windows:", error) }
     }
 
     private func under(_ wid: Int) -> Int? {
@@ -46,7 +46,7 @@ final class Deco: DecoAPI {
         return wids[wid]
     }
 
-    /// Создать подложку; когда движок узнает радиус скругления окна у сервера — обновить его.
+    /// Create the backing window; update its corner radius when the engine gets it from the server.
     func ensure(_ wid: Int, _ owner: String, _ r: Double) {
         if asked.contains(wid) && (r == 0 || radius[wid] == r) { return }
         asked.insert(wid)
@@ -55,7 +55,7 @@ final class Deco: DecoAPI {
         send(String(format: "new %d %.4f %.4f %.4f %.1f %.3f", wid, cr, cg, cb, r != 0 ? r : 16, ca))
     }
 
-    /// Перед анимацией: реальная рамка = цель, прямо под окном.
+    /// Before animation: set the actual frame to the target, directly below the window.
     func place(_ wid: Int, _ rect: Rect) -> Int? {
         if under(wid) != nil {
             send(String(format: "frame %d %.1f %.1f %.1f %.1f", wid, rect.x, rect.y, rect.w, rect.h))
