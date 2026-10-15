@@ -292,6 +292,10 @@ log("HyprWM started (Swift); state: \(stateDir), socket \(ctl)")
 let timer = DispatchSource.makeTimerSource(queue: .main)
 timer.schedule(deadline: .now(), repeating: .milliseconds(16), leeway: .milliseconds(1))
 timer.setEventHandler {
+    // Paused startup still needs a census so the command server can drain.
+    if !wm.enabled, wm.last == nil, let snapshot = try? sys.snapshot() {
+        wm.last = (snapshot.area, snapshot.space, snapshot.windows)
+    }
     wm.tick(socketReady:false)
     if let last=wm.last {ecosystemAPI?.observe(windows:last.wins,space:last.space,focusedWindow:wm.sp(last.space).focus)}
 }
