@@ -32,14 +32,18 @@ runtime adapters.
 ## Implemented pipeline
 
 1. Core layout, rules and focus policy produce the same target rectangles as in
-   Engine mode. Lite has a separate state file and never adopts the Engine
-   hidden-window list.
+   Engine mode. Lite has a separate state file. A nonempty or unreadable Engine
+   hidden-window ledger blocks Lite startup until Engine recovery is completed;
+   Lite never adopts or overwrites those native ownership records.
 2. Before the first mutation, an owner-only recovery file records window ID,
    PID, process birth and original frame. No title or captured pixels are saved.
 3. ScreenCaptureKit obtains the source image. If permission, capture or identity
    fails, apply the target directly through AX and report that capability
    downgrade. A failed capture never authorizes hiding the client.
-4. Show an owned proxy; park and resize the real client. Drive image bounds,
+4. Show an owned proxy; park and resize the real client. Before proxy motion,
+   verify the accepted client frame intersects every full display frame by no
+   more than two points on at least one axis. An unverified parking attempt
+   falls back to direct placement. Drive image bounds,
    position, border bounds and border path with one Core Animation start time
    and the same frame samples from the configured curve.
 5. Retarget from the current presentation layer, including measured velocity.
@@ -69,8 +73,16 @@ runtime adapters.
   only the Lite AX recovery path, without starting a window manager or hotkeys.
   A record is removed only after restoration acknowledgement or confirmed
   lifetime departure. Failed recovery preserves the ledger and reports failure.
-- Normal quit restores all recorded live clients. Startup restores outstanding
-  crash records before enabling tiling. Neither path trusts a reused PID alone.
+  A live restore request can return `Lite restoration pending:` while bounded
+  asynchronous AX workers run; the CLI retries only this marker for four seconds.
+- Normal quit attempts restoration for three seconds. Outstanding records remain
+  recoverable if a client does not acknowledge placement. Startup uses the same
+  bounded scheduler and stays paused if recovery is incomplete. Neither path
+  trusts a reused PID alone. Invalid existing recovery files are preserved and
+  prevent movement instead of being treated as an empty ledger.
+- Native application hiding suppresses cached proxy imagery and borders. An AX
+  window-list omission while its application is hidden is insufficient evidence
+  that the recovery record's window has closed.
 
 ## Limits and live acceptance
 
@@ -93,3 +105,21 @@ must separately verify forced Lite with 2–4 disposable windows: tiling,
 open/close/swap clips, border tracking, pointer focus, gap hot reload, virtual
 workspace round trip, and quit/restart recovery. No SIP-on behavioral pass is
 claimed from this SIP-off development session.
+
+## Development-session observations
+
+The first isolated forced-Lite session used fresh disposable windows and an
+allow rule, with the existing native Engine daemon stopped. Lite reported
+`engine_channel_used: false`. The host still contained an earlier WindowServer
+injection and had SIP disabled; these observations cannot establish SIP-on
+behavior.
+
+Observed results included two- and three-window tiling, matching native and
+reported hover focus, visible captured-proxy swap motion with its border,
+atomic gap reload, and restoration to the recorded original client frames.
+A captured TextEdit entrance also showed its default-position frame before AX
+discovery. The zero-flash first-map acceptance gate therefore remains blocked.
+Full close/retarget/landing frame inspection, virtual-workspace round trip,
+mid-motion pause, native application hiding, and parked-client crash recovery
+need a further live session on the final build. Source checks and extracted
+motion/identity/recovery checks are supporting evidence, not live passes.
