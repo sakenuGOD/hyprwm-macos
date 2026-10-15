@@ -31,7 +31,7 @@ final class LiteChannel: ChannelAPI {
     }
     final class Slot {
         let wid: Int, pid: Int, birth: String
-        var target: Rect, actual: Rect, presented: Rect
+        var target: Rect, actual: Rect, presented: Rect, landingTarget: Rect
         var version = 0, configureError = -1, busy = false, capturing = false, landing = false
         var forgetVersion: Int?
         var proxy: LiteProxy?
@@ -42,7 +42,7 @@ final class LiteChannel: ChannelAPI {
         var cached: CGImage?, capturedAt = 0.0
         init(window: WinInfo, birth: String) {
             wid = window.wid; pid = window.pid; self.birth = birth
-            target = window.rect; actual = window.rect; presented = window.rect; visible = window.on
+            target = window.rect; actual = window.rect; presented = window.rect; landingTarget = window.rect; visible = window.on
         }
     }
     let sys: LiteSys, captures = LiteCaptures(), borders: LiteBorders
@@ -250,10 +250,20 @@ final class LiteChannel: ChannelAPI {
                     self.place(slot, frame: geometry.to, logical: geometry.to); return
                 }
                 slot.actual = actual
+                // Keep the requested logical rectangle for configure receipts
+                // and minimum learning. Pixels land at the client's accepted
+                // dimensions, including character-grid resize rounding.
+                slot.landingTarget = Rect(geometry.to.x, geometry.to.y, actual.w, actual.h)
+                let acceptedFrames = LiteMotion.frames(from: start, to: slot.landingTarget, velocity: velocity,
+                    duration: geometry.duration, curve: curve, timeScale: self.config.timeScale)
+                let landingProxy = LiteProxy(image: image, from: start, to: slot.landingTarget, motionFrames: acceptedFrames,
+                    appearance: self.borders.appearance, focused: self.focused == slot.wid, relativeTo: slot.wid)
+                if opening { landingProxy.window.orderOut(nil) }
+                slot.proxy = landingProxy; proxy.close()
                 slot.capturing = false
                 slot.started = CACurrentMediaTime()+0.008; slot.duration = geometry.duration
-                proxy.animate(frames: frames, duration: geometry.duration, started: slot.started, fromAlpha: opening ? 0 : 1)
-                proxy.window.order(.above, relativeTo: slot.wid)
+                landingProxy.animate(frames: acceptedFrames, duration: geometry.duration, started: slot.started, fromAlpha: opening ? 0 : 1)
+                landingProxy.window.order(.above, relativeTo: slot.wid)
                 slot.presented = start; self.sys.presentation[slot.wid] = start
                 self.proxyMotions += 1
                 // Capture the resized backing surface while its real window is
@@ -261,14 +271,14 @@ final class LiteChannel: ChannelAPI {
                 // not replace a stretched old title/content in a single frame.
                 guard self.capturePending.count < 2, self.capturePending.insert(slot.wid).inserted else { return }
                 let capturedID = slot.wid
-                self.captures.image(slot.wid, pid: slot.pid, frame: actual) { [weak self, weak slot, weak proxy] image in
+                self.captures.image(slot.wid, pid: slot.pid, frame: actual) { [weak self, weak slot, weak landingProxy] image in
                     guard let self else { return }; self.capturePending.remove(capturedID)
-                    guard let slot, let proxy, let image,
-                          self.current(slot, version), slot.proxy === proxy, slot.busy, !slot.landing,
+                    guard let slot, let landingProxy, let image,
+                          self.current(slot, version), slot.proxy === landingProxy, slot.busy, !slot.landing,
                           !self.sys.applicationHidden(slot.pid) else { return }
                     let remaining = slot.started + slot.duration - CACurrentMediaTime()
                     guard remaining >= 0.08 else { return }
-                    proxy.replaceImage(image, duration: min(0.12 * self.config.timeScale, remaining - 0.034))
+                    landingProxy.replaceImage(image, duration: min(0.12 * self.config.timeScale, remaining - 0.034))
                     slot.cached = image; slot.capturedAt = self.sys.now()
                 }
             }
@@ -292,7 +302,7 @@ final class LiteChannel: ChannelAPI {
             }
             slot.lastSample = (time, frame); slot.presented = frame; sys.presentation[slot.wid] = frame
             guard time >= slot.started+slot.duration else { continue }
-            slot.presented = slot.target; sys.presentation[slot.wid] = slot.target
+            slot.presented = slot.landingTarget; sys.presentation[slot.wid] = slot.landingTarget
             slot.landing = true; let version = slot.version
             sys.ax.setFrameAsync(slot.pid, slot.wid, slot.target) { [weak self, weak slot] result, accepted in
                 guard let self, let slot, self.current(slot, version) else { return }
@@ -302,7 +312,7 @@ final class LiteChannel: ChannelAPI {
                     self.counters.errors += 1; return
                 }
                 slot.actual = actual; slot.configureError = result
-                if slot.actual.maxDiff(slot.target) > 8 {
+                if slot.actual.maxDiff(slot.landingTarget) > 1 {
                     slot.proxy?.freeze(); slot.busy = false; slot.landing = false
                     self.counters.errors += 1
                     return // Keep the visible proxy and exact recovery authority.
