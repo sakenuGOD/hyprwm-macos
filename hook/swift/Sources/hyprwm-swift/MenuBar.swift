@@ -122,6 +122,7 @@ final class MenuBarController:NSObject,NSMenuDelegate,NSWindowDelegate {
     private func settings(page:SettingsPage){
         if let window{window.contentView=NSHostingView(rootView:SettingsRootView(store:store,replay:{[weak self]in self?.replayOnboarding()},initialPage:page));presentOnCurrentSpace(window);return}
         let created=NSWindow(contentRect:NSRect(x:0,y:0,width:960,height:740),styleMask:[.titled,.closable,.miniaturizable,.resizable,.fullSizeContentView],backing:.buffered,defer:false)
+        created.setAccessibilitySubrole(.dialog)
         created.title="HyprWM";created.titlebarAppearsTransparent=true;created.toolbar=NSToolbar(identifier:"hyprwm.settings.toolbar");created.toolbarStyle = .unified
         created.minSize=NSSize(width:850,height:680);created.isReleasedWhenClosed=false;created.delegate=self
         created.contentView=NSHostingView(rootView:SettingsRootView(store:store,replay:{[weak self] in self?.replayOnboarding()},initialPage:page))
