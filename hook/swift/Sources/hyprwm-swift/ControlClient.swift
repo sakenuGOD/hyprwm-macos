@@ -41,6 +41,8 @@ final class ControlClient {
             if output.contains(10) { break }
         }
         guard let newline = output.firstIndex(of: 10) else { throw CmdError("incomplete control reply") }
-        return String(decoding: output.prefix(newline), as: UTF8.self)
+        let response=String(decoding:output.prefix(newline),as:UTF8.self)
+        if response.hasPrefix("error: ") { throw CmdError(String(response.dropFirst(7))) }
+        return response
     }
 }
