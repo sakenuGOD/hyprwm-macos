@@ -71,8 +71,10 @@ Useful state fields include `enabled`, `space`, `focus`, `tree`, `rects`, `float
 `engine.mode` and `engine.available`. In Lite, `space` is a virtual workspace ID,
 not a native macOS Space ID. The `lite` object reports capture/animation capability,
 proxy/direct-placement/capture-failure counters, recovery count/error and hotkey
-conflicts; `hotkey_bindings` supplies that mode’s settings metadata. A reported
-capture capability is not evidence that a particular animation succeeded. Window IDs are process-local lifetime observations, not
+conflicts; `hotkey_bindings` supplies that mode’s settings metadata. The diagnostic
+`lite.focus_context` is `[frontmost PID, AX-focused window ID, focus flags]`, and
+`lite.pointer_hit` is the current public census receiver ID or null. A reported
+capture capability is not evidence that a particular animation succeeded. Window IDs are session lifetime observations, not
 persistent identifiers; obtain a fresh state before acting on them. Additional
 fields are diagnostic and may change between releases.
 
@@ -143,7 +145,7 @@ After the source installer has bundled the base configuration:
 
 `hyprwm --init-config` explicitly creates commented defaults only when the selected config is absent, and preserves an existing file. The source installer uses this entry point with the portable bundled baseline.
 
-`hyprwm restore-all` routes to a responding daemon or, where supported, the stopped Lite runtime's persisted recovery ledger. It restores verified window lifetimes and preserves unresolved records. Success is distinct from a command being queued; confirm native visibility. The stopped recovery path needs Accessibility and is a runtime operation, not an offline config check.
+`hyprwm restore-all` routes to a responding daemon or, where supported, the stopped Lite runtime's persisted recovery ledger. It restores verified window lifetimes and preserves unresolved records. Success is distinct from a command being queued; confirm native visibility. Restoring outstanding stopped-runtime records needs Accessibility and is a runtime operation, not an offline config check. An empty ledger can be checked without starting a window manager. Offline Lite recovery refuses outstanding Engine hidden-window records; start the matching Engine runtime for those records.
 
 The raw command `quit` targets the focused **application**. It is not a daemon shutdown command. Use **Quit HyprWM** or the matching uninstaller for restoration-aware daemon shutdown.
 
