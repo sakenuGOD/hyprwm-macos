@@ -112,6 +112,7 @@ final class LiteProxy {
     let target: Rect
     let width: Double, radius: Double
     private(set) var began = 0.0, duration = 0.0
+    private var focusColors: [RGBA] = []
     init(image: CGImage, from: Rect, to: Rect, appearance: Appearance, focused: Bool, relativeTo wid: Int) {
         self.image = image; target = to; width = appearance.width; radius = appearance.radius
         let padding = max(appearance.width + 4, 8)
@@ -123,8 +124,8 @@ final class LiteProxy {
         imageLayer.cornerRadius = min(radius, min(from.w, from.h)/2)
         imageLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
         root.addSublayer(imageLayer); root.addSublayer(border)
-        border.colors = (focused ? appearance.active : [appearance.inactive]).map { NSColor(srgbRed: $0.r, green: $0.g, blue: $0.b, alpha: $0.a).cgColor }
-        if border.colors?.count == 1 { border.colors?.append(border.colors![0]) }
+        focusColors = focused ? appearance.gradient : Array(repeating: appearance.inactive, count: 8)
+        border.colors = focusColors.map { NSColor(srgbRed: $0.r, green: $0.g, blue: $0.b, alpha: $0.a).cgColor }
         let endpoints = appearance.endpoints
         border.startPoint = CGPoint(x: endpoints.0[0], y: endpoints.0[1]); border.endPoint = CGPoint(x: endpoints.1[0], y: endpoints.1[1])
         mask.fillColor = nil; mask.strokeColor = NSColor.white.cgColor; mask.lineWidth = width; border.mask = mask
@@ -173,6 +174,21 @@ final class LiteProxy {
         let frame = presented
         imageLayer.removeAllAnimations(); border.removeAllAnimations(); mask.removeAllAnimations()
         setModel(frame)
+    }
+    func focus(_ active: Bool, appearance: Appearance, config: HyprConfig) {
+        let colors = active ? appearance.gradient : Array(repeating: appearance.inactive, count: 8)
+        guard colors != focusColors else { return }; focusColors = colors
+        let previous = border.presentation()?.colors ?? border.colors
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        border.colors = colors.map { NSColor(srgbRed: $0.r, green: $0.g, blue: $0.b, alpha: $0.a).cgColor }
+        CATransaction.commit()
+        let animation = config.anim("border")
+        guard let previous, animation.on, animation.dur > 0 else { return }
+        let fade = CABasicAnimation(keyPath: "colors"); fade.fromValue = previous; fade.toValue = border.colors; fade.duration = animation.dur
+        if case let .bezier(p1, p2)? = config.curves()[config.animation("border").curve] {
+            fade.timingFunction = CAMediaTimingFunction(controlPoints: Float(p1.0), Float(p1.1), Float(p2.0), Float(p2.1))
+        }
+        border.add(fade, forKey: "focus")
     }
     func close() { window.orderOut(nil); window.close() }
 }

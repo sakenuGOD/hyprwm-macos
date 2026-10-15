@@ -315,7 +315,12 @@ final class LiteChannel: ChannelAPI {
         borders.update(slot.wid, frame: sys.winBounds(slot.wid) ?? slot.presented, focused: focused == slot.wid, visible: visible,
                        duration: config.anim("border").on ? config.anim("border").dur : 0)
     }
-    func refreshBorders() { for slot in slots.values { updateBorder(slot) } }
+    func refreshBorders() {
+        for slot in slots.values {
+            slot.proxy?.focus(focused == slot.wid, appearance: borders.appearance, config: config)
+            updateBorder(slot)
+        }
+    }
     func shutdown() {
         shuttingDown = true; commands.removeAll()
         cancelMotions()

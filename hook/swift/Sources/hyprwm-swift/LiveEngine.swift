@@ -26,6 +26,12 @@ enum RuntimeMode: String {
             .setting("engine", (status["engine"] ?? .object([])).setting("mode", .string(mode.rawValue)).setting("available", .bool(mode == .engine)))
             .setting("daemon", (status["daemon"] ?? .object([])).setting("mode", .string(mode.rawValue)))
     }
+    static func layoutRules(_ raw: JSON) -> JSON {
+        .array((raw["window_rules"]?.array ?? []).compactMap { rule in
+            guard rule["float"] != nil || rule["ignore"] != nil else { return nil }
+            return .object((rule.object ?? []).filter { ["enabled", "match", "float", "ignore"].contains($0.0) })
+        })
+    }
 }
 
 /// Inactive channel used before a verified native engine is attached.

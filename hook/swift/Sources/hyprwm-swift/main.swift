@@ -238,7 +238,7 @@ wm.controlHandler = { command in
     let old=wm.cfg.raw, fresh=next.raw
     let geometryChanged = old["config"]?["general"]?["gaps_in"] != fresh["config"]?["general"]?["gaps_in"] ||
         old["config"]?["general"]?["gaps_out"] != fresh["config"]?["general"]?["gaps_out"] ||
-        old["config"]?["dwindle"] != fresh["config"]?["dwindle"] || old["window_rules"] != fresh["window_rules"]
+        old["config"]?["dwindle"] != fresh["config"]?["dwindle"] || RuntimeMode.layoutRules(old) != RuntimeMode.layoutRules(fresh)
     try eng.replaceConfig(next)
     let configuredEnabledChanged = nextOptions.tilingEnabled != wm.options.tilingEnabled
     wm.cfg = next; wm.options = nextOptions; wm.floatRules = next.floatRules

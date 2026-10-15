@@ -104,7 +104,7 @@ final class LiteRuntime {
         let old = wm.cfg.raw, fresh = next.raw
         let geometryChanged = old["config"]?["general"]?["gaps_in"] != fresh["config"]?["general"]?["gaps_in"] ||
             old["config"]?["general"]?["gaps_out"] != fresh["config"]?["general"]?["gaps_out"] ||
-            old["config"]?["dwindle"] != fresh["config"]?["dwindle"] || old["window_rules"] != fresh["window_rules"]
+            old["config"]?["dwindle"] != fresh["config"]?["dwindle"] || RuntimeMode.layoutRules(old) != RuntimeMode.layoutRules(fresh)
         let configuredEnabledChanged = options.tilingEnabled != wm.options.tilingEnabled
         try engine.replaceConfig(next)
         try hotkeys?.reload(configDir: hook+"/config")
