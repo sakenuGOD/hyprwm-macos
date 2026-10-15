@@ -85,6 +85,12 @@ final class LiveEngine: EngineAPI {
                 guard ch.curvesCompatible(cfg) else{throw CmdError("existing engine curve mapping differs; adoption refused without rewriting")}
             }else{try setup()}
         }
+        // Match the native runtime defaults, including verified adoption.
+        // Hosting masks keep rounded content and the ring on one contour;
+        // its upward Y axis anchors that contour to the presented top edge.
+        ch.raw.pointee.mask_only = 0
+        ch.raw.pointee.mask_flip = 1
+        ch.raw.pointee.use_mask = 1
     }
 
     func replaceConfig(_ candidate: HyprConfig) throws {
