@@ -498,6 +498,14 @@
               "title": {
                 "type": "string",
                 "maxLength": 512
+              },
+              "role": {
+                "type": "string",
+                "maxLength": 512
+              },
+              "subrole": {
+                "type": "string",
+                "maxLength": 512
               }
             },
             "minProperties": 1
