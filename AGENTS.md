@@ -12,6 +12,7 @@ HyprWM is an independent experimental macOS tiling window manager. Read this fil
 | Focus, dialog policy and restoration | `HyprCore/FocusPolicy.swift`, `FocusRecovery.swift`, `RestorePlacement.swift`, `LauncherArrival.swift` |
 | Rules, config, migration | `HyprCore/WindowProperties.swift`, `TextConfig.swift`, `RuntimeConfig.swift`, `ForeignConfigImport.swift` |
 | Entry, real AX/Space/process access, engine | `hook/swift/Sources/hyprwm-swift/main.swift`, `LiveSys.swift`, `LiveEngine.swift` |
+| Lite runtime, AX, recovery, proxy/borders, shortcuts | `LiteRuntime.swift`, `LiteAX.swift`, `LiteSys.swift`, `LiteEngine.swift`, `LiteOverlay.swift`, `LiteHotkeys.swift` in the runtime target |
 | Settings, menu, shortcuts | `Settings*.swift`, `MenuBar.swift`, `NativeHotkeys.swift` in that runtime target; `hook/keys/` |
 | Native engine and bridge | `hook/src/`, `hook/wm/`, `hook/identity/` |
 | Tests, schema, package | `hook/swift/Tests/`, `hook/config/runtime.schema.json`, `hook/swift/build_app.sh` |
@@ -25,7 +26,7 @@ swift test --package-path hook/swift
 git diff --check
 ```
 
-The release binary is `hook/swift/.build/release/hyprwm-swift`. `scripts/hyprwm` locates the checkout's binary; `scripts/hyprwmctl status` queries a running daemon. Packaging: `zsh hook/swift/build_app.sh` (preserves an existing bundle). Configuration: `~/.config/hyprwm/hyprwm.conf`, overridden by `HYPRWM_CONFIG`. Control: `/tmp/hyprwm.ctl`, overridden by `HYPRWM_CTL`. `hook/start.sh`/`stop.sh` delegate to `hook/lifecycle.py`; inspect its current runtime selection before a live launch.
+The release binary is `hook/swift/.build/release/hyprwm-swift`. `scripts/hyprwm` locates the checkout's binary; `scripts/hyprwmctl status` queries a running daemon. `./install.sh` installs the standalone app without launching; `zsh hook/swift/build_app.sh` builds the separate development menu companion. Configuration: `~/.config/hyprwm/hyprwm.conf`, overridden by `HYPRWM_CONFIG`. Control: `/tmp/hyprwm.ctl`, overridden by `HYPRWM_CTL`. `hook/start.sh`/`stop.sh` delegate to `hook/lifecycle.py`; inspect its current runtime selection before a live launch.
 
 ## Work discipline
 
