@@ -36,8 +36,8 @@ All numeric distances are macOS points unless the name says milliseconds.
 | `version` | `1` | `version = 1` | `NativeRuntimeConfig.build` validates the document version. |
 | `time_scale` | `1` | `time_scale = 1.5` (`0.1…4`) | `NativeRuntimeConfig.build` scales geometry animation timing; `HYPRWM_TIME_SCALE` overrides it. |
 | `runtime.enabled` | `true` | `runtime.enabled = false` | `RuntimeOptions.load` and runtime reload enable/disable automatic tiling. |
-| `runtime.menu_bar` | `true` | `runtime.menu_bar = false` | `RuntimeOptions.load`, daemon menu construction; `HYPRWM_MENU_BAR=0/1` overrides it. |
-| `runtime.startup_animation` | `false` in generated file | `runtime.startup_animation = true` | `RuntimeOptions.load` → `MenuBarController` startup presentation. The options fallback is `true` if a hand-written file omits it. |
+| `runtime.menu_bar` | `true` | `runtime.menu_bar = false` | `RuntimeOptions.load`, daemon menu construction at launch; restart to change menu presence. `HYPRWM_MENU_BAR=0/1` overrides it. |
+| `runtime.startup_animation` | `false` in generated file | `runtime.startup_animation = true` | `RuntimeOptions.load` → `MenuBarController` startup presentation; applies on launch. The options fallback is `true` if a hand-written file omits it. |
 | `runtime.window_resize_mode` | `native` | `native` or `buffer` | `Channel.configureAppearance` sets the engine's live-buffer scale flag. Neither mode enables per-frame AX configuration. |
 | `runtime.overview_hidden_windows` | `false` | `runtime.overview_hidden_windows = false` | `RuntimeOptions.load` → overview policy. Experimental hidden-window Mission Control path; leave off unless separately verified. |
 | `runtime.prehide` | `false` | `runtime.prehide = false` | `LiveEngine` publishes native prehide policy; `WM` first-map path reads it. `HYPRWM_PREHIDE=0/1` overrides it. |
@@ -46,7 +46,7 @@ All numeric distances are macOS points unless the name says milliseconds.
 | `runtime.pointer_focus_pause_ms` | `100` | `runtime.pointer_focus_pause_ms = 100` (`0…2000`) | `WM.pointerFocus` delay after relevant native focus activity. |
 | `layout.gaps_in` | `5` | `layout.gaps_in = 8` (`0…100`) | `HyprConfig.gaps` → `Dwindle.withGaps`. One inner gap for both axes. |
 | `layout.gaps_out` | top `8`, right/bottom/left `12` | `layout.gaps_out = 12` or `layout.gaps_out.top = 16` (`0…200`) | `HyprConfig.gaps` → layout inset. A scalar applies to every side; side fields are `top`, `right`, `bottom`, `left`. Consumer fallback is `20` on an absent side. |
-| `layout.default_split_ratio` | `1` | `layout.default_split_ratio = 1.2` (`0.1…1.9`) | `HyprConfig.makeDwindle` divides by two: `1` gives a 50/50 split. |
+| `layout.default_split_ratio` | `1` | `layout.default_split_ratio = 1.2` (`0.1…1.9`) | `HyprConfig.makeDwindle` divides by two for new splits: `1` gives a 50/50 split. Existing ratios are not balanced by this setting. |
 | `layout.split_width_multiplier` | `1` | `layout.split_width_multiplier = 1` (`0.1…10`) | `Dwindle` chooses split orientation using aspect ratio. |
 | `layout.minimum_policy` | `native` | `native` or `ratio` | `Dwindle` minimum-size policy. `native` considers learned client minimums; `ratio` preserves split ratios. |
 | `focus.follow_mouse` | `1` | `focus.follow_mouse = 0` (integer `0/1`) | `WM.pointerFocus`; `0` disables pointer-driven tile focus. |

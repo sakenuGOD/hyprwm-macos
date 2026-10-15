@@ -25,7 +25,7 @@ swift test --package-path hook/swift
 git diff --check
 ```
 
-The release binary is `hook/swift/.build/release/hyprwm-swift`. `scripts/hyprwm` locates the checkout's binary; `scripts/hyprwmctl status` queries a running daemon. Packaging: `zsh hook/swift/build_app.sh` (preserves an existing bundle). Configuration: `~/.config/hyprwm/hyprwm.conf`, overridden by `HYPRWM_CONFIG`. Control: `/tmp/hyprwm.ctl`, overridden by `HYPRWM_CTL`. Read source before selecting a live lifecycle command; legacy `hook/start.sh`/`stop.sh` manage the Python path.
+The release binary is `hook/swift/.build/release/hyprwm-swift`. `scripts/hyprwm` locates the checkout's binary; `scripts/hyprwmctl status` queries a running daemon. Packaging: `zsh hook/swift/build_app.sh` (preserves an existing bundle). Configuration: `~/.config/hyprwm/hyprwm.conf`, overridden by `HYPRWM_CONFIG`. Control: `/tmp/hyprwm.ctl`, overridden by `HYPRWM_CTL`. `hook/start.sh`/`stop.sh` delegate to `hook/lifecycle.py`; inspect its current runtime selection before a live launch.
 
 ## Work discipline
 

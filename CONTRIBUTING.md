@@ -14,7 +14,7 @@ swift test --package-path hook/swift
 git diff --check
 ```
 
-The executable is `hook/swift/.build/release/hyprwm-swift`. `scripts/hyprwm --help` shows dry CLI modes. The repository also contains Python/Lua and native integration paths; do not assume `hook/start.sh` selects the Swift runtime. See [packaging](hook/swift/PACKAGING.md) for app bundles and their current distribution limits.
+The executable is `hook/swift/.build/release/hyprwm-swift`. `scripts/hyprwm --help` shows dry CLI modes. The repository also contains Python/Lua and native integration paths. `hook/start.sh` and `hook/stop.sh` delegate to `hook/lifecycle.py`; inspect the current lifecycle selection before a live launch. See [packaging](hook/swift/PACKAGING.md) for app bundles and their current distribution limits.
 
 ## Choose the narrowest check
 
