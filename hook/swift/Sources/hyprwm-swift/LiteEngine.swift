@@ -32,7 +32,7 @@ final class LiteChannel: ChannelAPI {
     final class Slot {
         let wid: Int, pid: Int, birth: String
         var target: Rect, actual: Rect, presented: Rect
-        var version = 0, busy = false, capturing = false, landing = false
+        var version = 0, configureError = -1, busy = false, capturing = false, landing = false
         var forgetVersion: Int?
         var proxy: LiteProxy?
         var alpha = 1.0
@@ -127,6 +127,7 @@ final class LiteChannel: ChannelAPI {
     func busy(_ wid: Int) -> Bool { slots[wid]?.busy == true }
     func actual(_ wid: Int) -> Rect? { slots[wid]?.actual }
     func destination(_ wid: Int) -> Rect? { slots[wid]?.target }
+    func configureError(_ wid: Int) -> Int { slots[wid]?.configureError ?? -1 }
     // The proxy owns one final client handoff. This generic channel contract
     // keeps shared policy from replaying a compatibility warp after its ACK.
     var terminalGeometrySupported: Bool { true }
@@ -179,7 +180,7 @@ final class LiteChannel: ChannelAPI {
         !shuttingDown && slots[slot.wid] === slot && slot.version == version && sys.processBirth(slot.pid) == slot.birth
     }
     private func place(_ slot: Slot, frame: Rect, logical: Rect, concealed: Bool = false, completion: ((Bool) -> Void)? = nil) {
-        slot.version += 1; let version = slot.version
+        slot.version += 1; slot.configureError = -1; let version = slot.version
         slot.target = logical; slot.busy = true; slot.landing = true; slot.capturing = false
         sys.ax.setFrameAsync(slot.pid, slot.wid, frame) { [weak self, weak slot] result, accepted in
             guard let self, let slot, self.current(slot, version) else { completion?(false); return }
@@ -188,7 +189,7 @@ final class LiteChannel: ChannelAPI {
                 slot.proxy?.freeze(); slot.busy = false; slot.landing = false
                 self.counters.errors += 1; completion?(false); return
             }
-            slot.actual = actual
+            slot.actual = actual; slot.configureError = result
             if slot.proxy != nil, slot.actual.maxDiff(frame) > 8 {
                 // Keep a visible frozen proxy and the recovery record when AX
                 // refuses the landing. Never reveal a still-parked real body.
@@ -206,7 +207,7 @@ final class LiteChannel: ChannelAPI {
         }
     }
     private func animate(_ slot: Slot, geometry: Geometry, opening: Bool) {
-        slot.version += 1; let version = slot.version
+        slot.version += 1; slot.configureError = -1; let version = slot.version
         let oldProxy = slot.proxy
         let start = oldProxy?.presented ?? geometry.from ?? slot.presented
         let velocity = oldProxy == nil ? [] : slot.velocity
@@ -270,7 +271,7 @@ final class LiteChannel: ChannelAPI {
                     slot.proxy?.freeze(); slot.busy = false; slot.landing = false
                     self.counters.errors += 1; return
                 }
-                slot.actual = actual
+                slot.actual = actual; slot.configureError = result
                 if slot.actual.maxDiff(slot.target) > 8 {
                     slot.proxy?.freeze(); slot.busy = false; slot.landing = false
                     self.counters.errors += 1
@@ -402,7 +403,7 @@ final class LiteConfigureSink: ConfigureSink {
         for (wid, job) in jobs where !channel.busy(wid) {
             jobs[wid] = nil
             let ticket = tickets[wid], currentSlot = channel.receiptCheck(wid)
-            var result = CfgResult(wid: wid, owner: job.owner, to: job.to, got: channel.actual(wid), e: channel.actual(wid) == nil ? -1 : 0, pre: previous.removeValue(forKey: wid))
+            var result = CfgResult(wid: wid, owner: job.owner, to: job.to, got: channel.actual(wid), e: channel.configureError(wid), pre: previous.removeValue(forKey: wid))
             result.pid = job.pid; result.birth = job.birth
             result.isCurrent = { [weak self] in
                 guard let self, let ticket else { return false }
