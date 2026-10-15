@@ -28,6 +28,7 @@ final class LiteRuntime {
     private var signals: [DispatchSourceSignal] = []
     private var menu: MenuBarController?, watcher: ConfigFileWatcher?, hotkeys: LiteHotkeys?
     private var ecosystem: EcosystemAPI?, configure: LiteConfigureSink?
+    private var workspaceReceiver: LiteWorkspaceReceiver?
     private var pendingReload: DispatchWorkItem?
     private var censusAt = 0.0
     private var observer: NSObjectProtocol?
@@ -49,7 +50,7 @@ final class LiteRuntime {
     }
     private var workspaceStatus: JSON {
         .object([("state", .string("virtual")), ("active", .int(sys.workspace)), ("previous", .int(sys.previousWorkspace)),
-                 ("native_spaces_used", .bool(false)), ("members", .object(sys.membership.map { (String($0.key), .int($0.value)) }))])
+                 ("native_spaces_used", .bool(false)), ("empty_receiver", workspaceReceiver?.status ?? .null), ("members", .object(sys.membership.map { (String($0.key), .int($0.value)) }))])
     }
     private func control(_ command: String) throws -> String? {
         if command == "status", !formattingStatus, let last = wm.last {
@@ -88,6 +89,7 @@ final class LiteRuntime {
                 target = 1+(sys.workspace-1+(words[1] == "1" ? 1 : -1)+10)%10
             } else if words[1] == "previous" { target = sys.previousWorkspace }
             else { guard let value = Int(words[1]), (1...10).contains(value) else { throw CmdError("workspace: expected 1..10 or previous") }; target = value }
+            if target != sys.workspace { try reserveEmptyReceiver(destination: target, excluding: []) }
             switchWorkspace(target); return "workspace \(sys.workspace) (Lite virtual)"
         }
         if ["sendws", "moveworkspace"].contains(first) {
@@ -110,6 +112,7 @@ final class LiteRuntime {
             guard let wid = requested ?? focused, sys.membership[wid] == source,
                   wm.sp(source).tree?.contains(wid) == true, let window = sys.window(wid), window.on, window.space == source,
                   wm.tileable(window), sys.focusContext(window.pid).flags & (NativeFocusFlags.positive|NativeFocusFlags.unknown) == 0 else { throw CmdError("moveworkspace: exact visible managed window required") }
+            if silent { try reserveEmptyReceiver(destination: source, excluding: [wid]) }
             sys.cancelFocus(); configure?.cancel(wid); wm.target[wid] = nil
             wm.newbies[wid] = nil; wm.optimistic[wid] = nil; wm.restoring.remove(wid)
             let state = wm.sp(source); state.tree = wm.tile.removeReorientingPromoted(state.tree, wid, in: sys.area)
@@ -121,6 +124,55 @@ final class LiteRuntime {
             return "window moved to virtual workspace \(target)"
         }
         return nil
+    }
+    private func reserveEmptyReceiver(destination: Int, excluding: Set<Int>) throws {
+        let hidden = Set(wm.hidden.map(\.wid))
+        let candidates = Dwindle.leaves(wm.sp(destination).tree).compactMap(\.wid).filter { wid in
+            guard !excluding.contains(wid), !hidden.contains(wid), sys.membership[wid] == destination,
+                  let window = sys.window(wid), !sys.applicationHidden(window.pid) else { return false }
+            return wm.tileable(window)
+        }
+        guard candidates.isEmpty else { return }
+        if let receiver = workspaceReceiver, receiver.visible, receiver.key { receiver.rename(workspace: destination); return }
+        guard let pid = sys.frontPid() else { throw CmdError("workspace: native foreground unavailable") }
+        let context = sys.focusContext(pid)
+        if context.flags & NativeFocusFlags.unknown != 0,
+           sys.rawWindows.contains(where: { $0.pid == pid && sys.membership[$0.wid] == sys.workspace }) {
+            throw CmdError("workspace: native keyboard receiver unverified; current windows preserved")
+        }
+        guard let key = context.wid, sys.membership[key] == sys.workspace else { return }
+        guard let record = sys.recovery.records[key], record.pid == pid, sys.processBirth(pid) == record.birth else {
+            throw CmdError("workspace: keyboard receiver lifetime unverified; current windows preserved")
+        }
+        let safe = sys.ax.perform(pid, key) { application, window in
+            guard !LiteAX.modalBarrier(application, window),
+                  let focused = LiteAX.attribute(application, kAXFocusedWindowAttribute),
+                  CFGetTypeID(focused) == AXUIElementGetTypeID(), CFEqual(focused, window) else { return -1 }
+            return 0
+        }
+        guard safe == 0, sys.frontPid() == pid, !sys.mouseDown(), !sys.sessionLocked() else {
+            throw CmdError("workspace: keyboard receiver changed or a modal interaction is active")
+        }
+        let receiver = workspaceReceiver ?? LiteWorkspaceReceiver(); workspaceReceiver = receiver
+        guard receiver.show(workspace: destination, area: sys.area, sourcePID: pid, sourceWindow: key) else {
+            throw CmdError("workspace: empty-workspace keyboard receiver unavailable; current windows preserved")
+        }
+    }
+    private func releaseEmptyReceiver() {
+        guard let receiver = workspaceReceiver, receiver.visible, let pid = sys.frontPid() else { return }
+        let context = sys.focusContext(pid)
+        if let key = context.wid, let record = sys.recovery.records[key], record.pid == pid,
+           sys.processBirth(pid) == record.birth, sys.winPidLevel(key).pid == pid,
+           sys.membership[key] == sys.workspace, let window = sys.window(key), window.on,
+           !sys.concealed.contains(key), let actual = sys.winBounds(key), !sys.parked(actual),
+           context.flags & (NativeFocusFlags.positive|NativeFocusFlags.unknown) == 0 { receiver.hide(); return }
+        // A user's visible nonmember choice is respected; an unacknowledged
+        // managed app activation must not expose its still-parked key window.
+        if let key = context.wid, sys.membership[key] == nil, sys.recovery.records[key] == nil,
+           sys.winPidLevel(key).pid == pid, let window = sys.window(key), window.on,
+           let actual = sys.winBounds(key), !sys.parked(actual) { receiver.hide(); return }
+        let ownedApp = sys.recovery.records.values.contains { $0.pid == pid }
+        if pid != receiver.sourcePID, pid != Int(getpid()), !ownedApp { receiver.hide() }
     }
     private func switchWorkspace(_ target: Int) {
         guard target != sys.workspace, wm.enabled else { return }
@@ -185,6 +237,7 @@ final class LiteRuntime {
         if !ignoredReleases.isEmpty, !restoringAll, !recovering { restorePump.step(only: Set(ignoredReleases.keys)) }
     }
     private func finishRestoreAll() {
+        workspaceReceiver?.hide()
         restoringAll = false; recovering = false; engine.channel.cancelMotions()
         sys.membership.removeAll(); sys.concealed.removeAll(); wm.spaces.removeAll(); wm.target.removeAll(); wm.save()
     }
@@ -248,6 +301,7 @@ final class LiteRuntime {
                 }
             }
             self.engine.channel.advance(); self.configure?.drain(); self.wm.tick(socketReady: false)
+            self.releaseEmptyReceiver()
             // Persisted tree leaves predate this process's empty channel. Once
             // their public AX metadata arrives, establish the missing ownership
             // even when no layout change is needed to trigger core apply.
@@ -293,7 +347,7 @@ final class LiteRuntime {
         let deadline = sys.now()+3
         func attempt() {
             let remaining = self.restoreRecords()
-            if remaining == 0 { self.hotkeys?.close(); self.engine.channel.shutdown(); completion(true); return }
+            if remaining == 0 { self.workspaceReceiver?.hide(); self.hotkeys?.close(); self.engine.channel.shutdown(); completion(true); return }
             guard self.sys.now() < deadline else {
                 self.stopping = false
                 log("Quit deferred: \(remaining) Lite windows need AX restoration; recovery ledger preserved.")
