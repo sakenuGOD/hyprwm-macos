@@ -60,9 +60,11 @@ extension WM {
         return false
     }
 
-    /// Pause releases managed transforms without stopping the shared WindowServer engine.
+    /// Pause keeps the current presentation until the client accepts that frame.
     public func setEnabled(_ on: Bool) {
         guard enabled != on else { return }
+        pauseEpoch+=1
+        enabled=on
         if !on {
             admission?.suspend()
             cancelFocusRecovery()
@@ -74,23 +76,44 @@ extension WM {
             activationIntent = nil; activationMoves.removeAll(); silentSpaceMoves.removeAll(); restorePending.removeAll()
             cancelLauncherTransfers()
             let c = eng.c
-            var revealed = Set<Int>()
-            for h in hidden {
-                guard !options.production || hiddenRecordLive(h) else { continue }
-                revealed.insert(h.wid)
-                if let rect = Rect(h.rect) { c.geom(h.wid, rect, 0, 0, move: true, warp: true) }
-                c.alpha(h.wid, 1, 0, 0)
+            let hiddenIDs=Set(hidden.map(\.wid)),slots=Dictionary(c.wins().map{($0.wid,$0)},uniquingKeysWith:{first,_ in first})
+            var jobs:[CfgJob]=[]
+            for wid in Set(target.keys).union(optimistic.keys).union(newbies.keys) where !hiddenIDs.contains(wid) {
+                guard options.production,let slot=slots[wid],let pid=pids[wid],
+                      sys.winPidLevel(wid).pid==pid,!sys.protectedProcess(pid),let birth=sys.processBirth(pid) else {
+                    c.alpha(wid,1,0,0);c.forget(wid);continue
+                }
+                let frame=slot.visible
+                c.geom(wid,frame,16,16,dpos:0,dsize:0,frm:frame,move:true,warp:true,stretch:false)
+                c.alpha(wid,1,16,0)
+                if slot.real.maxDiff(frame)<=1 {c.forget(wid);continue}
+                var job=CfgJob(wid:wid,pid:pid,owner:owner[wid] ?? "",to:frame)
+                job.birth=birth;job.requireOwnership=true;jobs.append(job)
+                releasePausedWindow(wid,pid:pid,birth:birth,frame:frame,epoch:pauseEpoch,deadline:sys.now()+1)
             }
-            hidden.removeAll { revealed.contains($0.wid) }
-            for wid in Set(target.keys).union(optimistic.keys).union(newbies.keys) { c.alpha(wid, 1, 0, 0); c.forget(wid) }
             c.commit()
             cfgQ.removeAll();liveBufferShrinks.removeAll(); target.removeAll(); newbies.removeAll(); optimistic.removeAll()
             restoring.removeAll(); dimSince.removeAll()
+            cfgSink?.submit(jobs)
             save()
         } else {
+            cfgSink?.cancelAll()
             lastSnap = 0; rescued = false
         }
-        enabled = on
+    }
+
+    private func releasePausedWindow(_ wid:Int,pid:Int,birth:String,frame:Rect,epoch:Int,deadline:Double) {
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.016) { [weak self] in
+            guard let self,!self.enabled,self.pauseEpoch==epoch,!self.sys.sessionLocked(),
+                  self.sys.processBirth(pid)==birth,self.sys.winPidLevel(wid).pid==pid else{return}
+            let actual=self.sys.winBounds(wid)
+            if actual.map({$0.maxDiff(frame)<=TOL})==true || self.sys.now()>=deadline {
+                self.cfgSink?.cancel(wid)
+                self.eng.c.forget(wid);self.eng.c.commit()
+            } else {
+                self.releasePausedWindow(wid,pid:pid,birth:birth,frame:frame,epoch:epoch,deadline:deadline)
+            }
+        }
     }
 
     /// Exact AX focus evidence authorizes a transfer; dialogs and menus retain focus ownership.
