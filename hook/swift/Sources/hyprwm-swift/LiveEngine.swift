@@ -1,11 +1,11 @@
 // Swift attaches to the already installed native engine. It never installs or stops WindowServer code.
-// Каталог канала /tmp/hyprwm зашит в install4.py — поэтому здесь он тоже постоянный.
+// The channel directory matches the native installer.
 import CAX
 import CChan
 import Foundation
 import HyprCore
 
-/// Канал-заглушка до установки движка (все команды теряются; Python в этом состоянии падал на None).
+/// Inactive channel used before a verified native engine is attached.
 final class DeadChannel: ChannelAPI {
     func geom(_ wid: Int, _ to: Rect, _ cpos: Int, _ csize: Int, dpos: Double, dsize: Double, frm: Rect?, move: Bool,
               warp: Bool, stretch: Bool) {}
@@ -22,7 +22,7 @@ final class DeadChannel: ChannelAPI {
 
 final class LiveEngine: EngineAPI {
     static let dir = "/tmp/hyprwm"
-    static let ptr = dir + "/chan_path"   // путь к текущему каналу; каждая установка — НОВЫЙ файл
+    static let ptr = dir + "/chan_path"   // Each installation publishes a new channel file.
     let hook: String
     var cfg: HyprConfig
     var ch: LiveChannel?
@@ -88,24 +88,32 @@ final class LiveEngine: EngineAPI {
     }
 
     func replaceConfig(_ candidate: HyprConfig) throws {
-        guard let ch, ch.stats.nactive == 0, !ch.pending else { throw CmdError("animations are running; reload after they finish") }
+        guard let ch else { throw CmdError("engine channel unavailable") }
+        if ch.curvesCompatible(candidate) {
+            cfg = candidate
+            ch.raw.pointee.hold_max = (candidate.raw["runtime"]?["hold_max_ms"]?.double ?? 200)/1000
+            ch.base.assumingMemoryBound(to:CChan.ch.self).pointee.prehide = candidate.raw["runtime"]?["prehide"]?.truthy == true ? 1 : 0
+            try ch.configureAppearance(candidate)
+            return
+        }
+        guard ch.stats.nactive == 0, !ch.pending else { throw CmdError("animations are running; reload after they finish") }
         cfg = candidate
         try setup()
     }
 
-    /// Кривые Hyprland -> номера в канале; параметры такта и ожидания размера (engine.setup).
+    /// Publish curve slots, engine timing and client-size confirmation limits.
     func setup() throws {
         guard let ch else { return }
         let h = ch.raw
-        h.pointee.idle_poll = 0.004; h.pointee.phase = 0.1; h.pointee.margin = 0.002   // опрос команд каждые 4 мс (A2)
-        // Ожидание кадра приложения перед стартом стоило 2 кадра задержки; HYPRWM_HOLD=0.017 — вернуть.
+        h.pointee.idle_poll = 0.004; h.pointee.phase = 0.1; h.pointee.margin = 0.002   // Poll commands every 4 ms.
+        // Client frame hold duration can be overridden with HYPRWM_HOLD.
         h.pointee.hold_max = (cfg.raw["runtime"]?["hold_max_ms"]?.double ?? 200)/1000
         ch.base.assumingMemoryBound(to: CChan.ch.self).pointee.prehide = cfg.raw["runtime"]?["prehide"]?.truthy == true ? 1 : 0
-        h.pointee.settle = 1.0; h.pointee.settle_px = 8.0    // ждать конечный размер от приложения; сетка терминалов
+        h.pointee.settle = 1.0; h.pointee.settle_px = 8.0    // Allow client minimum sizes and terminal character grids.
         let ts = cfg.timeScale
         for (i, (_, cv)) in cfg.sortedCurves().enumerated() where i < 16 {
             switch cv {
-            case let .spring(mass, k, d): ch.spring(i, mass, k / (ts * ts), d / ts)   // время ×TIME_SCALE без изменения формы
+            case let .spring(mass, k, d): ch.spring(i, mass, k / (ts * ts), d / ts)   // Scale time without changing the curve shape.
             case let .bezier(p1, p2): ch.bezier(i, p1, p2)
             }
         }

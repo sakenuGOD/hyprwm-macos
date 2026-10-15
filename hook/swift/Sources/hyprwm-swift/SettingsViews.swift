@@ -52,7 +52,8 @@ struct SettingsRootView: View {
                     if page == .hotkeys { HotkeySettings(store:store) }
                     if page == .advanced { Section("Configuration") {
                         Button {store.openConfig()} label:{Label("Open Configuration",systemImage:"doc.text")}
-                        Button {store.importConfig()} label:{Label("Import…",systemImage:"square.and.arrow.down")}
+                        Button {store.importConfig()} label:{Label("Import HyprWM Configuration…",systemImage:"square.and.arrow.down")}
+                        Button {store.importForeignConfig()} label:{Label("Import From Another Window Manager…",systemImage:"arrow.down.doc")}
                         Button {store.exportConfig()} label:{Label("Export…",systemImage:"square.and.arrow.up")}
                         Button {store.resetConfig()} label:{Label("Reset Configuration",systemImage:"arrow.counterclockwise")}
                         Button {NSWorkspace.shared.open(store.url.deletingLastPathComponent())} label:{Label("Show Configuration Folder",systemImage:"folder")}

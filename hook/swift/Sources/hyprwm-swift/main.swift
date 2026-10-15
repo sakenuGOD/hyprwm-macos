@@ -1,23 +1,15 @@
-// hyprwm-swift — демон тайлинга (порт hook/hyprwm.py, MASTER.md §11 П1а).
-//
-// Запуск демона:   hyprwm-swift                 (лог — stdout, как у Python: start.sh пишет в /tmp/hyprwm.log)
-// Сухие режимы (WindowServer, канал и сокет НЕ трогают):
-//   hyprwm-swift --print-config                 зазоры, dwindle, анимации и номера кривых из hypr_cfg.json
-//   hyprwm-swift --layout STATE SPACE X Y W H   раскладка стола из файла состояния (без минимумов)
-//
-// Переменные окружения:
-//   HYPRWM_HOOK        каталог hook/ (по умолчанию ищется вверх от бинарника по config/hypr_shim.lua)
-//   HYPRWM_STATE_DIR   где hyprwm.state.json и minsize_app.json (по умолчанию /tmp/hyprwm-swift —
-//                      чтобы случайный запуск не перетёр файлы Python-демона; для боевой замены — $H)
-//   HYPRWM_CTL         сокет команд (по умолчанию /tmp/hyprwm.ctl)
-//   HYPRWM_TIME_SCALE, HYPRWM_HOLD, HYPRWM_DEBUG — как у Python-демона
-//   HYPRWM_NO_DECO=1   не запускать build/hyprdeco (подложки)
+// Swift tiling daemon and native menu companion.
+// Dry modes: --print-config, --layout, --diagnose, import FILE.
+// HYPRWM_HOOK selects the source integration directory.
+// HYPRWM_STATE_DIR selects persistent state; HYPRWM_CTL selects the Unix socket.
+// HYPRWM_TIME_SCALE, HYPRWM_HOLD and HYPRWM_DEBUG override runtime behavior.
+// HYPRWM_NO_DECO=1 disables the optional decoration helper.
 import AppKit
 import Foundation
 import HyprCore
 
 setvbuf(stdout, nil, _IOLBF, 0)
-signal(SIGPIPE, SIG_IGN)                       // запись в умерший hyprdeco/клиента не должна убивать демон
+signal(SIGPIPE, SIG_IGN)                       // A disconnected client must not terminate the daemon.
 
 let env = ProcessInfo.processInfo.environment
 
@@ -91,6 +83,15 @@ if args == ["--diagnose"] {
     print(diagnose(hook: hook, controlPath: env["HYPRWM_CTL"] ?? "/tmp/hyprwm.ctl").dumps(ensureASCII: false))
     exit(0)
 }
+if args.first == "import" {
+    guard args.count == 2 else { die("usage: hyprwm import FILE") }
+    do {
+        let result=try ForeignConfigImport.importFile(URL(fileURLWithPath:args[1]),configDir:hook+"/config",apply:true)
+        print("Imported \(result.mappedCount) settings from \(result.format).")
+        for issue in result.issues {FileHandle.standardError.write(Data((issue.description+"\n").utf8))}
+    } catch {die("import: \(error)")}
+    exit(0)
+}
 if args == ["--workspace-observe"] {
     do {
         let before=try VerifiedPublicWorkspace.diagnostic(),sys=LiveSys(),snapshot=try sys.snapshot()
@@ -122,7 +123,7 @@ if args.first == "--settings-merge-check" {
 
 switch args.first {
 case "--help", "-h":
-    print("hyprwm-swift [--menu-only [--show-settings] | --diagnose | --print-config | --layout STATE SPACE X Y W H]   (см. hook/swift/README.md)")
+    print("hyprwm-swift [--menu-only [--show-settings] | --diagnose | --print-config | --layout STATE SPACE X Y W H]   (see hook/swift/README.md)")
     exit(0)
 
 case "--print-config":
@@ -134,14 +135,14 @@ case "--print-config":
         print("hook:", hook)
         print("gaps_in", pyFloat(gi), "gaps_out", go.values.map(pyFloat), "split_width_mult", pyFloat(t.splitWidthMult),
               "default_ratio", pyFloat(t.defaultRatio))
-        for (i, (name, cv)) in cfg.sortedCurves().enumerated() { print("кривая", i, name, cv) }
+        for (i, (name, cv)) in cfg.sortedCurves().enumerated() { print("curve", i, name, cv) }
         for leaf in ["windowsIn", "windowsOut", "windowsMove", "fadeIn", "fadeOut", "border", "workspaces"] {
             let a = cfg.animation(leaf), e = cfg.anim(leaf)
-            print(leaf, a.kind, a.curve, "speed", pyFloat(a.speed), "style '\(a.style)'", "-> кривая", e.curve,
-                  "длит", pyFloat(e.dur), e.on ? "вкл" : "выкл")
+            print(leaf, a.kind, a.curve, "speed", pyFloat(a.speed), "style '\(a.style)'", "-> curve", e.curve,
+                  "duration", pyFloat(e.dur), e.on ? "on" : "off")
         }
-        print("правил float:", cfg.floatRules.count)
-    } catch { die("конфиг: \(error)") }
+        print("float rules:", cfg.floatRules.count)
+    } catch { die("configuration: \(error)") }
     exit(0)
 
 case "--layout":
@@ -158,48 +159,52 @@ case "--layout":
             let r = t.withGaps(b, area)
             print(wid, [r.x, r.y, r.w, r.h].map { Int(pyRound($0)) })
         }
-    } catch { die("раскладка: \(error)") }
+    } catch { die("layout: \(error)") }
     exit(0)
 
 case nil:
     break
 
 default:
-    die("неизвестный аргумент \(args[0]) (--help)")
+    die("unknown argument \(args[0]) (--help)")
 }
 
-// ── демон ───────────────────────────────────────────────────────────────
+// Daemon lifecycle.
 let ctl = env["HYPRWM_CTL"] ?? "/tmp/hyprwm.ctl"
 let stateDir = env["HYPRWM_STATE_DIR"] ?? "/tmp/hyprwm-swift"
 try? FileManager.default.createDirectory(atPath: stateDir, withIntermediateDirectories: true)
 
 if CommandServer.isAlive(ctl) || (ctl != "/tmp/hyprwm.ctl" && CommandServer.isAlive("/tmp/hyprwm.ctl")) {
-    die("на \(ctl) уже отвечает демон — не запускаюсь поверх (сначала hook/stop.sh)")
+    die("a daemon already responds on \(ctl); stop it before starting another")
 }
 
 let cfg: HyprConfig
 do {
     let base = try HyprConfig.load(configDir: hook + "/config", rebuild: env["HYPRWM_ADOPT_ENGINE"] != "1", timeScale: timeScale)
     cfg = try NativeRuntimeConfig.load(base: base, configDir: hook + "/config", environment: env)
-} catch { die("конфиг: \(error)") }
+} catch { die("configuration: \(error)") }
 let sys = LiveSys()
 let eng = LiveEngine(hook: hook, cfg: cfg)
 let deco: DecoAPI
 if env["HYPRWM_NO_DECO"] == "1" {
     deco = NullDeco()
 } else {
-    do { deco = try Deco(hook: hook) } catch { log("подложки не запущены:", error); deco = NullDeco() }
+    do { deco = try Deco(hook: hook) } catch { log("decoration helper unavailable:", error); deco = NullDeco() }
 }
 let wm = WM(sys: sys, eng: eng, deco: deco, cfg: cfg, statePath: stateDir + "/hyprwm.state.json",
             minsizePath: stateDir + "/minsize_app.json")
-do { wm.options = try RuntimeOptions.load(configDir: hook + "/config") } catch { die("конфиг Swift: \(error)") }
+do { wm.options = try RuntimeOptions.load(configDir: hook + "/config") } catch { die("Swift configuration: \(error)") }
 wm.controlHandler = { command in
     guard command == "reload" else { return nil }
-    let base = try HyprConfig.load(configDir: hook + "/config", rebuild: true, timeScale: timeScale)
+    let base = try HyprConfig.load(configDir: hook + "/config", rebuild: false, timeScale: timeScale)
     let next = try NativeRuntimeConfig.load(base: base, configDir: hook + "/config", environment: env)
     let nextOptions = try RuntimeOptions.load(configDir: hook + "/config")
-    try NativeHotkeys.apply(configDir:hook+"/config")
-    wm.cancelFocusRecovery()
+    do { try NativeHotkeys.apply(configDir:hook+"/config") }
+    catch { log("hotkey configuration:",error) }
+    let old=wm.cfg.raw, fresh=next.raw
+    let geometryChanged = old["config"]?["general"]?["gaps_in"] != fresh["config"]?["general"]?["gaps_in"] ||
+        old["config"]?["general"]?["gaps_out"] != fresh["config"]?["general"]?["gaps_out"] ||
+        old["config"]?["dwindle"] != fresh["config"]?["dwindle"] || old["window_rules"] != fresh["window_rules"]
     try eng.replaceConfig(next)
     wm.cfg = next; wm.options = nextOptions; wm.floatRules = next.floatRules
     let (inside, outside) = next.gaps()
@@ -207,7 +212,8 @@ wm.controlHandler = { command in
     wm.tile.defaultRatio = next.makeDwindle().defaultRatio
     wm.tile.splitWidthMult = next.makeDwindle().splitWidthMult
     wm.tile.minimumPolicy = next.makeDwindle().minimumPolicy
-    if let last = wm.last { wm.apply(last.area, last.space, last.wins, force: true) }
+    wm.setEnabled(nextOptions.tilingEnabled)
+    if geometryChanged, wm.enabled, let last = wm.last { wm.apply(last.area, last.space, last.wins) }
     return "configuration reloaded"
 }
 wm.clientPolicy = ClientPolicy(path:hook + "/compositor-clients.json")
@@ -240,29 +246,48 @@ wm.overviewRefresh = {
     }
 }
 wm.cfgSink = Configurer(sys: sys) { r in
-    DispatchQueue.main.async {                 // ответ configure — событие: сразу такт (в Python — опрос cfg_q)
+    DispatchQueue.main.async {                 // Configure completion schedules an immediate tick.
         wm.cfgQ.append(r)
         wm.tick(socketReady: false)
     }
 }
-do { try eng.ensure(startup: true) } catch { die("движок: \(error)") }
-do {try NativeHotkeys.apply(configDir:hook+"/config")} catch {die("горячие клавиши: \(error)")}
+do { try eng.ensure(startup: true) } catch { die("engine: \(error)") }
+do {try NativeHotkeys.apply(configDir:hook+"/config")} catch {die("hotkeys: \(error)")}
 sys.startLauncher()
-do { wm.server = try CommandServer(path: ctl) } catch { die("сокет: \(error)") }
-log("hyprwm запущен (swift); состояние в \(stateDir), сокет \(ctl)")
+do { wm.server = try CommandServer(path: ctl) } catch { die("socket: \(error)") }
+wm.setEnabled(wm.options.tilingEnabled)
+let ecosystemAPI = try? EcosystemAPI(path:env["HYPRWM_EVENTS"] ?? ctl+".events")
+var pendingConfigReload:DispatchWorkItem?
+func reloadSharedConfiguration(_ attempt:Int=0) {
+    pendingConfigReload?.cancel()
+    do { _ = try wm.controlHandler?("reload") }
+    catch {
+        guard attempt < 30 else { log("configuration reload:",error); return }
+        let task=DispatchWorkItem { reloadSharedConfiguration(attempt+1) }
+        pendingConfigReload=task
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.065,execute:task)
+    }
+}
+let configWatcher = try? ConfigFileWatcher(url:TextConfig.url(configDir:hook+"/config")) {
+    DispatchQueue.main.async { reloadSharedConfiguration() }
+}
+log("HyprWM started (Swift); state: \(stateDir), socket \(ctl)")
 
-// такт 16 мс (POLL в Python) — сверка и follow_mouse; всё остальное — по событиям
+// Census and pointer focus run every 16 ms; other work is event driven.
 let timer = DispatchSource.makeTimerSource(queue: .main)
 timer.schedule(deadline: .now(), repeating: .milliseconds(16), leeway: .milliseconds(1))
-timer.setEventHandler { wm.tick(socketReady: false) }
+timer.setEventHandler {
+    wm.tick(socketReady:false)
+    if let last=wm.last {ecosystemAPI?.observe(windows:last.wins,space:last.space,focusedWindow:wm.sp(last.space).focus)}
+}
 timer.resume()
 
-// команда в сокете — обработать сразу (не ждать такта)
+// Process socket commands immediately.
 let sockSrc = DispatchSource.makeReadSource(fileDescriptor: wm.server!.fd, queue: .main)
 sockSrc.setEventHandler { wm.tick(socketReady: true) }
 sockSrc.resume()
 
-// активация приложения — такт сразу (front_pid сверяется в такте через _SLPSGetFrontProcess, как в Python)
+// Application activation schedules an immediate tick with native foreground checks.
 NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
                                                   object: nil, queue: .main) { _ in wm.tick(socketReady: false) }
 
@@ -283,5 +308,5 @@ let signalSources = [SIGTERM, SIGINT].map { value -> DispatchSourceSignal in
     source.setEventHandler { shutdown.request { ready in if ready { application.terminate(nil) } } }
     source.resume(); return source
 }
-withExtendedLifetime((menu, signalSources,firstMapService)) { application.run() }
+withExtendedLifetime((menu,signalSources,firstMapService,configWatcher,ecosystemAPI)) { application.run() }
 firstMapService?.close()

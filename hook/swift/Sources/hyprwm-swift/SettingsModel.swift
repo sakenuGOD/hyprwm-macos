@@ -264,6 +264,16 @@ final class SettingsStore: ObservableObject {
             try backupConfig(); try bytes.write(to:url,options:.atomic); reload()
         } catch {self.error=error.localizedDescription}
     }
+    func importForeignConfig() {
+        let panel=NSOpenPanel();panel.canChooseDirectories=false;panel.allowsMultipleSelection=false
+        panel.message="Import settings from another window manager. Unsupported entries are reported."
+        guard panel.runModal() == .OK,let source=panel.url else{return}
+        do {
+            let result=try ForeignConfigImport.importFile(source,configDir:hook+"/config",apply:true)
+            reload()
+            error=result.issues.isEmpty ? nil:result.issues.map(\.description).joined(separator:"\n")
+        } catch {self.error=error.localizedDescription}
+    }
     func exportConfig() {
         let panel=NSSavePanel(); panel.nameFieldStringValue="hyprwm.conf"
         guard panel.runModal() == .OK, let target=panel.url else {return}
