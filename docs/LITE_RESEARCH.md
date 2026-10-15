@@ -45,7 +45,9 @@ runtime adapters.
    more than two points on at least one axis. An unverified parking attempt
    falls back to direct placement. Drive image bounds,
    position, border bounds and border path with one Core Animation start time
-   and the same frame samples from the configured curve.
+   and the same frame samples from the configured curve. The visual endpoint
+   uses the resized client's accepted dimensions; the logical request remains
+   separate for configure receipts and minimum-size learning.
 5. Retarget from the current presentation layer, including measured velocity.
    Keep the exact target proxy until final AX placement returns, then reveal the
    real client. External closes use a bounded in-memory image cache.
@@ -115,6 +117,16 @@ Native Mission Control behavior and multiple-display parking need separate
 desktop evidence. Public AX matching can refuse indistinguishable overlapping
 windows when the optional ID bridge is disabled.
 
+A later timing probe sampled public CG state immediately at a Terminal
+window-created callback, before its blocking AX metadata query. The new CG row
+was off-screen with a zero frame during that census; about 28 ms after callback
+entry, AX metadata and a second CG census showed a standard window already
+visible at its default frame. This supplies a concrete fast-admission timing
+hypothesis. It does not establish presentation ordering or authorize movement
+without ordinary-window classification, rules, exact identity and a durable
+recovery record. The existing optional ID bridge can avoid a full-census match
+when available; its SIP-on source classification above still applies.
+
 Automated release compilation establishes buildability only. The coordinator
 must separately verify forced Lite with 2–4 disposable windows: tiling,
 open/close/swap clips, border tracking, pointer focus, gap hot reload, virtual
@@ -142,19 +154,33 @@ clients. One Terminal recovery accepted a frame within six points of the recorde
 frame because of its character-grid sizing; recovery does not guarantee exact
 pixel dimensions for every client.
 
-The visible empty-workspace panel received guarded numeric key events in the
-same-application test, and returning to an occupied workspace dismissed it after
-native client focus. A later source guard for cross-application focus handoff
-still needs its own desktop test. Native application hiding and broad modal,
-multiple-display, retarget and burst coverage also remain pending.
+The visible empty-workspace panel received guarded numeric key events in both
+same-application and cross-application workspace tests. Returning to a TextEdit
+workspace dismissed it after native client focus, and guarded numeric input
+appeared in the disposable document. A physical Command-H during a resize hid
+that application's proxy and border; unhide returned its client to the layout.
+Broad modal, multiple-display, retarget and burst coverage remain pending.
 
 Actual captured close/expansion frames exposed a late content jump: a stretched
 old half-height Terminal image changed to the resized live client at handoff.
-The first-map and clean-landing motion gates therefore remain failed. Refreshing
-the parked client's resized backing and crossfading it through the existing
-proxy is a candidate under test, not a verified fix. Apple's public
+Refreshing the parked client's resized backing and crossfading it during the
+proxy motion removed the late stretched-title switch in a further capture.
+That capture's earlier frames also showed a proxy disappearing and briefly
+displaying its final rectangle before moving back into the trajectory. A further
+capture with accepted-size endpoints and one model/animation transaction did not
+show that reversal; its final five actual frames were stable and opaque. It still
+showed doubled, stretched text during the content fade. The accepted client size
+also differed from the logical target by two points in width and four in height.
+Closing the full-height sibling in this take incorrectly promoted the survivors
+to a top/bottom layout. These are separate remaining failures; the first-map and
+complete clean-landing gates remain failed. Apple's public
 [CATransition](https://developer.apple.com/documentation/quartzcore/catransition)
 supports a [fade](https://developer.apple.com/documentation/quartzcore/catransitiontype/fade)
 for layer content changes; capture timing and off-screen client backing updates
-require live evidence. Source checks and extracted motion/identity/recovery
-checks are supporting evidence, not live passes.
+still need broader live evidence. The implementation separates accepted visual
+size from logical layout requests and groups model changes with their explicit
+animations. Apple's [Core Animation timing and transaction guide](https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/CoreAnimation_guide/AdvancedAnimationTricks/AdvancedAnimationTricks.html)
+documents layer-local start times and nested transaction commits; this supports
+the implementation hypothesis and does not establish its frame behavior.
+Source checks and extracted motion/identity/recovery checks are supporting
+evidence, not live passes.
