@@ -27,7 +27,7 @@ Once running, open two disposable Terminal or TextEdit windows. Try the focus/mo
 ~/.local/bin/hyprwm restore-all
 ```
 
-`doctor` diagnoses readiness; `status` reports runtime state; `restore-all` is for HyprWM-owned hidden/parked windows. A pending/refused result needs attention before removal. See [troubleshooting](docs/TROUBLESHOOTING.md).
+`doctor` diagnoses readiness; `status` reports runtime state; `restore-all` is for HyprWM-owned hidden/parked windows. Explicit restoration leaves tiling paused; inspect the real windows before `hyprwmctl resume`. A pending/refused result needs attention before removal. See [troubleshooting](docs/TROUBLESHOOTING.md).
 
 ## Default shortcuts
 

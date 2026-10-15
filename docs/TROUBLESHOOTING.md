@@ -28,6 +28,18 @@ Keep the app and checkout installed until recovery finishes:
 
 This is the recovery entry point for HyprWM-owned hidden/parked windows. Read any refusal or pending result; do not assume every window was restored because a command was sent. Confirm the real windows are visible. If the daemon is still alive, let it finish recovery before quitting. If it crashed, retain its persisted state and use the documented startup/recovery path rather than deleting state files.
 
+Explicit `restore-all` leaves tiling paused. After the command succeeds, inspect the real windows before resuming:
+
+```sh
+~/.local/bin/hyprwmctl status
+# Only after checking visibility and placement:
+~/.local/bin/hyprwmctl resume
+```
+
+A `Lite restoration pending:` or `Engine restoration pending:` response means recovery is incomplete. CLI clients retry these markers for four seconds, while the Engine daemon's recovery attempt can continue for eight seconds. Keep the daemon running, inspect status and visibility, and retry `restore-all` after allowing the current attempt to finish. Engine status exposes `visibility.engine_recovery_active` and `visibility.restore_pending`; the latter also includes visible mid-motion pause landings. An empty hidden list is insufficient if that work remains. A timeout preserves unresolved records and leaves tiling paused.
+
+Engine distinguishes an intentional prepared restart from a crash. A validated one-use handover preserves deliberately hidden windows through the prepared restart, then consumes the marker. Startup without that marker attempts restoration, even when configured paused. Automatic startup recovery may return to the configured enabled state after completion; explicit pause or restoration keeps it paused. The older `unhide all` operation does not provide the same completion protocol. Scoped live tests covered a disposable owned window; global recovery of existing user windows remains unverified.
+
 Do not kill WindowServer, Dock or the affected application to recover a HyprWM window. Do not delete the state ledger, force a window alpha globally, or overwrite the configuration while diagnosing ownership. If recovery refuses a stale or reused window identity, report the exact refusal and keep the state for inspection.
 
 If Lite starts paused with `lite.recovery_error` reporting Engine hidden-window records, its public AX recovery cannot restore the native Engine's alpha/Space ownership. Start the matching Engine runtime and finish `restore-all` there before selecting Lite. Keep the Engine resources and state until that succeeds. New installations without Engine records do not need this step. A successful Lite recovery does not establish global recovery of another mode's records.

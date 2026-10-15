@@ -9,10 +9,11 @@ HyprWM is an experimental macOS tiling WM. Distinguish implementation, automated
 | State, apply, census, hide/restore, pointer focus | `hook/swift/Sources/HyprCore/WM.swift` |
 | Pause, activation, transfer, drag | `HyprCore/WMProduction.swift` |
 | Split tree, geometry, promotion | `HyprCore/Tile.swift` |
+| Engine recovery and startup preflight | `HyprCore/EngineRecovery.swift`, runtime `EngineStatePreflight.swift` |
 | Focus, dialog policy and restoration | `HyprCore/FocusPolicy.swift`, `FocusRecovery.swift`, `RestorePlacement.swift`, `LauncherArrival.swift` |
 | Rules, config, migration | `HyprCore/WindowProperties.swift`, `TextConfig.swift`, `RuntimeConfig.swift`, `ForeignConfigImport.swift` |
 | Entry, real AX/Space/process access, engine | `hook/swift/Sources/hyprwm-swift/main.swift`, `LiveSys.swift`, `LiveEngine.swift` |
-| Lite runtime, AX, recovery, proxy/borders, shortcuts | `LiteRuntime.swift`, `LiteAX.swift`, `LiteSys.swift`, `LiteRestorePump.swift`, `LiteEngine.swift`, `LiteOverlay.swift`, `LiteHotkeys.swift` in the runtime target |
+| Lite runtime, AX, recovery, proxy/borders, shortcuts | `LiteRuntime.swift`, `LiteAX.swift`, `LiteSys.swift`, `LiteRestorePump.swift`, `LiteEngine.swift`, `LiteOverlay.swift`, `LiteHotkeys.swift`, `LiteWorkspaceReceiver.swift` in the runtime target |
 | Settings, menu, shortcuts | `Settings*.swift`, `MenuBar.swift`, `NativeHotkeys.swift` in that runtime target; `hook/keys/` |
 | Native engine and bridge | `hook/src/`, `hook/wm/`, `hook/identity/` |
 | Tests, schema, package | `hook/swift/Tests/`, `hook/config/runtime.schema.json`, `hook/swift/build_app.sh` |
