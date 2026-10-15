@@ -200,10 +200,10 @@ Readable `bind` syntax uses `SUPER`/`CMD`/`COMMAND` = **Command**, `ALT`/`OPTION
 
 | Binding object field (`bind = {...}` / `hotkeys` array) | Default | Actual consumer |
 | --- | --- | --- |
-| `id` | readable bind generates `2048 + ordinal` | Stable baseline identity `0…4095`; `NativeHotkeys.apply` resolves an override. |
+| `id` | readable bind generates `2048 + ordinal` | Baseline identity `0…4095`; `NativeHotkeys.apply` or `LiteHotkeys.reload` resolves an override. IDs alone refer to the active mode's baseline; include `command` when moving bindings between modes. |
 | `keycode` | required by text schema | Carbon code `0…127`, e.g. H = `4`. |
 | `modifiers` | required by text schema | Carbon mask: Command `256`, Shift `512`, Option `2048`, Control `4096`; combine with addition. |
-| `enabled` | `true` | Native watcher ignores disabled bindings. |
-| `command` | baseline action if omitted | Array of `1…32` strings, each at most 512 characters. Matches an existing action or adds a native binding when chord fields are supplied; not a shell program. |
+| `enabled` | `true` | The active hotkey handler skips disabled bindings. |
+| `command` | baseline action if omitted | Array of `1…32` strings, each at most 512 characters. Matches an existing action or adds a binding when chord fields are supplied; not a shell program. |
 
-At most 256 overrides are accepted. Duplicate enabled chords are refused. A native binding baseline and the hotkey watcher must be present; a parsed `bind` line alone does not start a watcher. Settings → Hotkeys shows the effective bindings. See [API.md](API.md) for supported command arguments and [MIGRATING.md](MIGRATING.md) for foreign modifier conversion.
+At most 256 overrides are accepted. Duplicate enabled chords are refused. Lite registers its built-in baseline and overrides through Carbon in the runtime. Engine needs its native binding baseline and separate hotkey watcher; parsing a `bind` line alone does not start that watcher. Another application can already own a Carbon chord; Lite reports the registration conflict count in `status.lite.hotkey_conflicts`. Settings → Hotkeys shows the configured bindings. See [API.md](API.md) for supported command arguments and [MIGRATING.md](MIGRATING.md) for foreign modifier conversion.
