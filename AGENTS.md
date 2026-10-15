@@ -13,7 +13,7 @@ HyprWM is an experimental macOS tiling WM. Distinguish implementation, automated
 | Focus, dialog policy and restoration | `HyprCore/FocusPolicy.swift`, `FocusRecovery.swift`, `RestorePlacement.swift`, `LauncherArrival.swift` |
 | Rules, config, migration | `HyprCore/WindowProperties.swift`, `TextConfig.swift`, `RuntimeConfig.swift`, `ForeignConfigImport.swift` |
 | Entry, real AX/Space/process access, engine | `hook/swift/Sources/hyprwm-swift/main.swift`, `LiveSys.swift`, `LiveEngine.swift` |
-| Lite runtime, AX, recovery, proxy/borders, shortcuts | `LiteRuntime.swift`, `LiteAX.swift`, `LiteSys.swift`, `LiteRestorePump.swift`, `LiteEngine.swift`, `LiteOverlay.swift`, `LiteHotkeys.swift`, `LiteWorkspaceReceiver.swift` in the runtime target |
+| Experimental Lite branch: runtime, AX, recovery, proxy/borders, shortcuts | `LiteRuntime.swift`, `LiteAX.swift`, `LiteSys.swift`, `LiteRestorePump.swift`, `LiteEngine.swift`, `LiteOverlay.swift`, `LiteHotkeys.swift`, `LiteWorkspaceReceiver.swift` in the runtime target |
 | Settings, menu, shortcuts | `Settings*.swift`, `MenuBar.swift`, `NativeHotkeys.swift` in that runtime target; `hook/keys/` |
 | Native engine and bridge | `hook/src/`, `hook/wm/`, `hook/identity/` |
 | Tests, schema, package | `hook/swift/Tests/`, `hook/config/runtime.schema.json`, `hook/swift/build_app.sh` |
@@ -27,7 +27,7 @@ swift test --package-path hook/swift
 git diff --check
 ```
 
-Binary: `hook/swift/.build/release/hyprwm-swift`; wrapper: `scripts/hyprwm`; live status: `scripts/hyprwmctl status`. `./install.sh` installs without launching; `zsh hook/swift/build_app.sh` builds the separate menu companion. Config: `~/.config/hyprwm/hyprwm.conf` / `HYPRWM_CONFIG`. Control: `/tmp/hyprwm.ctl` / `HYPRWM_CTL`. `hook/start.sh`/`stop.sh` delegate to `hook/lifecycle.py`; inspect its runtime selection before launching.
+Binary: `hook/swift/.build/release/hyprwm-swift`; wrapper: `scripts/hyprwm`; live status: `scripts/hyprwmctl status`. `./install.sh` installs without launching; `zsh hook/swift/build_app.sh` builds the separate menu companion. Config: `~/.config/hyprwm/hyprwm.conf` / `HYPRWM_CONFIG`. Control: `/tmp/hyprwm.ctl` / `HYPRWM_CTL`. `hook/start.sh`/`stop.sh` require the development helper `hook/lifecycle.py`, which is not tracked in the public checkout; they are not a clean-clone launch path.
 
 ## Work discipline
 

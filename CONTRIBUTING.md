@@ -14,7 +14,7 @@ swift test --package-path hook/swift
 git diff --check
 ```
 
-The executable is `hook/swift/.build/release/hyprwm-swift`. `scripts/hyprwm --help` shows dry CLI modes. The repository also contains Python/Lua and native integration paths. `hook/start.sh` and `hook/stop.sh` delegate to `hook/lifecycle.py`; inspect the current lifecycle selection before a live launch. See [packaging](hook/swift/PACKAGING.md) for app bundles and their current distribution limits.
+The executable is `hook/swift/.build/release/hyprwm-swift`. `scripts/hyprwm --help` shows dry CLI modes. The repository also contains Python/Lua and native integration paths. `hook/start.sh` and `hook/stop.sh` require the development helper `hook/lifecycle.py`, which is not tracked in the public checkout. They are not a clean-clone launch path. Running this Engine-only branch needs the already verified native installation described in the README; Lite is developed on its separate experimental branch. See [packaging](hook/swift/PACKAGING.md) for app bundles and their current distribution limits.
 
 ## Choose the narrowest check
 
