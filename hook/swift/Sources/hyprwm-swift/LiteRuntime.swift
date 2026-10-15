@@ -87,6 +87,7 @@ final class LiteRuntime {
         guard target != sys.workspace, wm.enabled else { return }
         sys.cancelFocus()
         let source = sys.workspace
+        configure?.cancelAll(); wm.target.removeAll()
         for (wid, sid) in sys.membership where sid == source { engine.channel.alpha(wid, 0, 16, 0) }
         sys.previousWorkspace = source; sys.workspace = target
         for (wid, sid) in sys.membership where sid == target {
