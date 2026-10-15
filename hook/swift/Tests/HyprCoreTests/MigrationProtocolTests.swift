@@ -109,6 +109,7 @@ final class MigrationProtocolTests:XCTestCase {
         try Data(JSON.object([("schema",.int(1)),("generation",.string("owned")),("targets",.array(targets))]).dumps().utf8).write(to:path)
         wm.clientPolicy=ClientPolicy(path:path.path);wm.options.nativeFrames=true
         let recorder=SnapshotHandoffTests.Recorder();wm.cfgSink=recorder
+        wm.target.removeAll() // Exercise a new configure, not an unchanged settled target.
         wm.apply(fixture.area,1,windows,force:true);XCTAssertEqual(Set(eng.ch.nativeRequests),[1,2])
         XCTAssertTrue(recorder.jobs.isEmpty);eng.ch.nativeRequests=[]
         sys.births[101]="101:40:51";sys.capabilities[102]=5
