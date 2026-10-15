@@ -6,7 +6,8 @@ final class LiteRuntime {
     let hook: String, controlPath: String, stateDir: String
     let environment: [String: String]
     let sys: LiteSys, engine: LiteEngine, wm: WM
-    private var formattingStatus = false, stopping = false, recovering = false
+    private var formattingStatus = false, stopping = false, recovering = true
+    private var recoveryEpoch = 0
     private var timer: DispatchSourceTimer?, socketSource: DispatchSourceRead?
     private var signals: [DispatchSourceSignal] = []
     private var menu: MenuBarController?, watcher: ConfigFileWatcher?, hotkeys: LiteHotkeys?
@@ -46,6 +47,7 @@ final class LiteRuntime {
         if command == "resume", recovering { throw CmdError("resume refused: complete restore-all before resuming Lite tiling") }
         if command == "restore-all" {
             if let error = sys.recovery.loadError { throw CmdError("restore-all: \(error)") }
+            recoveryEpoch += 1 // An explicit restore cancels the startup-enable callback.
             recovering = true; wm.setEnabled(false); configure?.cancelAll(); engine.channel.prepareRecovery()
             wm.hidden.removeAll(); wm.save()
             let remaining = restoreRecords()
@@ -118,7 +120,7 @@ final class LiteRuntime {
     /// Returns unresolved exact lifetimes; records are deleted only after AX ACK.
     @discardableResult private func restoreRecords() -> Int {
         if sys.recovery.loadError != nil { return max(1, sys.recovery.records.count) }
-        _ = try? sys.snapshot()
+        guard (try? sys.snapshot()) != nil else { return sys.recovery.records.count }
         for record in Array(sys.recovery.records.values) {
             if sys.processExited(record.pid) || sys.processBirth(record.pid).map({ $0 != record.birth }) == true ||
                 sys.winPidLevel(record.wid).pid.map({ $0 != record.pid }) == true { sys.recovery.remove(record.wid); engine.channel.recovered(record.wid); continue }
@@ -134,9 +136,11 @@ final class LiteRuntime {
         return sys.recovery.records.count
     }
     private func recoverBeforeStart(_ ready: @escaping () -> Void) {
+        recoveryEpoch += 1; let epoch = recoveryEpoch; recovering = true
         if let error = sys.recovery.loadError { log("Lite recovery:", error, "; tiling stays paused"); return }
         let deadline = sys.now()+3
         func attempt() {
+            guard self.recoveryEpoch == epoch, !self.stopping else { return }
             let remaining = self.restoreRecords()
             if remaining == 0 { ready(); return }
             guard self.sys.now() < deadline else {
@@ -200,6 +204,7 @@ final class LiteRuntime {
         }
         recoverBeforeStart { [weak self] in
             guard let self else { return }
+            self.recovering = false
             self.wm.hidden.removeAll(); self.wm.save()
             self.wm.setEnabled(self.wm.options.tilingEnabled)
             log("HyprWM started (Lite); public AX, virtual workspaces, \(self.engine.channel.captures.permitted ? "captured proxy animations" : "Screen Recording missing; direct AX fallback")")
@@ -207,7 +212,7 @@ final class LiteRuntime {
         application.run(); exit(0)
     }
     private func shutdown(_ completion: @escaping (Bool) -> Void) {
-        guard !stopping else { completion(false); return }; stopping = true; recovering = true
+        guard !stopping else { completion(false); return }; stopping = true; recovering = true; recoveryEpoch += 1
         pendingReload?.cancel(); wm.setEnabled(false); configure?.cancelAll(); engine.channel.prepareRecovery()
         wm.hidden.removeAll(); wm.save()
         let deadline = sys.now()+3

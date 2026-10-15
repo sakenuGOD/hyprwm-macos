@@ -21,7 +21,8 @@ final class LiteAX {
         let birth: String
         var windows: [Int: Window] = [:]
         var focused: Int?, flags = NativeFocusFlags.unknown
-        var refreshed = 0.0, refreshing = false
+        var refreshed = 0.0, refreshing = false, enumerated = false
+        var cursor = 0
         init(pid: Int, birth: String) {
             queue = DispatchQueue(label: "hyprwm.lite.ax.\(pid)", qos: .userInteractive)
             application = AXUIElementCreateApplication(pid_t(pid)); self.birth = birth
@@ -48,6 +49,23 @@ final class LiteAX {
     }
     static func string(_ element: AXUIElement, _ key: String) -> String { attribute(element, key) as? String ?? "" }
     static func bool(_ element: AXUIElement, _ key: String) -> Bool { attribute(element, key) as? Bool ?? false }
+    static func attributes(_ element: AXUIElement) -> [String: Any]? {
+        let keys = [kAXRoleAttribute, kAXSubroleAttribute, kAXTitleAttribute, kAXModalAttribute,
+                    "AXFullScreen", kAXPositionAttribute, kAXSizeAttribute]
+        var result: CFArray?
+        guard AXUIElementCopyMultipleAttributeValues(element, keys as CFArray, [], &result) == .success,
+              let values = result as? [Any], values.count == keys.count else { return nil }
+        return Dictionary(uniqueKeysWithValues: zip(keys, values))
+    }
+    static func frame(_ attributes: [String: Any]) -> Rect? {
+        guard let rawPosition = attributes[kAXPositionAttribute], let rawSize = attributes[kAXSizeAttribute] else { return nil }
+        let position = rawPosition as CFTypeRef, size = rawSize as CFTypeRef
+        guard CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(size) == AXValueGetTypeID() else { return nil }
+        var point = CGPoint.zero, dimensions = CGSize.zero
+        guard AXValueGetValue(unsafeBitCast(position, to: AXValue.self), .cgPoint, &point),
+              AXValueGetValue(unsafeBitCast(size, to: AXValue.self), .cgSize, &dimensions) else { return nil }
+        return Rect(point.x, point.y, dimensions.width, dimensions.height)
+    }
     static func frame(_ element: AXUIElement) -> Rect? {
         guard let position = attribute(element, kAXPositionAttribute), let size = attribute(element, kAXSizeAttribute),
               CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(size) == AXValueGetTypeID() else { return nil }
@@ -73,7 +91,7 @@ final class LiteAX {
     }
     func enumerated(_ pid: Int) -> Bool {
         guard let client = client(pid) else { return false }
-        lock.lock(); defer { lock.unlock() }; return client.refreshed > 0
+        lock.lock(); defer { lock.unlock() }; return client.enumerated
     }
     func noteFocused(_ pid: Int, _ wid: Int) {
         guard let client = client(pid) else { return }
@@ -87,42 +105,55 @@ final class LiteAX {
         client.refreshing = true; lock.unlock()
         client.queue.async { [weak self] in
             guard let self else { return }
-            let elements = Self.attribute(client.application, kAXWindowsAttribute) as? [AXUIElement] ?? []
-            var windows: [Int: Window] = [:]
-            for element in elements.prefix(256) {
+            let began = ProcessInfo.processInfo.systemUptime
+            guard let elements = Self.attribute(client.application, kAXWindowsAttribute) as? [AXUIElement] else {
+                self.lock.lock(); client.refreshing = false; client.refreshed = began
+                client.flags |= NativeFocusFlags.unknown; self.lock.unlock(); return
+            }
+            self.lock.lock(); let known = client.windows, cursor = client.cursor; self.lock.unlock()
+            var windows = known.filter { wid, _ in rows.contains { $0.wid == wid && $0.pid == pid } }
+            var processed = 0
+            for offset in 0..<min(256, elements.count) {
+                if processed > 0, ProcessInfo.processInfo.systemUptime-began > 0.05 { break }
+                let element = elements[(cursor+offset)%elements.count]; processed += 1
                 AXUIElementSetMessagingTimeout(element, 0.08)
+                guard let attributes = Self.attributes(element) else { break }
                 let wid: Int?
                 var number: CGWindowID = 0
                 if let bridge = self.bridge, bridge(element, &number) == .success,
                    rows.contains(where: { $0.wid == Int(number) && $0.pid == pid }) { wid = Int(number) }
-                else if let frame = Self.frame(element) {
-                    let title = Self.string(element, kAXTitleAttribute)
+                else if let previous = known.first(where: { CFEqual($0.value.element, element) }),
+                        rows.contains(where: { $0.wid == previous.key && $0.pid == pid }) { wid = previous.key }
+                else if let frame = Self.frame(attributes) {
+                    let title = attributes[kAXTitleAttribute] as? String ?? ""
                     let matches = rows.filter { $0.pid == pid && $0.rect.maxDiff(frame) <= 2 && (title.isEmpty || $0.name.isEmpty || $0.name == title) }
                     wid = matches.count == 1 ? matches[0].wid : nil
                 } else { wid = nil }
-                guard let wid, windows[wid] == nil else { continue }
+                guard let wid else { continue }
                 var settable = DarwinBoolean(false)
-                _ = AXUIElementIsAttributeSettable(element, kAXSizeAttribute as CFString, &settable)
-                windows[wid] = Window(element: element, role: Self.string(element, kAXRoleAttribute),
-                    subrole: Self.string(element, kAXSubroleAttribute), resizable: settable.boolValue,
-                    modal: Self.bool(element, kAXModalAttribute), fullscreen: Self.bool(element, "AXFullScreen"))
+                guard AXUIElementIsAttributeSettable(element, kAXSizeAttribute as CFString, &settable) == .success else { continue }
+                windows[wid] = Window(element: element, role: attributes[kAXRoleAttribute] as? String ?? "",
+                    subrole: attributes[kAXSubroleAttribute] as? String ?? "", resizable: settable.boolValue,
+                    modal: attributes[kAXModalAttribute] as? Bool ?? false, fullscreen: attributes["AXFullScreen"] as? Bool ?? false)
             }
             var focused: Int?, flags = NativeFocusFlags.noKey
             if let value = Self.attribute(client.application, kAXFocusedWindowAttribute), CFGetTypeID(value) == AXUIElementGetTypeID() {
                 let element = unsafeBitCast(value, to: AXUIElement.self)
                 focused = windows.first(where: { CFEqual($0.value.element, element) })?.key
                 flags = focused == nil ? NativeFocusFlags.unknown : 0
-                if Self.bool(element, kAXModalAttribute) { flags |= NativeFocusFlags.modal }
+                let metadata = focused.flatMap { windows[$0] }
+                if metadata?.modal == true { flags |= NativeFocusFlags.modal }
                 if let children = Self.attribute(element, kAXChildrenAttribute) as? [AXUIElement],
                    children.prefix(16).contains(where: { Self.string($0, kAXRoleAttribute) == kAXSheetRole }) { flags |= NativeFocusFlags.child }
-                let role = Self.string(element, kAXRoleAttribute), subrole = Self.string(element, kAXSubroleAttribute)
+                let role = metadata?.role ?? "", subrole = metadata?.subrole ?? ""
                 if role == kAXSheetRole || subrole == kAXDialogSubrole || subrole == kAXSystemDialogSubrole { flags |= NativeFocusFlags.child }
-                if Self.bool(element, "AXFullScreen") { flags |= NativeFocusFlags.fullscreen }
+                if metadata?.fullscreen == true { flags |= NativeFocusFlags.fullscreen }
             }
             guard Self.birth(pid) == client.birth else { self.lock.lock(); client.refreshing = false; self.lock.unlock(); return }
             self.lock.lock()
             client.windows = windows; client.focused = focused; client.flags = flags
-            client.refreshed = ProcessInfo.processInfo.systemUptime; client.refreshing = false
+            client.cursor = elements.isEmpty ? 0 : (cursor+processed)%elements.count
+            client.refreshed = ProcessInfo.processInfo.systemUptime; client.refreshing = false; client.enumerated = true
             self.lock.unlock()
         }
     }
@@ -157,8 +188,14 @@ final class LiteAX {
         return moved == .success && resized == .success ? 0 : Int((moved == .success ? resized : moved).rawValue)
     }
     func setFrame(_ pid: Int, _ wid: Int, _ frame: Rect) -> Int { perform(pid, wid) { Self.setFrame($0, $1, frame) } }
-    func setFrameAsync(_ pid: Int, _ wid: Int, _ frame: Rect, completion: @escaping (Int) -> Void) {
-        performAsync(pid, wid, { Self.setFrame($0, $1, frame) }, completion: completion)
+    func setFrameAsync(_ pid: Int, _ wid: Int, _ frame: Rect, completion: @escaping (Int, Rect?) -> Void) {
+        guard let client = client(pid), let window = window(pid, wid) else { completion(-1, nil); return }
+        client.queue.async {
+            guard Self.birth(pid) == client.birth else { DispatchQueue.main.async { completion(-1, nil) }; return }
+            let result = Self.setFrame(client.application, window.element, frame)
+            let accepted = Self.frame(window.element)
+            DispatchQueue.main.async { completion(result, accepted) }
+        }
     }
     func getFrame(_ pid: Int, _ wid: Int) -> Rect? {
         var result: Rect?

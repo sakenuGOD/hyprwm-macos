@@ -85,7 +85,9 @@ final class LiteSys: SysAPI {
     var presentation: [Int: Rect] = [:]
     var concealed = Set<Int>()
     private(set) var rawWindows: [WinInfo] = []
+    private var physicalWindows: [WinInfo] = []
     private var locked = false
+    private let sessionLock = NSLock(), focusLock = NSLock()
     private var focusEpoch = 0, focusing = 0, closing = 0
     private var observers: [NSObjectProtocol] = []
     var beforeClose: ((Int, @escaping (Bool) -> Void) -> Void)?
@@ -93,8 +95,8 @@ final class LiteSys: SysAPI {
     init(stateDir: String) {
         recovery = LiteRecovery(directory: stateDir)
         let center = NSWorkspace.shared.notificationCenter
-        observers.append(center.addObserver(forName: NSWorkspace.sessionDidResignActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.locked = true })
-        observers.append(center.addObserver(forName: NSWorkspace.sessionDidBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.locked = false })
+        observers.append(center.addObserver(forName: NSWorkspace.sessionDidResignActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.setLocked(true) })
+        observers.append(center.addObserver(forName: NSWorkspace.sessionDidBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in self?.setLocked(false) })
     }
     deinit { for observer in observers { NSWorkspace.shared.notificationCenter.removeObserver(observer) } }
     func now() -> Double { ProcessInfo.processInfo.systemUptime }
@@ -139,11 +141,12 @@ final class LiteSys: SysAPI {
             windows.append(window)
         }
         rawWindows = windows
+        physicalWindows = physical
         for pid in Set(windows.filter { $0.layer == 0 && !protectedProcess($0.pid) }.map(\.pid)) {
             ax.refresh(pid, rows: physical.filter { $0.pid == pid })
         }
         var result = Snapshot(space: workspace, stable: true, area: area, windows: windows)
-        result.locked = locked
+        result.locked = sessionLocked()
         result.nativeMetadata = .object([("workspace_kind", .string("virtual")), ("space", .int(workspace)), ("space_type", .int(0)), ("stable", .bool(true))])
         return result
     }
@@ -195,41 +198,49 @@ final class LiteSys: SysAPI {
     func axFocus(_ pid: Int, _ wid: Int, raise: Bool) -> Int {
         guard !mouseDown(), !sessionLocked(), ax.window(pid, wid) != nil,
               let app = NSRunningApplication(processIdentifier: pid_t(pid)) else { return -1 }
-        if let source = frontPid(), focusContext(source).flags & NativeFocusFlags.positive != 0 { return -1 }
+        if let source = frontPid(), focusContext(source).flags & (NativeFocusFlags.positive|NativeFocusFlags.unknown) != 0 { return -1 }
         let result = ax.perform(pid, wid) { application, window in
             guard !self.mouseDown(), !self.sessionLocked() else { return -1 }
-            _ = app.activate(options: [])
-            _ = AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
-            _ = AXUIElementSetAttributeValue(application, kAXFocusedWindowAttribute as CFString, window)
-            let raised = AXUIElementPerformAction(window, kAXRaiseAction as CFString)
-            guard raised == .success, let focused = LiteAX.attribute(application, kAXFocusedWindowAttribute),
-                  CFGetTypeID(focused) == AXUIElementGetTypeID(), CFEqual(focused, window) else { return -1 }
-            return 0
+            return Self.setFocus(application, window, app)
         }
         if result == 0 { ax.noteFocused(pid, wid) }
         return result
     }
     func focusContext(_ pid: Int) -> (wid: Int?, flags: Int) { ax.context(pid) }
     var focusBusy: Bool { focusing > 0 }
-    func cancelFocus() { focusEpoch += 1 }
+    private static func setFocus(_ application: AXUIElement, _ window: AXUIElement, _ app: NSRunningApplication) -> Int {
+        _ = app.activate(options: [])
+        _ = AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
+        _ = AXUIElementSetAttributeValue(application, kAXFocusedWindowAttribute as CFString, window)
+        let raised = AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+        guard raised == .success, let focused = LiteAX.attribute(application, kAXFocusedWindowAttribute),
+              CFGetTypeID(focused) == AXUIElementGetTypeID(), CFEqual(focused, window) else { return -1 }
+        return 0
+    }
+    func cancelFocus() { focusLock.lock(); focusEpoch += 1; focusLock.unlock() }
+    private func focusCurrent(_ epoch: Int) -> Bool { focusLock.lock(); defer { focusLock.unlock() }; return focusEpoch == epoch }
     func requestFocus(_ request: FocusRequest, completion: @escaping (Bool) -> Void) {
-        focusEpoch += 1; let epoch = focusEpoch
-        guard now() < request.deadline, !mouseDown(), !locked, processBirth(request.pid) == request.birth,
+        focusLock.lock(); focusEpoch += 1; let epoch = focusEpoch; focusLock.unlock()
+        guard now() < request.deadline, !mouseDown(), !sessionLocked(), processBirth(request.pid) == request.birth,
               membership[request.wid].map({ $0 == workspace }) ?? true, !concealed.contains(request.wid),
-              let target = ax.window(request.pid, request.wid), !target.modal else { completion(false); return }
-        if let source = frontPid(), focusContext(source).flags & NativeFocusFlags.positive != 0 { completion(false); return }
+              let target = ax.window(request.pid, request.wid), !target.modal,
+              let app = NSRunningApplication(processIdentifier: pid_t(request.pid)) else { completion(false); return }
+        if let source = frontPid(), focusContext(source).flags & (NativeFocusFlags.positive|NativeFocusFlags.unknown) != 0 { completion(false); return }
         if request.reason == .pointer {
             guard pointerHit()?.wid == request.wid else { completion(false); return }
         }
         focusing += 1
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { completion(false); return }
-            defer { self.focusing -= 1 }
-            guard self.focusEpoch == epoch, self.now() < request.deadline, !self.mouseDown(), !self.locked,
-                  self.processBirth(request.pid) == request.birth, self.winPidLevel(request.wid).pid == request.pid else { completion(false); return }
-            let result = self.axFocus(request.pid, request.wid, raise: false) == 0
-            self.ax.refresh(request.pid, rows: self.rawWindows.filter { $0.pid == request.pid }, force: true)
-            completion(result)
+        ax.performAsync(request.pid, request.wid, { [weak self] application, window in
+            guard let self, self.focusCurrent(epoch), self.now() < request.deadline, !self.mouseDown(), !self.sessionLocked(),
+                  self.processBirth(request.pid) == request.birth else { return -1 }
+            if let source = request.sourcePID, NSRunningApplication(processIdentifier: pid_t(source))?.isActive != true { return -1 }
+            return Self.setFocus(application, window, app)
+        }) { [weak self] code in
+            guard let self else { completion(false); return }; self.focusing -= 1
+            let accepted = code == 0 && self.focusCurrent(epoch) && self.frontPid() == request.pid
+            if accepted { self.ax.noteFocused(request.pid, request.wid) }
+            self.ax.refresh(request.pid, rows: self.physicalWindows.filter { $0.pid == request.pid }, force: true)
+            completion(accepted)
         }
     }
     func preserveAppFloats(_ tile: WinInfo, space: Int, windows: [WinInfo]) {
@@ -282,5 +293,6 @@ final class LiteSys: SysAPI {
         guard !processExited(pid) else { return 0 }
         return rawWindows.contains { $0.pid == pid && $0.wid == wid } ? 1 : 0
     }
-    func sessionLocked() -> Bool { locked }
+    private func setLocked(_ value: Bool) { sessionLock.lock(); locked = value; sessionLock.unlock() }
+    func sessionLocked() -> Bool { sessionLock.lock(); defer { sessionLock.unlock() }; return locked }
 }

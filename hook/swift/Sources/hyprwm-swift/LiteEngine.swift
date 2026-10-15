@@ -166,10 +166,14 @@ final class LiteChannel: ChannelAPI {
     private func place(_ slot: Slot, frame: Rect, logical: Rect, concealed: Bool = false, completion: ((Bool) -> Void)? = nil) {
         slot.version += 1; let version = slot.version
         slot.target = logical; slot.busy = true; slot.landing = true; slot.capturing = false
-        sys.ax.setFrameAsync(slot.pid, slot.wid, frame) { [weak self, weak slot] result in
+        sys.ax.setFrameAsync(slot.pid, slot.wid, frame) { [weak self, weak slot] result, accepted in
             guard let self, let slot, self.current(slot, version) else { completion?(false); return }
             if result != 0 { self.counters.errors += 1 }
-            slot.actual = self.sys.axGetFrame(slot.pid, slot.wid) ?? frame
+            guard let actual = accepted ?? self.sys.winBounds(slot.wid) else {
+                slot.proxy?.freeze(); slot.busy = false; slot.landing = false
+                self.counters.errors += 1; completion?(false); return
+            }
+            slot.actual = actual
             if slot.proxy != nil, slot.actual.maxDiff(frame) > 8 {
                 // Keep a visible frozen proxy and the recovery record when AX
                 // refuses the landing. Never reveal a still-parked real body.
@@ -207,11 +211,12 @@ final class LiteChannel: ChannelAPI {
             // Resize the parked real client first; the proxy remains the only body
             // on screen until its exact final AX placement is acknowledged.
             let park = self.sys.park(geometry.to)
-            self.sys.ax.setFrameAsync(slot.pid, slot.wid, park) { [weak self] result in
+            self.sys.ax.setFrameAsync(slot.pid, slot.wid, park) { [weak self] result, accepted in
                 guard let self, self.current(slot, version) else { return }
                 if result != 0 {
                     self.counters.errors += 1; self.place(slot, frame: geometry.to, logical: geometry.to); return
                 }
+                if let accepted { slot.actual = accepted }
                 slot.capturing = false
                 slot.started = CACurrentMediaTime()+0.008; slot.duration = geometry.duration
                 let curves = self.config.sortedCurves()
@@ -244,10 +249,14 @@ final class LiteChannel: ChannelAPI {
             guard time >= slot.started+slot.duration else { continue }
             slot.presented = slot.target; sys.presentation[slot.wid] = slot.target
             slot.landing = true; let version = slot.version
-            sys.ax.setFrameAsync(slot.pid, slot.wid, slot.target) { [weak self, weak slot] result in
+            sys.ax.setFrameAsync(slot.pid, slot.wid, slot.target) { [weak self, weak slot] result, accepted in
                 guard let self, let slot, self.current(slot, version) else { return }
                 if result != 0 { self.counters.errors += 1 }
-                slot.actual = self.sys.axGetFrame(slot.pid, slot.wid) ?? slot.target
+                guard let actual = accepted ?? self.sys.winBounds(slot.wid) else {
+                    slot.proxy?.freeze(); slot.busy = false; slot.landing = false
+                    self.counters.errors += 1; return
+                }
+                slot.actual = actual
                 if slot.actual.maxDiff(slot.target) > 8 {
                     slot.proxy?.freeze(); slot.busy = false; slot.landing = false
                     self.counters.errors += 1
