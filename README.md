@@ -72,4 +72,4 @@ Remove **HyprWM.app** from Applications. Optionally remove `~/.config/hyprwm` af
 
 ## Interface screenshots
 
-[General](docs/screenshots/general.png) · [Layout](docs/screenshots/layout.png) · [Animations](docs/screenshots/animations.png) · [Appearance](docs/screenshots/appearance.png) · [Focus](docs/screenshots/focus.png) · [Shortcuts](docs/screenshots/hotkeys.png) · [Rules](docs/screenshots/rules.png) · [Advanced](docs/screenshots/advanced.png) · [About](docs/screenshots/about.png).
+[Menu](docs/screenshots/menu.png) · [General](docs/screenshots/general.png) · [Layout](docs/screenshots/layout.png) · [Animations](docs/screenshots/animations.png) · [Appearance](docs/screenshots/appearance.png) · [Focus](docs/screenshots/focus.png) · [Shortcuts](docs/screenshots/hotkeys.png) · [Rules](docs/screenshots/rules.png) · [Advanced](docs/screenshots/advanced.png) · [About](docs/screenshots/about.png).
