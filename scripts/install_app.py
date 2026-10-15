@@ -148,6 +148,15 @@ def install(root):
     print('Run hyprwm doctor after granting permissions. No SIP, boot-args, injection or root changes were made.')
 
 
+def restore_all():
+    deadline = time.monotonic() + 4
+    while True:
+        response = request('restore-all')
+        if not response.startswith('error: Lite restoration pending:') or time.monotonic() >= deadline:
+            return response
+        time.sleep(0.1)
+
+
 def uninstall(offline):
     app, bin_dir = paths()
     if not app.exists():
@@ -167,7 +176,7 @@ def uninstall(offline):
         expected = str(app / 'Contents/MacOS/hyprwm-swift')
         if executable != expected:
             raise RuntimeError('The running daemon belongs to another installation; it and all files were preserved')
-        response = request('restore-all')
+        response = restore_all()
         if not (response.startswith('restored ') or response in ('no hidden windows', 'restored all windows')):
             raise RuntimeError('Window restoration was not accepted: ' + response)
         deadline = time.monotonic() + 8
