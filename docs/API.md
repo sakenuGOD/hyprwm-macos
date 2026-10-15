@@ -78,6 +78,21 @@ capture capability is not evidence that a particular animation succeeded. Window
 persistent identifiers; obtain a fresh state before acting on them. Additional
 fields are diagnostic and may change between releases.
 
+## Lite virtual workspace commands
+
+Lite workspace IDs are `1…10`. These commands require enabled tiling, completed recovery and no active mouse interaction or session lock. They do not create or switch Mission Control Spaces. Sending to the current workspace is a no-op.
+
+| Command | Behavior |
+| --- | --- |
+| `workspace N` / `ws N` | Select virtual workspace N. |
+| `workspace previous` | Return to the previous virtual workspace. |
+| `wsstep -1` / `wsstep 1` | Select the previous/next ID, wrapping through 1…10. |
+| `moveworkspace N` / `moveworkspace N follow` | Move the native-focused managed tile and follow it. |
+| `moveworkspace N silent` | Move that tile while staying on the source workspace. |
+| `sendws N [wid]` | Send silently; an explicit ID must identify a visible managed tile on the current workspace. |
+
+Use a fresh `status` before an explicit-ID mutation. Engine workspace commands use separate native capability checks; do not interpret a Lite ID as a native Space ID.
+
 ## Event subscriptions
 
 The event socket defaults to `/tmp/hyprwm.ctl.events`; set `HYPRWM_EVENTS` in both
