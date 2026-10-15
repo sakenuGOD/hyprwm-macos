@@ -27,7 +27,8 @@ final class LiteRestorePump {
             if inFlight.contains(record.wid) { continue }
             let owner = sys.winPidLevel(record.wid).pid
             if sys.processExited(record.pid) || sys.processBirth(record.pid).map({ $0 != record.birth }) == true ||
-                owner.map({ $0 != record.pid }) == true || sys.ax.confirmedClosed(record.pid, record.wid) {
+                owner.map({ $0 != record.pid }) == true ||
+                sys.ax.confirmedClosed(record.pid, record.wid) && (!sys.applicationHidden(record.pid) || owner == nil) {
                 sys.recovery.remove(record.wid); retryAfter[record.wid] = nil
                 recovered(record.wid); continue
             }

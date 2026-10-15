@@ -86,6 +86,7 @@ final class LiteSys: SysAPI {
     var concealed = Set<Int>()
     private(set) var rawWindows: [WinInfo] = []
     private var physicalWindows: [WinInfo] = []
+    private var hiddenApplications = Set<Int>()
     private var locked = false
     private let sessionLock = NSLock(), focusLock = NSLock(), censusLock = NSLock()
     private var focusEpoch = 0, focusing = 0, closing = 0
@@ -131,6 +132,7 @@ final class LiteSys: SysAPI {
             let b = (right.element[kCGWindowNumber as String] as? Int).flatMap { frontOrder[$0] } ?? (ordered.count + right.offset)
             return a < b
         }.map(\.element)
+        hiddenApplications = Set(NSWorkspace.shared.runningApplications.filter(\.isHidden).map { Int($0.processIdentifier) })
         let ownPID = Int(getpid())
         var windows: [WinInfo] = []
         var physical: [WinInfo] = []
@@ -146,8 +148,12 @@ final class LiteSys: SysAPI {
             window.layer = row[kCGWindowLayer as String] as? Int ?? 0
             window.alpha = row[kCGWindowAlpha as String] as? Double ?? 1
             physical.append(window)
-            if ax.confirmedClosed(pid, wid) { continue }
-            if let sid = membership[wid] { window.space = sid; window.on = sid == workspace && !concealed.contains(wid) }
+            if ax.confirmedClosed(pid, wid), !hiddenApplications.contains(pid) { continue }
+            if let sid = membership[wid] {
+                window.space = sid
+                window.on = sid == workspace && !concealed.contains(wid) && !hiddenApplications.contains(pid) &&
+                    (nativeOn || presentation[wid] != nil)
+            }
             if let virtual = presentation[wid] { window.x = virtual.x; window.y = virtual.y; window.w = virtual.w; window.h = virtual.h }
             if let metadata = ax.window(pid, wid) {
                 window.nativeFullscreen = metadata.fullscreen
@@ -165,6 +171,7 @@ final class LiteSys: SysAPI {
         result.nativeMetadata = .object([("workspace_kind", .string("virtual")), ("space", .int(workspace)), ("space_type", .int(0)), ("stable", .bool(true))])
         return result
     }
+    func applicationHidden(_ pid: Int) -> Bool { hiddenApplications.contains(pid) }
     func window(_ wid: Int) -> WinInfo? { censusLock.lock(); defer { censusLock.unlock() }; return rawWindows.first { $0.wid == wid } }
     func track(_ wid: Int) -> Bool {
         guard let window = window(wid), !protectedProcess(window.pid), recovery.remember(window) else { return false }
