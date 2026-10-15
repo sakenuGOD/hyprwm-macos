@@ -1,6 +1,6 @@
 // Command socket /tmp/hyprwm.ctl: same protocol as the Python daemon (keys/hyprkeys, ctl.sh, stop.sh):
 // the client connects, writes one line, reads one response line, and the connection closes.
-// Command errors log "command failed" with no response (the client sees a closed connection), as in Python.
+// Command failures return a bounded single-line error before closing the connection.
 import Foundation
 
 public final class CommandServer {
@@ -114,7 +114,13 @@ public final class CommandServer {
             guard !client.input.isEmpty else { return finish() }
             let line = String(decoding: client.input, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
             do { client.output = Array((try handle(line) + "\n").utf8) }
-            catch { log("command failed:", error); return finish() }
+            catch {
+                let message=String(String(describing:error).unicodeScalars.prefix(1024).map {
+                    CharacterSet.controlCharacters.contains($0) ? " " : String($0)
+                }.joined()).trimmingCharacters(in:.whitespaces)
+                log("command failed:",message)
+                client.output=Array(("error: "+(message.isEmpty ? "command failed" : message)+"\n").utf8)
+            }
             guard client.output!.count <= 1_048_576 else { return finish() }
         }
         let output = client.output!
