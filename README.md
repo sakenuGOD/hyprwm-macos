@@ -7,7 +7,7 @@ HyprWM is an independent, experimental tiling window manager that brings Hyprlan
 
 ## 60-second quickstart
 
-The commands take about a minute to enter; the first build takes longer. This preview currently lives on `launch/2026-10-16`, so clone that branch. You need macOS 14 or later, Xcode Command Line Tools and the dependencies reported by the installer. This is a source preview; no downloadable standalone release is promised here.
+The commands take about a minute to enter; the first build takes longer. This preview currently lives on `launch/2026-10-16`, so clone that branch. You need macOS 14 or later, Xcode Command Line Tools with Swift 5.9 or later, and Python 3. The installed Lite path uses a bundled baseline and does not need Lua. This is a source preview; no downloadable standalone release is promised here.
 
 ```sh
 git clone --branch launch/2026-10-16 https://github.com/sakenuGOD/hyprwm-macos.git
@@ -61,7 +61,21 @@ Workspace bindings in the baseline do not establish native Space creation or swi
 | Workspace model | Virtual workspace implementation; consult the current capability report. | Existing native macOS Spaces; backend availability is checked. |
 | Validation | SIP-on compatibility must be sourced or tested on SIP-on hardware. A SIP-off test is insufficient. | Private integration is OS-sensitive; macOS 14 deployment target does not prove broad engine compatibility. |
 
-**Lite integration and its live acceptance gate are pending in this branch.** See [Lite research](docs/LITE_RESEARCH.md) for capability probes, fallbacks and the distinction between source evidence and local verification. Automatic fallback is intended when the engine channel is unavailable; force selection with `HYPRWM_MODE=lite` or `HYPRWM_MODE=engine` only in a build that includes mode selection. The installer must not silently alter security settings.
+**Lite integration and its live acceptance gate are pending in this branch.** See [Lite research](docs/LITE_RESEARCH.md) for capability probes, fallbacks and the distinction between source evidence and local verification. Mode selection uses `HYPRWM_MODE=auto` by default and chooses Lite if verified Engine attachment fails. `HYPRWM_MODE=lite` skips Engine channel attachment entirely; `HYPRWM_MODE=engine` fails with the actual attachment error instead of falling back. The installer does not alter security settings.
+
+After quitting an existing instance, a foreground installed Lite launch is:
+
+```sh
+HYPRWM_MODE=lite ~/.local/bin/hyprwm
+```
+
+Engine additionally needs the matching native development installation's `hook` resources, including its `anim4.state` and generated base config. An app installed for Lite does not bundle those external native installation records. A development launch uses an explicit path:
+
+```sh
+HYPRWM_HOOK=/path/to/native-checkout/hook HYPRWM_MODE=engine ~/.local/bin/hyprwm
+```
+
+These commands start a real window manager and require a desktop session; they are not part of the no-launch installation dry run.
 
 Engine changes the system's security posture and loads code into WindowServer through a separate development procedure. Installing the menu app does not install the engine, disable SIP or set boot arguments. Lite is the appropriate first install path. Apple's [SIP overview](https://support.apple.com/en-us/102149) explains the protection being relaxed.
 
@@ -100,7 +114,7 @@ bind = CTRL ALT, H, focus, left
 windowrule = float, app:^Calculator$
 ```
 
-Readable text bindings use `SUPER` = Command, `ALT` = Option and `CTRL` = Control. The default table above already uses macOS key names. [CONFIG.md](docs/CONFIG.md) documents every key's default, real consumer, bounds and example, including accepted settings without an effective renderer. User transparency and hidden-window Mission Control remain unfinished; keep opacity at `1` and hidden-window overview off for a conservative setup.
+Readable text bindings use `SUPER` = Command, `ALT` = Option and `CTRL` = Control. The default table above already uses macOS key names. [CONFIG.md](docs/CONFIG.md) documents every key's default, real consumer, bounds and example, including accepted settings without an effective renderer. The [motion specification](docs/MOTION.md) defines the intended choreography; live validation remains separate. User transparency and hidden-window Mission Control remain unfinished; keep opacity at `1` and hidden-window overview off for a conservative setup.
 
 ## Bring your configuration
 

@@ -20,6 +20,7 @@ scripts/hyprwmctl float
 scripts/hyprwmctl reload
 scripts/hyprwmctl pause
 scripts/hyprwmctl resume
+scripts/hyprwmctl restore-all
 ```
 
 `status` prints the daemon's JSON state. Directional `move` rearranges the focused
@@ -36,10 +37,11 @@ it does not guarantee that an application has already accepted focus.
 Connect, write one UTF-8 command followed by a newline, then read one newline
 terminated response. The daemon closes the connection after replying. Commands
 accept a JSON array of string arguments or quoted text; there is no shell expansion.
-State responses are JSON; mutation responses are plain text. Errors can close the
-connection without a response. Read until newline or EOF, rather than assuming
+State responses are JSON; mutation responses are plain text. Handler failures return
+a sanitized `error: …` line (at most 1024 Unicode scalars of message). Protocol/size
+failures can still close the connection without a response. Read until newline or EOF, rather than assuming
 that one `recv` contains the entire response. Requests are bounded to 64 KiB and
-responses to 1 MiB; incomplete requests expire after one second.
+responses to 1 MiB; a serviced connection expires after one second.
 
 ```bash
 printf '["status"]\n' | nc -U -w 5 /tmp/hyprwm.ctl
@@ -65,7 +67,12 @@ print(state["space"], state["focus"], state["rects"])
 ```
 
 Useful state fields include `enabled`, `space`, `focus`, `tree`, `rects`, `floating`,
-`hidden`, and `engine`. Window IDs are process-local lifetime observations, not
+`hidden`, and `engine`. Mode-aware builds also report top-level `mode`, `daemon.mode`,
+`engine.mode` and `engine.available`. In Lite, `space` is a virtual workspace ID,
+not a native macOS Space ID. The `lite` object reports capture/animation capability,
+proxy/direct-placement/capture-failure counters, recovery count/error and hotkey
+conflicts; `hotkey_bindings` supplies that mode’s settings metadata. A reported
+capture capability is not evidence that a particular animation succeeded. Window IDs are process-local lifetime observations, not
 persistent identifiers; obtain a fresh state before acting on them. Additional
 fields are diagnostic and may change between releases.
 
@@ -121,6 +128,7 @@ After the source installer has bundled the base configuration:
 
 ```sh
 ~/.local/bin/hyprwm --help
+~/.local/bin/hyprwm doctor
 ~/.local/bin/hyprwm --print-config
 ~/.local/bin/hyprwm import /path/to/aerospace.toml
 ```
@@ -130,6 +138,14 @@ After the source installer has bundled the base configuration:
 `scripts/hyprwm` is the developer wrapper for the source binary; its config-dependent modes additionally need the generated `hook/config/hypr_cfg.json`. The installed CLI uses the app’s bundled baseline instead. `HYPRWM_HOOK` locates a `hook` directory and its schema/base configuration. `HYPRWM_STATE_DIR` selects the persistent daemon-state directory (native default `/tmp/hyprwm-swift`). `HYPRWM_TIME_SCALE` overrides geometry timing in the range `0.1…4`. `HYPRWM_NO_DECO=1` disables the optional native decoration helper. Debug/experimental environment switches are implementation details, not stable API contracts.
 
 ## Recovery and diagnostics
+
+`hyprwm doctor` reports version, requested/running mode, the control socket, config path and line-numbered parse issues, and the current process's Accessibility, Screen Recording, Input Monitoring and Automation status. It does not request a permission prompt or create config. Carbon runtime shortcuts do not need Input Monitoring; the settings recorder's event tap can. Automation → System Events is for scripted desktop verification.
+
+`hyprwm --init-config` explicitly creates commented defaults only when the selected config is absent, and preserves an existing file. The source installer uses this entry point with the portable bundled baseline.
+
+`hyprwm restore-all` routes to a responding daemon or, where supported, the stopped Lite runtime's persisted recovery ledger. It restores verified window lifetimes and preserves unresolved records. Success is distinct from a command being queued; confirm native visibility. The stopped recovery path needs Accessibility and is a runtime operation, not an offline config check.
+
+The raw command `quit` targets the focused **application**. It is not a daemon shutdown command. Use **Quit HyprWM** or the matching uninstaller for restoration-aware daemon shutdown.
 
 See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for permission panes, visibility recovery, config warnings and safe shutdown. A session pause and restoring hidden windows are separate operations. Treat refusal/pending responses as incomplete work, preserve state, and verify real windows before deleting an installation.
 

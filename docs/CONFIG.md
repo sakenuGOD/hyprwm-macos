@@ -101,7 +101,7 @@ The shared parser accepts the same document for both modes. The Lite adapter has
 | `runtime.prehide`, `hold_max_ms`, `window_resize_mode`, `capture_sampling` | **Accepted, not effective in Lite:** native first-frame/resize/edge-sampling knobs. Lite capture availability comes from Screen Recording permission and the capture capability. |
 | `runtime.overview_hidden_windows` | Forced off in Lite; virtual workspaces do not enable the native hidden-window Mission Control pool. |
 | `animations.windowsIn`, `windowsMove`, `windowsOut` and geometry curves | Used by captured-proxy motion when capture is available. Denial/failure falls back to direct AX placement. |
-| `animations.border.duration_ms` / enabled | Controls overlay border color transition duration. The selected curve is not applied to that color animation. |
+| `animations.border.duration_ms` / enabled | Controls overlay border color transition duration. Moving-proxy border fades use the configured Bezier curve; idle border fades use Core Animation’s default timing, and spring color interpolation is not implemented. |
 | `animations.fadeShadow`, `fadeGlow` | **Accepted, not yet effective in Lite:** no shadow/glow render path. |
 | `animations.fadeIn`, `fadeOut` | No independent foreign-client fade curve. Opening alpha requests trigger the proxy entrance; cached close proxy duration is bounded by `windowsOut` and `fadeOut` durations. |
 | `animations.fadeSwitch` | Does not provide fractional foreign-client focus opacity in Lite. |
@@ -190,7 +190,7 @@ bind = CTRL ALT, H, focus, left
 | `match.role`, `match.subrole` | absent | `WindowProperties.matches` against AX role/subrole, e.g. `"^AXWindow$"` / `"^AXDialog$"`. Unknown/empty metadata never satisfies either a positive or negative match. |
 | `float` | unchanged | WM classification; `true` floats, `false` tiles when otherwise eligible. |
 | `ignore` | `false` | `WM.ignored`/`releaseIgnored` excludes a window from management. |
-| `no_anim` | `false` | `WM.windowPolicy` bypasses that window's animation. |
+| `no_anim` | `false` | `WM.windowPolicy` suppresses core-managed move/open/hide/restore/focus animation. The Lite external-close proxy path does not currently consult this rule. |
 | `no_follow_mouse` | `false` | `WM.windowPolicy` suppresses pointer focus for that window. |
 | `opacity` | no override | `WindowProperties.opacity` → WM alpha. Number `0…1`, or up to three values for active/inactive/fullscreen, e.g. `"1 0.9 1"`; suffix a value with `override` to replace rather than multiply the global opacity. Transparency is unfinished. |
 

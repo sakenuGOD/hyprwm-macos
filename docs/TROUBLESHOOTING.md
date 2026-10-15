@@ -47,7 +47,7 @@ Press **Control–Option–P**, choose the menu’s pause action, or use the cli
 ~/.local/bin/hyprwmctl resume
 ```
 
-`pause` stops automatic tiling for the session; it is not an uninstall or a promise to unhide every parked window. Use `restore-all` for visibility recovery. `runtime.enabled` controls the persistent setting. A paused session can be resumed by a configuration reload if the file still enables it.
+`pause` stops automatic tiling for the session; it is not an uninstall or a promise to unhide every parked window. Use `restore-all` for visibility recovery. `runtime.enabled` controls the persistent setting. An unrelated config save preserves a manual pause. Resume explicitly, or change the persistent enable setting; incomplete Lite recovery must finish before resuming.
 
 ## A dialog or sheet is buried
 
