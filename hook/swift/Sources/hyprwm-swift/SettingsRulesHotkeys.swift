@@ -43,7 +43,7 @@ struct HotkeySettings:View {
     var overrides:[[String:Any]] {store.document["hotkeys"] as? [[String:Any]] ?? []}
     var body:some View {
         Section("Keyboard Shortcuts") {
-            if bindings.isEmpty {Text("Shortcuts appear when the keyboard service is running.").foregroundStyle(.secondary)}
+            if bindings.isEmpty {Text("Connect to HyprWM to edit its active mode’s shortcuts.").foregroundStyle(.secondary)}
             ForEach(bindings.indices.filter{bindings[$0]["event"] as? String != "wheel"},id:\.self){index in
                 let record=effective(index)
                 HStack{Text(displayTitle(bindings[index]));Spacer()
@@ -62,7 +62,25 @@ struct HotkeySettings:View {
         Section {Text("Click a shortcut to record it. Press Escape to cancel. Include ⌘, ⌥, or ⌃.").font(.caption).foregroundStyle(.secondary)}
             .onAppear{load()}
     }
-    private func load(){let url=URL(fileURLWithPath:"/tmp/hyprkeys.json");DispatchQueue.global(qos:.utility).async{let records=(try?Data(contentsOf:url)).flatMap{try?JSONSerialization.jsonObject(with:$0) as? [[String:Any]]} ?? [];DispatchQueue.main.async{bindings=records}}}
+    private func load() {
+        store.send("status") { result in
+            guard case let .success(text)=result,let bytes=text.data(using:.utf8),
+                  let status=(try? JSONSerialization.jsonObject(with:bytes)) as? [String:Any] else {
+                bindings=[];return
+            }
+            let mode=status["mode"] as? String ?? (status["daemon"] as? [String:Any])?["mode"] as? String ?? (status["engine"] as? [String:Any])?["mode"] as? String
+            if mode == "lite" {
+                bindings=status["hotkey_bindings"] as? [[String:Any]] ?? []
+                if bindings.isEmpty { conflict="Lite shortcut metadata is unavailable. Edit bind lines in the configuration." }
+                return
+            }
+            let url=URL(fileURLWithPath:"/tmp/hyprkeys.json")
+            DispatchQueue.global(qos:.utility).async {
+                let records=(try?settingsFileData(url)).flatMap{try?JSONSerialization.jsonObject(with:$0) as? [[String:Any]]} ?? []
+                DispatchQueue.main.async { bindings=records }
+            }
+        }
+    }
     private func matches(_ entry:[String:Any],_ index:Int)->Bool {
         if let command=entry["command"] as? [String] {return command==bindings[index]["cmd"] as? [String]}
         return entry["id"] as? Int==index
@@ -88,7 +106,7 @@ struct HotkeySettings:View {
         let title=(record["desc"] as? String ?? "").replacingOccurrences(of:#"^\[[^\]]+\]\s*"#,with:"",options:.regularExpression)
         return title.isEmpty ? commandName(record):title
     }
-    private func commandName(_ record:[String:Any])->String {(record["argv"] as? [String])?.joined(separator:" ") ?? record["cmd"] as? String ?? "Action"}
+    private func commandName(_ record:[String:Any])->String {(record["argv"] as? [String])?.joined(separator:" ") ?? (record["cmd"] as? [String])?.joined(separator:" ") ?? record["cmd"] as? String ?? "Action"}
 }
 let keyNames:[Int:String]=[0:"A",1:"S",2:"D",3:"F",4:"H",5:"G",6:"Z",7:"X",8:"C",9:"V",11:"B",12:"Q",13:"W",14:"E",15:"R",16:"Y",17:"T",18:"1",19:"2",20:"3",21:"4",22:"6",23:"5",24:"+",25:"9",26:"7",27:"−",28:"8",29:"0",30:"]",31:"O",32:"U",33:"[",34:"I",35:"P",36:"↩",37:"L",38:"J",39:"'",40:"K",41:";",42:"\\",43:",",44:"/",45:"N",46:"M",47:".",48:"⇥",49:"Space",50:"`",51:"⌫",53:"⎋",123:"←",124:"→",125:"↓",126:"↑"]
 struct HotkeyRecorder:NSViewRepresentable {
