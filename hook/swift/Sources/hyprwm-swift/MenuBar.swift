@@ -9,7 +9,7 @@ final class MenuBarController:NSObject,NSMenuDelegate,NSWindowDelegate {
     private let hook:String
     private let companion:Bool
     private let item:NSStatusItem
-    private let stateItem=NSMenuItem(title:"Подключение…",action:nil,keyEquivalent:"")
+    private let stateItem=NSMenuItem(title:"Connecting…",action:nil,keyEquivalent:"")
     private let configErrorItem=NSMenuItem(title:"",action:nil,keyEquivalent:"")
     private var enabled=true,connected=false,refreshing=false
     private var window:NSWindow?
@@ -26,7 +26,7 @@ final class MenuBarController:NSObject,NSMenuDelegate,NSWindowDelegate {
         }
         item.menu = makeMenu()
         item.button?.image=Self.brandStatusImage()
-        item.button?.toolTip="HyprWM — управление окнами";item.button?.setAccessibilityLabel("HyprWM, управление тайлингом")
+        item.button?.toolTip="HyprWM — Window Management";item.button?.setAccessibilityLabel("HyprWM, Tiling Controls")
         poll=Timer.scheduledTimer(withTimeInterval:3,repeats:true){[weak self]_ in self?.refresh()};poll?.tolerance=1;refresh()
 
     }
@@ -47,7 +47,7 @@ final class MenuBarController:NSObject,NSMenuDelegate,NSWindowDelegate {
         case .failure:self.connected=false
         }
         self.store.connected=self.connected;self.store.enabled=self.enabled
-        self.stateItem.title = !self.store.trusted ? "Нет Универсального доступа" : !self.connected ? "HyprWM не подключён" : self.enabled ? "HyprWM работает":"Тайлинг приостановлен"
+        self.stateItem.title = !self.store.trusted ? "Accessibility Access Required" : !self.connected ? "HyprWM Disconnected" : self.enabled ? "HyprWM Running":"Tiling Paused"
         let color:NSColor = !self.store.trusted || !self.connected ? .systemRed:self.enabled ? .systemGreen:.systemOrange
         self.stateItem.attributedTitle=NSAttributedString(string:self.stateItem.title,attributes:[.foregroundColor:color])
 
@@ -66,26 +66,26 @@ final class MenuBarController:NSObject,NSMenuDelegate,NSWindowDelegate {
     private func makeMenu()->NSMenu {
         let menu=NSMenu();menu.delegate=self;menu.autoenablesItems=false
         stateItem.isEnabled=false;menu.addItem(stateItem);configErrorItem.isEnabled=false;configErrorItem.isHidden=true;menu.addItem(configErrorItem);menu.addItem(.separator())
-        add("Тайлинг",#selector(toggle),menu,symbol:"rectangle.split.2x2",key:"p")
-        add("Рамки",#selector(toggleBorders),menu,symbol:"rectangle",key:"")
-        add("Анимации",#selector(toggleAnimations),menu,symbol:"waveform.path",key:"")
-        add("Фокус за мышью",#selector(togglePointerFocus),menu,symbol:"cursorarrow",key:"")
+        add("Tiling",#selector(toggle),menu,symbol:"rectangle.split.2x2",key:"p")
+        add("Borders",#selector(toggleBorders),menu,symbol:"rectangle",key:"")
+        add("Animations",#selector(toggleAnimations),menu,symbol:"waveform.path",key:"")
+        add("Focus Follows Mouse",#selector(togglePointerFocus),menu,symbol:"cursorarrow",key:"")
         menu.addItem(.separator())
-        add("Разложить окна заново",#selector(retile),menu,symbol:"rectangle.split.2x2",key:"r")
-        add("Вернуть скрытые окна",#selector(returnHidden),menu,symbol:"rectangle.on.rectangle",key:"w")
-        add("Выровнять пропорции",#selector(balance),menu,symbol:"equal.square",key:"=")
+        add("Retile Windows",#selector(retile),menu,symbol:"rectangle.split.2x2",key:"r")
+        add("Restore Hidden Windows",#selector(returnHidden),menu,symbol:"rectangle.on.rectangle",key:"w")
+        add("Balance Layout",#selector(balance),menu,symbol:"equal.square",key:"=")
         menu.addItem(.separator())
-        add("Настройки…",#selector(openSettings),menu,symbol:"gearshape",key:",")
-        add("Правила приложений…",#selector(showRules),menu,symbol:"app.badge")
-        add("Открыть конфигурацию",#selector(openConfig),menu,symbol:"doc.text")
+        add("Settings…",#selector(openSettings),menu,symbol:"gearshape",key:",")
+        add("Application Rules…",#selector(showRules),menu,symbol:"app.badge")
+        add("Open Configuration",#selector(openConfig),menu,symbol:"doc.text")
         let diagnostics=NSMenu();diagnostics.autoenablesItems=false
-        add("Проверить подключение",#selector(checkConnection),diagnostics,symbol:"arrow.clockwise")
-        add("Скопировать диагностику",#selector(copyDiagnostics),diagnostics,symbol:"doc.on.doc")
-        add("Универсальный доступ…",#selector(openAccess),diagnostics,symbol:"hand.raised")
-        let diagnosticsItem=NSMenuItem(title:"Диагностика",action:nil,keyEquivalent:"");diagnosticsItem.submenu=diagnostics;menu.addItem(diagnosticsItem)
-        add("О HyprWM…",#selector(showAbout),menu,symbol:"info.circle")
-        add("Сообщить о проблеме…",#selector(reportIssue),menu,symbol:"bubble.left")
-        menu.addItem(.separator());add("Выйти из HyprWM",#selector(quit),menu,symbol:"power",key:"q")
+        add("Check Connection",#selector(checkConnection),diagnostics,symbol:"arrow.clockwise")
+        add("Copy Diagnostics",#selector(copyDiagnostics),diagnostics,symbol:"doc.on.doc")
+        add("Accessibility…",#selector(openAccess),diagnostics,symbol:"hand.raised")
+        let diagnosticsItem=NSMenuItem(title:"Diagnostics",action:nil,keyEquivalent:"");diagnosticsItem.submenu=diagnostics;menu.addItem(diagnosticsItem)
+        add("About HyprWM…",#selector(showAbout),menu,symbol:"info.circle")
+        add("Report an Issue…",#selector(reportIssue),menu,symbol:"bubble.left")
+        menu.addItem(.separator());add("Quit HyprWM",#selector(quit),menu,symbol:"power",key:"q")
         for entry in menu.items where !entry.keyEquivalent.isEmpty {entry.keyEquivalentModifierMask = [.command,.option]}
         menu.items.first(where:{$0.action == #selector(openSettings)})?.keyEquivalentModifierMask = .command
         return menu
@@ -118,18 +118,34 @@ final class MenuBarController:NSObject,NSMenuDelegate,NSWindowDelegate {
     }
     @objc private func openSettings(){settings(page:.general)}
     private func settings(page:SettingsPage){
-        if let window{window.contentView=NSHostingView(rootView:SettingsRootView(store:store,replay:{[weak self]in self?.replayOnboarding()},initialPage:page));window.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true);return}
+        if let window{window.contentView=NSHostingView(rootView:SettingsRootView(store:store,replay:{[weak self]in self?.replayOnboarding()},initialPage:page));presentOnCurrentSpace(window);return}
         let created=NSWindow(contentRect:NSRect(x:0,y:0,width:960,height:740),styleMask:[.titled,.closable,.miniaturizable,.resizable,.fullSizeContentView],backing:.buffered,defer:false)
         created.title="HyprWM";created.titlebarAppearsTransparent=true;created.toolbar=NSToolbar(identifier:"hyprwm.settings.toolbar");created.toolbarStyle = .unified
         created.minSize=NSSize(width:850,height:680);created.isReleasedWhenClosed=false;created.delegate=self
         created.contentView=NSHostingView(rootView:SettingsRootView(store:store,replay:{[weak self] in self?.replayOnboarding()},initialPage:page))
-        window=created;created.center();created.makeKeyAndOrderFront(nil);created.makeFirstResponder(nil);NSApp.activate(ignoringOtherApps:true)
+        window=created;presentOnCurrentSpace(created)
+    }
+    private func presentOnCurrentSpace(_ window:NSWindow){
+        // Select the display before activation can change the active application or Space.
+        let pointer=NSEvent.mouseLocation
+        let screen=NSScreen.screens.first(where:{$0.frame.contains(pointer)}) ?? NSScreen.main ?? NSScreen.screens.first
+        window.collectionBehavior = [.moveToActiveSpace,.fullScreenAuxiliary]
+        window.level = .normal
+        if window.isMiniaturized {window.deminiaturize(nil)}
+        if let screen {
+            let visible=screen.visibleFrame
+            let size=NSSize(width:min(window.frame.width,visible.width),height:min(window.frame.height,visible.height))
+            let frame=NSRect(x:visible.midX-size.width/2,y:visible.midY-size.height/2,width:size.width,height:size.height)
+            window.setFrame(frame,display:true,animate:false)
+        }
+        NSApp.activate(ignoringOtherApps:true)
+        window.makeKeyAndOrderFront(nil)
     }
     @objc private func replayOnboarding(){replayOnboarding(step:0,preview:false)}
     private func replayOnboarding(step:Int,preview:Bool){
         if let onboardingWindow{onboardingWindow.makeKeyAndOrderFront(nil);NSApp.activate(ignoringOtherApps:true);return}
         let created=NSWindow(contentRect:NSRect(x:0,y:0,width:580,height:570),styleMask:[.titled,.closable,.fullSizeContentView],backing:.buffered,defer:false)
-        created.title="Добро пожаловать в HyprWM";created.titlebarAppearsTransparent=true;created.isReleasedWhenClosed=false;created.delegate=self
+        created.title="Welcome to HyprWM";created.titlebarAppearsTransparent=true;created.isReleasedWhenClosed=false;created.delegate=self
         created.contentView=NSHostingView(rootView:OnboardingView(store:store,completion:{[weak self] in self?.onboardingWindow?.close();self?.onboardingWindow=nil;self?.openSettings()},initialStep:step,preview:preview));onboardingWindow=created;created.center();created.makeKeyAndOrderFront(nil);created.makeFirstResponder(nil);NSApp.activate(ignoringOtherApps:true)
     }
     func windowWillClose(_ notification:Notification){if (notification.object as? NSWindow) === onboardingWindow {onboardingWindow=nil}}
@@ -137,8 +153,8 @@ final class MenuBarController:NSObject,NSMenuDelegate,NSWindowDelegate {
         if ProcessInfo.processInfo.environment["HYPRWM_UI_PREVIEW"] == "1" {NSApp.terminate(nil);return}
         guard !store.shuttingDown else {return};store.shuttingDown=true
         if !companion {
-            guard let onQuit else {store.shuttingDown=false;store.error="Безопасное завершение пока недоступно.";return}
-            onQuit{[weak self]confirmed in if confirmed{NSApp.terminate(nil)}else{self?.store.shuttingDown=false;self?.store.error="Восстановление окон ещё не завершено. HyprWM продолжает работать.";self?.showSettings(page:.general)}};return
+            guard let onQuit else {store.shuttingDown=false;store.error="Safe shutdown is currently unavailable.";return}
+            onQuit{[weak self]confirmed in if confirmed{NSApp.terminate(nil)}else{self?.store.shuttingDown=false;self?.store.error="Window restoration is incomplete. HyprWM is still running.";self?.showSettings(page:.general)}};return
         }
         // Existing lifecycle authority restores hidden windows, waits for drain, and checks exact process identities.
         // Run it off the UI queue; a timeout terminates only this helper, never a WM process.
@@ -150,9 +166,9 @@ final class MenuBarController:NSObject,NSMenuDelegate,NSWindowDelegate {
                 try process.run()
                 let deadline=Date().addingTimeInterval(30)
                 while process.isRunning && Date()<deadline {Thread.sleep(forTimeInterval:0.05)}
-                if process.isRunning {process.terminate();throw NSError(domain:"HyprWM",code:1,userInfo:[NSLocalizedDescriptionKey:"Завершение не подтверждено. HyprWM оставлен работающим."])}
+                if process.isRunning {process.terminate();throw NSError(domain:"HyprWM",code:1,userInfo:[NSLocalizedDescriptionKey:"Shutdown was not confirmed. HyprWM is still running."])}
                 let data=output.fileHandleForReading.readDataToEndOfFile()
-                guard process.terminationStatus==0,let report=(try?JSONSerialization.jsonObject(with:data)) as? [String:Any],report["ok"] as? Bool==true else {throw NSError(domain:"HyprWM",code:2,userInfo:[NSLocalizedDescriptionKey:"Не удалось безопасно завершить HyprWM. Проверьте состояние через диагностику."])}
+                guard process.terminationStatus==0,let report=(try?JSONSerialization.jsonObject(with:data)) as? [String:Any],report["ok"] as? Bool==true else {throw NSError(domain:"HyprWM",code:2,userInfo:[NSLocalizedDescriptionKey:"HyprWM could not shut down safely. Check Diagnostics for details."])}
                 DispatchQueue.main.async{NSApp.terminate(nil)}
             } catch {DispatchQueue.main.async{self?.store.shuttingDown=false;self?.store.error=error.localizedDescription;self?.showSettings(page:.general)}}
         }
