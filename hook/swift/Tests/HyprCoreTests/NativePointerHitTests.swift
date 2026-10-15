@@ -4,11 +4,13 @@ import XCTest
 final class NativePointerHitTests:XCTestCase {
     func testTemporaryMissingNativeReceiverRetriesSamePointerAfterRoutingSettles() throws {
         let f=ProductionPolicyTests(),(wm,sys,_,windows)=try f.world(f.pair())
+        wm.cfg=try NativeRuntimeConfig.build(base:wm.cfg,document:JSON.parse("{\"runtime\":{\"pointer_focus_pause_ms\":0}}"))
         let target=try XCTUnwrap(windows.first{$0.wid==2})
         sys.front=101;sys.contexts[101]=(1,0);sys.deferredFocus=true
         sys.m=(target.x+40,target.y+40);sys.pointerHint=(999,102)
         wm.followMouse(1,windows)
         XCTAssertTrue(sys.focusCallbacks.isEmpty)
+        XCTAssertNotNil(wm.pointerFocusRetryPoint,"Exercise receiver retry independently of pointer dwell")
         sys.t+=0.02;sys.pointerHint=(2,102)
         wm.followMouse(1,windows)
         XCTAssertEqual(sys.focusCallbacks.count,1,"A settled receiver must not require another physical mouse movement")
@@ -17,10 +19,12 @@ final class NativePointerHitTests:XCTestCase {
 
     func testKeyboardIntentCancelsUnresolvedPointerRouting() throws {
         let f=ProductionPolicyTests(),(wm,sys,_,windows)=try f.world(f.pair())
+        wm.cfg=try NativeRuntimeConfig.build(base:wm.cfg,document:JSON.parse("{\"runtime\":{\"pointer_focus_pause_ms\":0}}"))
         let target=try XCTUnwrap(windows.first{$0.wid==2})
         sys.front=101;sys.contexts[101]=(1,0);sys.deferredFocus=true
         sys.m=(target.x+40,target.y+40);sys.pointerHint=(999,102)
         wm.followMouse(1,windows)
+        XCTAssertNotNil(wm.pointerFocusRetryPoint)
         XCTAssertTrue(wm.queueFocus(windows.first{$0.wid==1}!,space:1,reason:.keyboard))
         sys.t+=0.02;sys.pointerHint=(2,102);wm.followMouse(1,windows)
         XCTAssertEqual(sys.focusCallbacks.count,1)
