@@ -67,7 +67,7 @@ Float-rule classification is currently latched for an observed window lifetime i
 
 ## A shortcut does nothing
 
-Settings → Hotkeys is the effective binding list. Check duplicate chords, imported modifier translation and whether the watcher is running. Carbon runtime bindings do not require Input Monitoring; check that permission if the settings shortcut recorder cannot observe keys. Readable text bindings map `SUPER` to Command, `ALT` to Option and `CTRL` to Control. The legacy Lua defaults use a separate translation; the README lists the actual macOS keys.
+Settings → Hotkeys lists configured bindings; a registration conflict can still prevent a chord from working. Check duplicate chords, imported modifier translation and whether the watcher is running. Carbon runtime bindings do not require Input Monitoring; check that permission if the settings shortcut recorder cannot observe keys. Readable text bindings map `SUPER` to Command, `ALT` to Option and `CTRL` to Control. The legacy Lua defaults use a separate translation; the README lists the actual macOS keys.
 
 A shortcut contains a HyprWM command argument array, not arbitrary shell syntax. Imported shell commands and unsupported actions produce warnings. See [MIGRATING.md](MIGRATING.md) for the supported subset.
 
@@ -87,7 +87,7 @@ Record which mode is running and whether capture permission is granted. Lite and
 
 For a motion bug, provide a short real recording with the first frame, retarget and landing visible. Check whether body/border diverge, content resizes late or the final frame snaps. A settings screenshot cannot prove runtime motion.
 
-Lite discovers application windows after they are displayed. Public Accessibility APIs cannot prevent the initial default-position frame; a brief TextEdit entrance flash has been observed. Captured proxies also contain a static image during motion. Distinguish these limits from a client that remains parked after landing, which needs recovery.
+Lite's current discovery path does not guarantee placement before the first displayed frame; a brief TextEdit entrance flash has been observed. Apple's [window-created notification](https://developer.apple.com/documentation/applicationservices/kaxwindowcreatednotification) does not specify ordering before presentation; faster notification-based discovery remains a timing hypothesis. Captured proxies also contain a static image during motion. Distinguish these limits from a client that remains parked after landing, which needs recovery.
 
 ## Installation or removal fails
 
