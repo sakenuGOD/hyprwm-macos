@@ -128,6 +128,9 @@ extension WM {
         let launcher=launcherIntent.flatMap { $0.space > 0 && $0.kind>0 ? $0 : nil }
         let destination=launcher?.space ?? space
         let crossed=destination != space
+        if let launcher,let focused=context.wid,let pending=restorePending[focused],
+           pending.launcherSequence==launcher.sequence,pending.record.pid==pid,
+           pending.space==destination,hiddenRecordLive(pending.record) {return}
         // Membership can become current before transfer focus/placement ACK.
         // Keep its captured launcher alive; the visible-window fast path below
         // must not reclassify this existing source as a new local selection.
@@ -137,7 +140,7 @@ extension WM {
            sys.processBirth(pid)==transfer.request.birth {return}
         if let launcher,options.transferOnActivation,let focused=context.wid,
            let window=wins.first(where:{$0.wid==focused && $0.pid==pid && $0.space>0 && $0.layer==0 && !$0.nativeFullscreen}),
-           crossed || window.space != destination || hidden.contains(where:{$0.wid==focused}),
+           crossed || window.space != destination,
            !ignored(window),sys.winPidLevel(focused).pid==pid,
            tileable(window) || hidden.contains(where:{$0.wid==focused && hiddenRecordLive($0)}) {
             if !launcherTransfers.isEmpty {return}
@@ -149,10 +152,17 @@ extension WM {
         // preflight/commit provider fence as an explicit workspace dispatcher.
         let hid = Set(hidden.map(\.wid))
         if let focused = context.wid, hid.contains(focused) {
-            guard launcher != nil else{return} // OS close/focus fallback has no user restoration intent.
+            guard let launcher else{return} // OS close/focus fallback has no user restoration intent.
             if crossed, workspaceFocus?(destination,true) != true { return }
             if crossed, workspaceFocus?(destination,false) != true { return }
-            _ = unhide(launcherAreas[destination] ?? area, destination, wins, which: .wids([focused]));consumeLauncher();return
+            _ = unhide(launcherAreas[destination] ?? area, destination, wins, which: .wids([focused]))
+            if var pending=restorePending[focused] {
+                pending.launcherSequence=launcher.sequence;restorePending[focused]=pending
+                launcherDisposition="awaiting-local-placement"
+            } else {
+                consumeLauncher(hidden.contains(where:{$0.wid==focused}) ? "local-restore-refused":"restored-local-window")
+            }
+            return
         }
         let visible = wins.filter { $0.pid == pid && $0.space == destination && $0.on && !hid.contains($0.wid) && tileable($0) }
         if !visible.isEmpty {

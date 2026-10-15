@@ -6,6 +6,7 @@ struct RestoreRequest {
     let deadline: Double
     let everything: Bool
     var placement:RestorePlacement?
+    var launcherSequence:UInt64?
 }
 
 extension WM {
@@ -89,9 +90,24 @@ extension WM {
 
     func completeRestores(_ area: Rect, _ space: Int, _ windows: [WinInfo]) {
         for (wid,var request) in restorePending {
+            if let sequence=request.launcherSequence,
+               launcherIntent?.sequence != sequence || sys.frontPid() != request.record.pid {
+                if launcherIntent?.sequence==sequence {consumeLauncher("local-restore-superseded")}
+                cancelRestorePlacement(request);restorePending[wid]=nil;continue
+            }
             guard request.space == space, sys.now() < request.deadline,
                   hidden.contains(where: { $0.wid == wid }), hiddenRecordLive(request.record) else {
+                if let sequence=request.launcherSequence,launcherIntent?.sequence==sequence {consumeLauncher("local-restore-cancelled")}
                 cancelRestorePlacement(request);restorePending[wid]=nil;continue
+            }
+            if request.launcherSequence != nil,let pid=request.record.pid {
+                guard !sys.sessionLocked(),!sys.interactionOverlay() else{continue}
+                let context=sys.focusContext(pid)
+                guard context.flags&(NativeFocusFlags.positive|NativeFocusFlags.unknown)==0 else{continue}
+                guard context.wid==wid else {
+                    if launcherIntent?.sequence==request.launcherSequence {consumeLauncher("local-restore-superseded")}
+                    cancelRestorePlacement(request);restorePending[wid]=nil;continue
+                }
             }
             guard let window=windows.first(where: { $0.wid == wid && $0.pid == request.record.pid && $0.space == space && $0.layer==0 && !$0.nativeFullscreen }) else { continue }
             if request.placement != nil {

@@ -55,6 +55,7 @@ extension WM {
         // accepted. The focus worker waits for reveal and preserves modal/menu
         // focus or a newer native foreground choice.
         _=queueFocus(window,space:request.space,reason:.keyboard)
+        if let sequence=request.launcherSequence,launcherIntent?.sequence==sequence {consumeLauncher("restored-local-window")}
         return true
     }
     func cancelRestorePlacement(_ request:RestoreRequest) {

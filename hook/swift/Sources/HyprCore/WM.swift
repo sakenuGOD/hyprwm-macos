@@ -1282,6 +1282,8 @@ public final class WM {
 
     /// input:follow_mouse = 1: focus the window as soon as the cursor enters it.
     public func followMouse(_ space: Int, _ wins: [WinInfo]) {
+        if options.production,let sequence=launcherIntent?.sequence,
+           restorePending.values.contains(where:{$0.launcherSequence==sequence}) {return}
         var nativeNoKey=false
         var nativeKey:Int?
         if options.production {

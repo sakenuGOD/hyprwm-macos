@@ -198,6 +198,59 @@ final class LauncherTransferTests:XCTestCase {
         wm.activateOnCurrentSpace(f.area,1,windows,101)
         XCTAssertTrue(wm.hidden.isEmpty);XCTAssertTrue(wm.restoring.contains(1))
     }
+    func testSameSpaceHiddenLauncherWaitsForLocalPlacementBeforeCompletion() throws {
+        let f=ProductionPolicyTests(),(wm,sys,eng,original)=try f.world(f.pair())
+        wm.cfgSink=SnapshotHandoffTests.Recorder();wm.sp(1).tree=Node(leaf:2)
+        sys.front=101;sys.contexts[101]=(1,0);sys.activeSpaceID=1
+        sys.transferCatalog=try PublicWorkspaceCatalog(PublicWorkspaceTests().raw(1))
+        let record=Hidden(wid:1,pid:101,owner:"Fixture",space:1,rect:original.first{$0.wid==1}!.rect.arr,
+                          extra:.object([("swift_birth",.string("birth-1")),("tiled",.bool(true))]))
+        wm.hidden=[record];sys.bounds[1]=Rect(1400,40,400,500);sys.alphaM[1]=0
+        var windows=original
+        let index=try XCTUnwrap(windows.firstIndex{$0.wid==1});windows[index].alpha=0
+        wm.launcherAreas[1]=f.area;wm.launcherIntent=LauncherIntent(sequence:7,space:1,frontPID:999,kind:1,started:sys.t)
+        wm.activateOnCurrentSpace(f.area,1,windows,101)
+        XCTAssertTrue(wm.launcherTransfers.isEmpty,"A local hidden window needs no cross-Space provider")
+        let pending=try XCTUnwrap(wm.restorePending[1]),plan=try XCTUnwrap(pending.placement)
+        XCTAssertEqual(wm.launcherIntent?.sequence,7);XCTAssertEqual(wm.hidden,[record])
+        wm.cfg=try NativeRuntimeConfig.build(base:wm.cfg,document:JSON.parse("{\"runtime\":{\"pointer_focus_pause_ms\":0}}"))
+        sys.pointerHint=(2,102);let other=try XCTUnwrap(windows.first{$0.wid==2});sys.m=(other.x+30,other.y+30)
+        wm.followMouse(1,windows)
+        XCTAssertFalse(sys.calls.contains{$0.array?.first == .string("ax_focus")},"A stale stationary pointer cannot supersede a pending launcher placement")
+        wm.activateOnCurrentSpace(f.area,1,windows,101)
+        XCTAssertEqual(wm.launcherIntent?.sequence,7,"Repeated activation cannot consume a pending placement")
+        var result=CfgResult(wid:1,owner:"Fixture",to:plan.rect,got:plan.rect,e:0,pre:sys.bounds[1])
+        result.pid=101;result.birth="birth-1";result.isCurrent={true};wm.cfgQ=[result]
+        var slot=EngWin(wid:1,pos:(plan.rect.x,plan.rect.y),size:(plan.rect.w,plan.rect.h),curAlpha:0,a:plan.rect)
+        slot.geo=1;eng.ch.eng=[slot];sys.bounds[1]=plan.rect
+        wm.completeRestores(f.area,1,windows)
+        XCTAssertTrue(wm.hidden.isEmpty);XCTAssertNil(wm.restorePending[1]);XCTAssertNil(wm.launcherIntent)
+        XCTAssertEqual(wm.launcherDisposition,"restored-local-window");XCTAssertTrue(wm.sp(1).tree?.contains(1)==true)
+    }
+    func testLocalLauncherRestoreCancelsWithoutRevealOrConsumingNewIntent() throws {
+        for invalidation in ["timeout","birth","new-intent","foreground","key"] {
+            let f=ProductionPolicyTests(),(wm,sys,eng,windows)=try f.world(f.pair())
+            wm.cfgSink=SnapshotHandoffTests.Recorder();wm.sp(1).tree=Node(leaf:2)
+            sys.front=101;sys.contexts[101]=(1,0);sys.activeSpaceID=1
+            let record=Hidden(wid:1,pid:101,owner:"Fixture",space:1,rect:windows.first{$0.wid==1}!.rect.arr,
+                              extra:.object([("swift_birth",.string("birth-1")),("tiled",.bool(true))]))
+            wm.hidden=[record];wm.launcherAreas[1]=f.area
+            wm.launcherIntent=LauncherIntent(sequence:7,space:1,frontPID:999,kind:1,started:sys.t)
+            wm.activateOnCurrentSpace(f.area,1,windows,101);XCTAssertNotNil(wm.restorePending[1]);eng.ch.ops=[]
+            switch invalidation {
+            case "timeout":sys.t+=2.1
+            case "birth":sys.births[101]="reused"
+            case "new-intent":wm.launcherIntent=LauncherIntent(sequence:8,space:1,frontPID:999,kind:1,started:sys.t)
+            case "key":sys.contexts[101]=(2,0)
+            default:sys.front=102;sys.contexts[102]=(2,0)
+            }
+            wm.completeRestores(f.area,1,windows)
+            XCTAssertEqual(wm.hidden,[record],invalidation);XCTAssertNil(wm.restorePending[1],invalidation)
+            XCTAssertFalse(wm.sp(1).tree?.contains(1)==true,invalidation)
+            XCTAssertFalse(eng.ch.ops.contains{$0["op"] == .string("alpha") && ($0["a"]?.double ?? 0)>0},invalidation)
+            XCTAssertEqual(wm.launcherIntent?.sequence,invalidation=="new-intent" ? 8:nil,invalidation)
+        }
+    }
     func testLaunchMovesExactWindowBeforeViewAndRequiresTwoFreshMembershipWitnessesAndFinalViewKey() throws {
         let fixture=ProductionPolicyTests(),(wm,sys,eng,windows)=try fixture.world(fixture.pair())
         wm.cfgSink=SnapshotHandoffTests.Recorder()
