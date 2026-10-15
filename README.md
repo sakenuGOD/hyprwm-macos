@@ -2,11 +2,19 @@
 
 HyprWM is an independent, experimental tiling window manager for macOS, inspired by Hyprland's layouts and motion. It combines a Swift runtime, a menu bar settings companion, and a native WindowServer animation engine.
 
+![Native settings](docs/screenshots/layout.png)
+
 ## Install
 
 Visit the [latest release](https://github.com/sakenuGOD/hyprwm-macos/releases/latest), download the `.dmg` asset when available, mount it, and drag **HyprWM.app** into **Applications**. Build details are on the [releases page](https://github.com/sakenuGOD/hyprwm-macos/releases).
 
 **The current app package is a menu companion. It requires an already installed native engine, a running compatible daemon, and the source checkout used to build it. It is not a standalone window manager installer.** The package stores a source path and does not bundle or install the native engine. Moving or deleting that checkout can break settings and runtime discovery. A fresh Mac installation is not yet a supported end-to-end flow.
+
+The preview is ad-hoc signed, without notarization. If macOS quarantines a build you intentionally downloaded, remove its quarantine attribute:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/HyprWM.app
+```
 
 The Swift package targets macOS 14 or later; this is a build minimum, not a compatibility guarantee for the private WindowServer integration. Native engine development currently requires a specially configured development system. The DMG does not configure that system for you.
 
@@ -26,7 +34,13 @@ runtime {
 }
 ```
 
-Use the settings window's **Advanced** page to open, import, export, or reset the configuration. Import accepts a valid HyprWM UTF-8 text configuration up to 256 KiB and backs up the existing file before replacing it. Arbitrary Hyprland configurations are not interchangeable with this format. The developer Lua importer is separate and executes Lua; inspect imported files first.
+Use the settings window's **Advanced** page to open, import, export, or reset the configuration. Import accepts a valid HyprWM UTF-8 text configuration up to 256 KiB and backs up the existing file before replacing it. For another window manager, choose **Import From Another Window Manager…**, or run:
+
+```sh
+scripts/hyprwm import /path/to/aerospace.toml
+```
+
+The importer conservatively maps supported AeroSpace, yabai/skhd, Hyprland, i3/sway and Amethyst settings. Unsupported entries are reported with original line numbers. Rectangle and arbitrary shell actions are not mapped. A backup is created before applying changes. Foreign files are parsed as data and never executed.
 
 Edit shortcuts in **Settings → Hotkeys**. The native watcher must already have a generated binding baseline. Typical onboarding shortcuts are **Control–Option–Arrow** for focus, **Control–Option–Shift–Arrow** to move a window, and **Control–Option–F** for floating; the installed list is authoritative because imported bindings may differ. Text `bind` entries override existing actions rather than creating arbitrary new actions.
 
@@ -35,7 +49,8 @@ Edit shortcuts in **Settings → Hotkeys**. The native watcher must already have
 The runtime exposes a local Unix socket, normally `/tmp/hyprwm.ctl`. From a source checkout:
 
 ```sh
-hook/ctl.sh status
+scripts/hyprwmctl status
+scripts/hyprwmctl subscribe
 ```
 
 See the [API reference](docs/API.md) for command syntax, configuration, and runtime interfaces, and [CONTRIBUTING.md](CONTRIBUTING.md) for builds, source navigation, and manual verification.
@@ -54,3 +69,7 @@ Tracked work: [standalone installation](https://github.com/sakenuGOD/hyprwm-maco
 Choose **Quit HyprWM** from the menu and wait for shutdown/restoration to finish. The companion delegates this to the existing lifecycle helper, which must be present in the source checkout. Confirm hidden windows are visible before removing anything; if shutdown reports an error, keep the runtime and checkout in place until recovery is complete. The legacy `hook/stop.sh` targets the Python daemon and is not a general Swift-runtime uninstaller.
 
 Remove **HyprWM.app** from Applications. Optionally remove `~/.config/hyprwm` after saving configuration and backups, and revoke its Accessibility/event-access grants in System Settings. The DMG does not remove an independently installed native engine or reverse development-system settings; undo those through the procedure used to install them.
+
+## Interface screenshots
+
+[General](docs/screenshots/general.png) · [Layout](docs/screenshots/layout.png) · [Animations](docs/screenshots/animations.png) · [Appearance](docs/screenshots/appearance.png) · [Focus](docs/screenshots/focus.png) · [Shortcuts](docs/screenshots/hotkeys.png) · [Rules](docs/screenshots/rules.png) · [Advanced](docs/screenshots/advanced.png) · [About](docs/screenshots/about.png).

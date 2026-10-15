@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+HYPRWM_PROJECT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+export HYPRWM_HOOK=${HYPRWM_HOOK:-"$HYPRWM_PROJECT/hook"}
+exec "$HYPRWM_PROJECT/hook/swift/.build/release/hyprwm-swift" "$@"
