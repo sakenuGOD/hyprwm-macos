@@ -16,15 +16,15 @@ struct TilingPreview: View {
             let split=shifted ? 0.37 : min(0.7,max(0.3,store.number("layout.default_split_ratio",1)/2))
             ZStack(alignment:.topLeading) {
                 Color(nsColor:.windowBackgroundColor)
-                previewWindow("Редактор",symbol:"chevron.left.forwardslash.chevron.right",active:true).frame(width:width*split-gap/2,height:height).offset(x:inset,y:topInset)
-                previewWindow("Заметки",symbol:"note.text",active:false).frame(width:width*(1-split)-gap/2,height:(height-gap)/2).offset(x:inset+width*split+gap/2,y:topInset)
-                previewWindow("Браузер",symbol:"globe",active:false).frame(width:width*(1-split)-gap/2,height:(height-gap)/2).offset(x:inset+width*split+gap/2,y:topInset+(height+gap)/2)
-                HStack {Text("Предпросмотр").font(.caption2).foregroundStyle(.secondary);Spacer();if animated {Button {play()} label:{Label("Повторить",systemImage:"play.fill").font(.caption)}.buttonStyle(.borderless)}}.padding(.horizontal,15).frame(maxHeight:.infinity,alignment:.bottom).padding(.bottom,6)
+                previewWindow("Editor",symbol:"chevron.left.forwardslash.chevron.right",active:true).frame(width:width*split-gap/2,height:height).offset(x:inset,y:topInset)
+                previewWindow("Notes",symbol:"note.text",active:false).frame(width:width*(1-split)-gap/2,height:(height-gap)/2).offset(x:inset+width*split+gap/2,y:topInset)
+                previewWindow("Browser",symbol:"globe",active:false).frame(width:width*(1-split)-gap/2,height:(height-gap)/2).offset(x:inset+width*split+gap/2,y:topInset+(height+gap)/2)
+                HStack {Text("Preview").font(.caption2).foregroundStyle(.secondary);Spacer();if animated {Button {play()} label:{Label("Replay",systemImage:"play.fill").font(.caption)}.buttonStyle(.borderless)}}.padding(.horizontal,15).frame(maxHeight:.infinity,alignment:.bottom).padding(.bottom,6)
             }.clipShape(RoundedRectangle(cornerRadius:12))
         }.onAppear {visible=true}.onDisappear {visible=false}
         .task {guard animated && !reduceMotion else {return};try? await Task.sleep(nanoseconds:500_000_000);if !Task.isCancelled {play()};try? await Task.sleep(nanoseconds:950_000_000);if !Task.isCancelled {play()}}
         .onChange(of:store.document.description) { if animated && visible {play()} }
-        .accessibilityElement(children:.combine).accessibilityLabel("Предпросмотр раскладки из трёх окон")
+        .accessibilityElement(children:.combine).accessibilityLabel("Three-window layout preview")
     }
     private func play() { guard visible else {return}; if reduceMotion {shifted.toggle()} else {withAnimation(animation){shifted.toggle()}} }
     private var animation: Animation {
@@ -57,7 +57,7 @@ struct AnimationSettings: View {
     @State private var newName=""
     @State private var newKind="bezier"
     var curves:[String:[String:Any]] { (store.base["curves"] as? [String:[String:Any]] ?? [:]).merging(store.document["curves"] as? [String:[String:Any]] ?? [:]){_,new in new} }
-    let events:[(String,String)]=[("windowsMove","Движение окон"),("windowsIn","Открытие окон"),("windowsOut","Закрытие окон"),("fadeIn","Появление"),("fadeOut","Исчезновение"),("fadeSwitch","Смена фокуса"),("border","Рамка"),("fadeShadow","Тень"),("fadeGlow","Свечение")]
+    let events:[(String,String)]=[("windowsMove","Window Movement"),("windowsIn","Window Opening"),("windowsOut","Window Closing"),("fadeIn","Fade In"),("fadeOut","Fade Out"),("fadeSwitch","Focus Change"),("border","Border"),("fadeShadow","Shadow"),("fadeGlow","Glow")]
     var selectedCurve: String {
         let override=store.string("animations."+event+".curve");if !override.isEmpty {return override}
         let records=store.base["animations"] as? [[String:Any]] ?? []
@@ -65,26 +65,26 @@ struct AnimationSettings: View {
         return record["spring"] as? String ?? record["bezier"] as? String ?? "smooth"
     }
     var body: some View {
-        Section("Отдельные действия") {
-            Picker("Действие",selection:$event){ForEach(events,id:\.0){Text($0.1).tag($0.0)}}
-            Toggle("Включить анимацию",isOn:Binding(get:{store.bool("animations."+event+".enabled")},set:{store.set("animations."+event+".enabled",$0)}))
-            HStack {Text("Кривая");Spacer();NativeCurvePicker(names:curves.keys.sorted().filter{!["border","fadeShadow"].contains(event) || curves[$0]?["type"] as? String != "spring"},selection:Binding(get:{selectedCurve},set:{name in store.reset("animations."+event+".duration_ms");store.set("animations."+event+".curve",name)})).frame(width:200)}
-            SettingRow(store:store,spec:.init("animations."+event+".time_scale","Масштаб времени",.animations,"",.number(0.1...4,0.05,"×"),1))
-            if curves[selectedCurve]?["type"] as? String != "spring" { SettingRow(store:store,spec:.init("animations."+event+".duration_ms","Длительность",.animations,"",.number(0...10000,10,"ms"),duration)) }
+        Section("Animation Events") {
+            Picker("Action",selection:$event){ForEach(events,id:\.0){Text($0.1).tag($0.0)}}
+            Toggle("Enable Animation",isOn:Binding(get:{store.bool("animations."+event+".enabled")},set:{store.set("animations."+event+".enabled",$0)}))
+            HStack {Text("Curve");Spacer();NativeCurvePicker(names:curves.keys.sorted().filter{!["border","fadeShadow"].contains(event) || curves[$0]?["type"] as? String != "spring"},selection:Binding(get:{selectedCurve},set:{name in store.reset("animations."+event+".duration_ms");store.set("animations."+event+".curve",name)})).frame(width:200)}
+            SettingRow(store:store,spec:.init("animations."+event+".time_scale","Time Scale",.animations,"",.number(0.1...4,0.05,"×"),1))
+            if curves[selectedCurve]?["type"] as? String != "spring" { SettingRow(store:store,spec:.init("animations."+event+".duration_ms","Duration",.animations,"",.number(0...10000,10,"ms"),duration)) }
             if ["windowsIn","windowsOut"].contains(event) {
                 let style=store.string("animations."+event+".style",event == "windowsIn" ? "popin 86%":"popin 92%")
                 let percent=Double(style.replacingOccurrences(of:"popin ",with:"").replacingOccurrences(of:"%",with:"")) ?? 86
-                Picker("Стиль",selection:Binding(get:{style.hasPrefix("popin") ? "popin":style.isEmpty ? "center":"fade"},set:{store.set("animations."+event+".style",$0=="popin" ? "popin \(Int(percent))%":$0=="center" ? "":"fade")})) {
-                    Text("Масштаб").tag("popin");Text("Из центра").tag("center");Text("Прозрачность").tag("fade")
+                Picker("Style",selection:Binding(get:{style.hasPrefix("popin") ? "popin":style.isEmpty ? "center":"fade"},set:{store.set("animations."+event+".style",$0=="popin" ? "popin \(Int(percent))%":$0=="center" ? "":"fade")})) {
+                    Text("Scale").tag("popin");Text("From Center").tag("center");Text("Opacity").tag("fade")
                 }
-                if style.hasPrefix("popin") {HStack{Text(event=="windowsIn" ? "Начальный размер":"Конечный размер");Spacer();Slider(value:Binding(get:{percent},set:{store.set("animations."+event+".style","popin \(Int($0))%")}),in:0...100).frame(width:180);Text("\(Int(percent))%").monospacedDigit().frame(width:44)}}
+                if style.hasPrefix("popin") {HStack{Text(event=="windowsIn" ? "Initial Size":"Final Size");Spacer();Slider(value:Binding(get:{percent},set:{store.set("animations."+event+".style","popin \(Int($0))%")}),in:0...100).frame(width:180);Text("\(Int(percent))%").monospacedDigit().frame(width:44)}}
             }
-            if valueAt(store.document,"animations."+event) != nil {Button("Сбросить действие"){store.reset("animations."+event)}.foregroundStyle(.secondary)}
+            if !store.isDefault("animations."+event,fallback:[:]) {Button("Reset Event"){store.reset("animations."+event)}.foregroundStyle(.secondary)}
         }
-        Section("Редактор кривых") {
-            Picker("Кривая для редактирования",selection:$curve){Text("Выберите кривую").tag("");ForEach(curves.keys.sorted(),id:\.self){Text($0).tag($0)}}
+        Section("Curve Editor") {
+            Picker("Curve",selection:$curve){Text("Choose a Curve").tag("");ForEach(curves.keys.sorted(),id:\.self){Text($0).tag($0)}}
             if let spec=curves[curve], !curve.isEmpty { CurveEditor(store:store,name:curve,value:spec).id(curve) }
-            HStack {TextField("Имя новой кривой",text:$newName);Picker("Тип",selection:$newKind){Text("Безье").tag("bezier");Text("Пружина").tag("spring")}.labelsHidden().frame(width:110);Button("Добавить") {
+            HStack {TextField("New Curve Name",text:$newName);Picker("Type",selection:$newKind){Text("Bézier").tag("bezier");Text("Spring").tag("spring")}.labelsHidden().frame(width:110);Button("Add") {
                 store.set("curves."+newName,newKind=="spring" ? ["type":"spring","mass":1.0,"stiffness":250.0,"damping":25.0] as [String:Any]:["type":"bezier","points":[[0.25,0.1],[0.25,1.0]]] as [String:Any]);curve=newName;newName=""
             }.disabled(newName.range(of:"^[A-Za-z][A-Za-z0-9_-]{0,63}$",options:.regularExpression)==nil || curves[newName] != nil)}
         }
@@ -99,14 +99,14 @@ struct CurveEditor: View {
         VStack(alignment:.leading,spacing:12) {
             CurveGraph(value:value,onMove:{index,point in var next=points;next[index]=[Double(point.x),Double(point.y)];store.set("curves."+name,["type":"bezier","points":next])}).frame(height:155)
             if spring {
-                ForEach([("mass","Масса",0.001...100,0.1,1.0),("stiffness","Жёсткость",0.001...100000,1.0,250.0),("damping","Затухание",0.001...10000,0.5,25.0)],id:\.0) { key,title,range,step,fallback in
+                ForEach([("mass","Mass",0.001...100,0.1,1.0),("stiffness","Stiffness",0.001...100000,1.0,250.0),("damping","Damping",0.001...10000,0.5,25.0)],id:\.0) { key,title,range,step,fallback in
                     HStack {Text(title);Spacer();Slider(value:Binding(get:{(value[key] as? Double) ?? fallback},set:{n in var next=value;next[key]=n;next.removeValue(forKey:"dampening");store.set("curves."+name,next)}),in:range).frame(width:180);TextField("",value:Binding(get:{(value[key] as? Double) ?? fallback},set:{n in if n.isFinite && range.contains(n) {var next=value;next[key]=n;next.removeValue(forKey:"dampening");store.set("curves."+name,next)}}),format:.number.precision(.fractionLength(0...3))).frame(width:75)}
                 }
             } else {
-                ForEach(0..<2,id:\.self) {index in HStack {Text("Точка \(index+1)");Spacer();ForEach(0..<2,id:\.self){axis in Text(axis==0 ? "X":"Y").font(.caption).foregroundStyle(.secondary);TextField("",value:Binding(get:{points[index][axis]},set:{n in if n.isFinite && (axis==0 ? 0...1 : -10...10).contains(n) {var next=points;next[index][axis]=n;store.set("curves."+name,["type":"bezier","points":next])}}),format:.number.precision(.fractionLength(0...3))).frame(width:68)}} }
-                Text("Перетяните точки на графике или задайте координаты.").font(.caption).foregroundStyle(.secondary)
+                ForEach(0..<2,id:\.self) {index in HStack {Text("Point \(index+1)");Spacer();ForEach(0..<2,id:\.self){axis in Text(axis==0 ? "X":"Y").font(.caption).foregroundStyle(.secondary);TextField("",value:Binding(get:{points[index][axis]},set:{n in if n.isFinite && (axis==0 ? 0...1 : -10...10).contains(n) {var next=points;next[index][axis]=n;store.set("curves."+name,["type":"bezier","points":next])}}),format:.number.precision(.fractionLength(0...3))).frame(width:68)}} }
+                Text("Drag the control points or enter their coordinates.").font(.caption).foregroundStyle(.secondary)
             }
-            if valueAt(store.document,"curves."+name) != nil {Button("Вернуть исходную кривую"){store.reset("curves."+name)}.foregroundStyle(.secondary)}
+            if !store.isDefault("curves."+name,fallback:[:]) {Button("Reset Curve"){store.reset("curves."+name)}.foregroundStyle(.secondary)}
         }.padding(.vertical,5)
     }
 }
@@ -125,7 +125,7 @@ struct CurveGraph:View {
                     ForEach(0..<2,id:\.self){index in
                         Circle().fill(Color.accentColor).overlay(Circle().stroke(.white,lineWidth:2)).frame(width:12,height:12).position(x:15+w*points[index][0],y:10+h*(1-points[index][1]))
                             .gesture(DragGesture(minimumDistance:0).onChanged{drag in onMove?(index,CGPoint(x:min(1,max(0,(drag.location.x-15)/w)),y:min(10,max(-10,1-(drag.location.y-10)/h))))})
-                            .accessibilityLabel("Контрольная точка \(index+1)")
+                            .accessibilityLabel("Control Point \(index+1)")
                     }
                 }
             }.background(.quaternary.opacity(0.3),in:RoundedRectangle(cornerRadius:8)).clipped()
@@ -153,7 +153,7 @@ struct CurveGraph:View {
 struct NativeCurvePicker:NSViewRepresentable {
     let names:[String];@Binding var selection:String
     func makeCoordinator()->Coordinator{Coordinator(selection:$selection)}
-    func makeNSView(context:Context)->NSPopUpButton {let button=NSPopUpButton(frame:.zero,pullsDown:false);button.target=context.coordinator;button.action=#selector(Coordinator.choose(_:));button.setAccessibilityLabel("Кривая анимации");return button}
+    func makeNSView(context:Context)->NSPopUpButton {let button=NSPopUpButton(frame:.zero,pullsDown:false);button.target=context.coordinator;button.action=#selector(Coordinator.choose(_:));button.setAccessibilityLabel("Animation Curve");return button}
     func updateNSView(_ button:NSPopUpButton,context:Context){context.coordinator.selection=$selection;if button.itemTitles != names{button.removeAllItems();button.addItems(withTitles:names)};button.selectItem(withTitle:selection);button.isEnabled = !names.isEmpty}
     final class Coordinator:NSObject {var selection:Binding<String>;init(selection:Binding<String>){self.selection=selection};@objc func choose(_ sender:NSPopUpButton){if let title=sender.titleOfSelectedItem{selection.wrappedValue=title}}}
 }
