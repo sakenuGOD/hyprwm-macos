@@ -7,7 +7,7 @@ usage() {
 Usage: hyprwmctl status
        hyprwmctl focus|move left|right|up|down
        hyprwmctl layout balance|retile|togglesplit|fullscreen
-       hyprwmctl reload|pause|resume|float
+       hyprwmctl reload|pause|resume|restore-all|float
        hyprwmctl subscribe
 
 HYPRWM_CTL selects the command socket (default /tmp/hyprwm.ctl).
@@ -21,7 +21,7 @@ operation=$1
 shift
 case "$operation" in
     -h|--help|help) usage; exit 0 ;;
-    status|reload|pause|resume|float)
+    status|reload|pause|resume|restore-all|float)
         [ "$#" -eq 0 ] || fail "$operation takes no arguments"
         command=$operation ;;
     focus|move)
@@ -46,5 +46,6 @@ case "$operation:$response" in
     status:\{*) exit 0 ;;
     focus:*'(queued)'*) exit 0 ;;
     move:ok|layout:ok|float:ok|reload:'configuration reloaded'|pause:paused|resume:enabled) exit 0 ;;
+    restore-all:restored*|restore-all:'no hidden windows') exit 0 ;;
     *) exit 1 ;;
 esac
