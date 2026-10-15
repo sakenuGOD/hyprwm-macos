@@ -5,6 +5,29 @@ import CChan
 import Foundation
 import HyprCore
 
+enum RuntimeMode: String {
+    case lite, engine
+    /// Forced Lite never even opens the engine channel. Auto attaches once and
+    /// falls back quietly; a forced Engine request keeps its actionable error.
+    static func select(environment: [String: String], engine: LiveEngine) throws -> RuntimeMode {
+        let requested = environment["HYPRWM_MODE"] ?? "auto"
+        guard ["auto", "lite", "engine"].contains(requested) else { throw CmdError("HYPRWM_MODE must be auto, lite, or engine") }
+        if requested == "lite" { return .lite }
+        do { try engine.ensure(startup: true); return .engine }
+        catch {
+            if requested == "engine" { throw error }
+            log("Lite mode selected: native engine channel unavailable")
+            return .lite
+        }
+    }
+    static func decorate(_ text: String, mode: RuntimeMode) throws -> JSON {
+        let status = try JSON.parse(Data(text.utf8))
+        return status.setting("mode", .string(mode.rawValue))
+            .setting("engine", (status["engine"] ?? .object([])).setting("mode", .string(mode.rawValue)).setting("available", .bool(mode == .engine)))
+            .setting("daemon", (status["daemon"] ?? .object([])).setting("mode", .string(mode.rawValue)))
+    }
+}
+
 /// Inactive channel used before a verified native engine is attached.
 final class DeadChannel: ChannelAPI {
     func geom(_ wid: Int, _ to: Rect, _ cpos: Int, _ csize: Int, dpos: Double, dsize: Double, frm: Rect?, move: Bool,

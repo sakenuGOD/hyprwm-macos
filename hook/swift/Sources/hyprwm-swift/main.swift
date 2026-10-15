@@ -98,6 +98,14 @@ if args == ["--init-config"] {
     do { try initDefaultConfig(hook: hook) } catch { die("configuration: \(error)") }
     exit(0)
 }
+if args == ["restore-all"] {
+    let path = env["HYPRWM_CTL"] ?? "/tmp/hyprwm.ctl"
+    if CommandServer.isAlive(path) {
+        do { print(try ControlClient(path: path).request("restore-all")); exit(0) }
+        catch { die("restore-all: \(error)") }
+    }
+    LiteRuntime.restoreOnly(stateDir: env["HYPRWM_STATE_DIR"] ?? "/tmp/hyprwm-swift")
+}
 if args.first == "import" {
     guard args.count == 2 else { die("usage: hyprwm import FILE") }
     do {
@@ -198,8 +206,14 @@ do {
     let base = try HyprConfig.load(configDir: hook + "/config", rebuild: !bundledHook && env["HYPRWM_ADOPT_ENGINE"] != "1", timeScale: timeScale)
     cfg = try NativeRuntimeConfig.load(base: base, configDir: hook + "/config", environment: env)
 } catch { die("configuration: \(error)") }
-let sys = LiveSys()
 let eng = LiveEngine(hook: hook, cfg: cfg)
+let mode: RuntimeMode
+do { mode = try RuntimeMode.select(environment: env, engine: eng) } catch { die("engine: \(error)") }
+if mode == .lite {
+    do { try LiteRuntime(hook: hook, config: cfg, controlPath: ctl, stateDir: stateDir, environment: env).run() }
+    catch { die("Lite mode: \(error)") }
+}
+let sys = LiveSys()
 let deco: DecoAPI
 if env["HYPRWM_NO_DECO"] == "1" {
     deco = NullDeco()
@@ -209,7 +223,12 @@ if env["HYPRWM_NO_DECO"] == "1" {
 let wm = WM(sys: sys, eng: eng, deco: deco, cfg: cfg, statePath: stateDir + "/hyprwm.state.json",
             minsizePath: stateDir + "/minsize_app.json")
 do { wm.options = try RuntimeOptions.load(configDir: hook + "/config") } catch { die("Swift configuration: \(error)") }
+var formattingEngineStatus = false
 wm.controlHandler = { command in
+    if command == "status", !formattingEngineStatus, let last = wm.last {
+        formattingEngineStatus = true; defer { formattingEngineStatus = false }
+        return try RuntimeMode.decorate(wm.command("status", last.area, last.space, last.wins), mode: .engine).dumps(ensureASCII: false)
+    }
     guard command == "reload" else { return nil }
     let base = try HyprConfig.load(configDir: hook + "/config", rebuild: false, timeScale: timeScale)
     let next = try NativeRuntimeConfig.load(base: base, configDir: hook + "/config", environment: env)
@@ -221,13 +240,14 @@ wm.controlHandler = { command in
         old["config"]?["general"]?["gaps_out"] != fresh["config"]?["general"]?["gaps_out"] ||
         old["config"]?["dwindle"] != fresh["config"]?["dwindle"] || old["window_rules"] != fresh["window_rules"]
     try eng.replaceConfig(next)
+    let configuredEnabledChanged = nextOptions.tilingEnabled != wm.options.tilingEnabled
     wm.cfg = next; wm.options = nextOptions; wm.floatRules = next.floatRules
     let (inside, outside) = next.gaps()
     wm.tile.gapsIn = inside; wm.tile.gapsOut = outside
     wm.tile.defaultRatio = next.makeDwindle().defaultRatio
     wm.tile.splitWidthMult = next.makeDwindle().splitWidthMult
     wm.tile.minimumPolicy = next.makeDwindle().minimumPolicy
-    wm.setEnabled(nextOptions.tilingEnabled)
+    if configuredEnabledChanged { wm.setEnabled(nextOptions.tilingEnabled) }
     if geometryChanged, wm.enabled, let last = wm.last { wm.apply(last.area, last.space, last.wins) }
     return "configuration reloaded"
 }
@@ -266,7 +286,6 @@ wm.cfgSink = Configurer(sys: sys) { r in
         wm.tick(socketReady: false)
     }
 }
-do { try eng.ensure(startup: true) } catch { die("engine: \(error)") }
 do {try NativeHotkeys.apply(configDir:hook+"/config")} catch {die("hotkeys: \(error)")}
 sys.startLauncher()
 do { wm.server = try CommandServer(path: ctl) } catch { die("socket: \(error)") }
@@ -308,6 +327,7 @@ NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActiva
 
 let application = NSApplication.shared
 application.setActivationPolicy(.accessory)
+let panicHotkey = try? PanicHotkey { wm.setEnabled(!wm.enabled) }
 var menu: MenuBarController?
 let shutdown=ShutdownCoordinator(wm:wm,overview:overview,sys:sys)
 if wm.options.menuBar {
@@ -323,5 +343,5 @@ let signalSources = [SIGTERM, SIGINT].map { value -> DispatchSourceSignal in
     source.setEventHandler { shutdown.request { ready in if ready { application.terminate(nil) } } }
     source.resume(); return source
 }
-withExtendedLifetime((menu,signalSources,firstMapService,configWatcher,ecosystemAPI)) { application.run() }
+withExtendedLifetime((menu,signalSources,firstMapService,configWatcher,ecosystemAPI,panicHotkey)) { application.run() }
 firstMapService?.close()
