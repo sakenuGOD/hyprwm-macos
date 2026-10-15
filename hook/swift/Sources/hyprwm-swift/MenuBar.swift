@@ -12,6 +12,7 @@ final class MenuBarController:NSObject,NSMenuDelegate,NSWindowDelegate {
     private let stateItem=NSMenuItem(title:"Connecting…",action:nil,keyEquivalent:"")
     private let configErrorItem=NSMenuItem(title:"",action:nil,keyEquivalent:"")
     private var enabled=true,connected=false,refreshing=false
+    private var runtimeMode=""
     private var window:NSWindow?
     private var onboardingWindow:NSWindow?
     private var poll:Timer?
@@ -43,11 +44,11 @@ final class MenuBarController:NSObject,NSMenuDelegate,NSWindowDelegate {
     private func refresh(){guard !refreshing else{return};refreshing=true;store.trusted=AXIsProcessTrusted();send("status"){[weak self]result in
         guard let self else{return};self.refreshing=false
         switch result {
-        case let .success(text):self.connected=true;if let json=try?JSON.parse(text){self.enabled=json["enabled"]?.truthy ?? true;self.store.runtimeName=json["daemon"]?["runtime"]?.string ?? "";self.store.runtimeVersion=json["daemon"]?["version"]?.string ?? ""}
+        case let .success(text):self.connected=true;if let json=try?JSON.parse(text){self.enabled=json["enabled"]?.truthy ?? true;self.runtimeMode=json["mode"]?.string ?? json["daemon"]?["mode"]?.string ?? json["engine"]?["mode"]?.string ?? "engine";self.store.runtimeName=self.runtimeMode.capitalized+" · "+(json["daemon"]?["runtime"]?.string ?? "Swift");self.store.runtimeVersion=json["daemon"]?["version"]?.string ?? ""}
         case .failure:self.connected=false
         }
         self.store.connected=self.connected;self.store.enabled=self.enabled
-        self.stateItem.title = !self.store.trusted ? "Accessibility Access Required" : !self.connected ? "HyprWM Disconnected" : self.enabled ? "HyprWM Running":"Tiling Paused"
+        self.stateItem.title = !self.store.trusted ? "Accessibility Access Required" : !self.connected ? "HyprWM Disconnected" : (self.enabled ? "HyprWM Running":"Tiling Paused")+" · "+self.runtimeMode.capitalized
         let color:NSColor = !self.store.trusted || !self.connected ? .systemRed:self.enabled ? .systemGreen:.systemOrange
         self.stateItem.attributedTitle=NSAttributedString(string:self.stateItem.title,attributes:[.foregroundColor:color])
 
@@ -55,8 +56,8 @@ final class MenuBarController:NSObject,NSMenuDelegate,NSWindowDelegate {
         if let menu=self.item.menu {self.updateMenu(menu)}
     }}
     private func command(_ value:String){send(value){[weak self]result in if case let .failure(error)=result{self?.store.error=error.localizedDescription};self?.refresh()}}
-    @objc private func toggle(){store.set("runtime.enabled",!enabled)}
-    @objc private func returnHidden(){command("unhide all")}
+    @objc private func toggle(){command(enabled ? "pause" : "resume")}
+    @objc private func returnHidden(){command("restore-all")}
     @objc private func retile(){command("retile")}
     @objc private func balance(){command("balance")}
     @objc private func checkConnection(){refresh()}
@@ -66,7 +67,7 @@ final class MenuBarController:NSObject,NSMenuDelegate,NSWindowDelegate {
     private func makeMenu()->NSMenu {
         let menu=NSMenu();menu.delegate=self;menu.autoenablesItems=false
         stateItem.isEnabled=false;menu.addItem(stateItem);configErrorItem.isEnabled=false;configErrorItem.isHidden=true;menu.addItem(configErrorItem);menu.addItem(.separator())
-        add("Tiling",#selector(toggle),menu,symbol:"rectangle.split.2x2",key:"p")
+        add("Pause Tiling",#selector(toggle),menu,symbol:"pause.circle",key:"p")
         add("Borders",#selector(toggleBorders),menu,symbol:"rectangle",key:"")
         add("Animations",#selector(toggleAnimations),menu,symbol:"waveform.path",key:"")
         add("Focus Follows Mouse",#selector(togglePointerFocus),menu,symbol:"cursorarrow",key:"")
@@ -88,6 +89,7 @@ final class MenuBarController:NSObject,NSMenuDelegate,NSWindowDelegate {
         menu.addItem(.separator());add("Quit HyprWM",#selector(quit),menu,symbol:"power",key:"q")
         for entry in menu.items where !entry.keyEquivalent.isEmpty {entry.keyEquivalentModifierMask = [.command,.option]}
         menu.items.first(where:{$0.action == #selector(openSettings)})?.keyEquivalentModifierMask = .command
+        menu.items.first(where:{$0.action == #selector(toggle)})?.keyEquivalentModifierMask = [.control,.option]
         return menu
     }
     private func updateMenu(_ menu:NSMenu) {
@@ -95,7 +97,7 @@ final class MenuBarController:NSObject,NSMenuDelegate,NSWindowDelegate {
         configErrorItem.title = String((store.error ?? "").split(separator:"\n").first.map(String.init)?.prefix(120) ?? "".prefix(120))
         configErrorItem.toolTip=store.error
         for entry in menu.items {
-            if entry.action == #selector(toggle) {entry.state=enabled ? .on:.off;entry.isEnabled=connected}
+            if entry.action == #selector(toggle) {entry.title=enabled ? "Pause Tiling":"Resume Tiling";entry.state = .off;entry.isEnabled=connected}
             if entry.action == #selector(toggleBorders) {entry.state=store.number("appearance.border.size",2)>0 ? .on:.off;entry.isEnabled=store.loaded}
             if entry.action == #selector(toggleAnimations) {entry.state=store.bool("animations.enabled") ? .on:.off;entry.isEnabled=store.loaded}
             if entry.action == #selector(togglePointerFocus) {entry.state=store.number("focus.follow_mouse",1)>0 ? .on:.off;entry.isEnabled=store.loaded}
