@@ -86,10 +86,15 @@ runtime adapters.
 
 ## Limits and live acceptance
 
-Public AX cannot intercept an unrelated application's very first ordered frame.
-A proxy can animate its allocated-slot entrance after discovery, but a universal
-zero-flash first-map guarantee would require client cooperation or another
-verified mechanism. Screen-protected windows and windows omitted from shareable
+No documented public AX hook guarantees interception before an unrelated
+application's first ordered frame. Apple's
+[window-created notification](https://developer.apple.com/documentation/applicationservices/kaxwindowcreatednotification)
+provides the new window element through an
+[AX observer](https://developer.apple.com/documentation/applicationservices/1460133-axobservercreate),
+but specifies no ordering relative to presentation. A callback may reduce the
+current 50 ms polling delay; this is a timing hypothesis awaiting measurement,
+not a zero-flash guarantee. A proxy can animate its allocated-slot entrance after
+discovery. Screen-protected windows and windows omitted from shareable
 content fall back to direct AX placement. During a proxy transition the image is
 a snapshot; video and rapidly changing content do not remain live.
 
