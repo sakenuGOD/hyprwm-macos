@@ -127,6 +127,21 @@ final class LiteChannel: ChannelAPI {
     func busy(_ wid: Int) -> Bool { slots[wid]?.busy == true }
     func actual(_ wid: Int) -> Rect? { slots[wid]?.actual }
     func destination(_ wid: Int) -> Rect? { slots[wid]?.target }
+    // The proxy owns one final client handoff. This generic channel contract
+    // keeps shared policy from replaying a compatibility warp after its ACK.
+    var terminalGeometrySupported: Bool { true }
+    func geomTerminal(_ wid: Int, to: Rect, curves: (Int, Int), durations: (Double, Double), from: Rect?) -> Bool {
+        geom(wid, to, curves.0, curves.1, dpos: durations.0, dsize: durations.1, frm: from, move: true, warp: false, stretch: false)
+        return true
+    }
+    func receiptCheck(_ wid: Int) -> () -> Bool {
+        guard let slot = slots[wid] else { return { false } }
+        let version = slot.version
+        return { [weak self, weak slot] in
+            guard let self, let slot else { return false }
+            return self.slots[wid] === slot && slot.version == version
+        }
+    }
     func commit() {
         let batch = commands; commands.removeAll(keepingCapacity: true)
         for (wid, command) in batch {
@@ -369,18 +384,30 @@ final class LiteChannel: ChannelAPI {
 final class LiteConfigureSink: ConfigureSink {
     private let channel: LiteChannel
     private var jobs: [Int: CfgJob] = [:]
+    private var tickets: [Int: UInt64] = [:], nextTicket: UInt64 = 0
+    private var previous: [Int: Rect] = [:]
     let completed: (CfgResult) -> Void
     init(channel: LiteChannel, completed: @escaping (CfgResult) -> Void) { self.channel = channel; self.completed = completed }
     var idle: Bool { jobs.isEmpty }
     func busy(_ wid: Int) -> Bool { jobs[wid] != nil || channel.busy(wid) }
-    func cancel(_ wid: Int) { jobs[wid] = nil }
-    func cancelAll() { jobs.removeAll() }
-    func submit(_ batch: [CfgJob]) { for job in batch { jobs[job.wid] = job } }
+    func cancel(_ wid: Int) { jobs[wid] = nil; tickets[wid] = nil; previous[wid] = nil }
+    func cancelAll() { jobs.removeAll(); tickets.removeAll(); previous.removeAll() }
+    func submit(_ batch: [CfgJob]) {
+        for job in batch {
+            nextTicket &+= 1; tickets[job.wid] = nextTicket
+            previous[job.wid] = channel.actual(job.wid); jobs[job.wid] = job
+        }
+    }
     func drain() {
         for (wid, job) in jobs where !channel.busy(wid) {
             jobs[wid] = nil
-            var result = CfgResult(wid: wid, owner: job.owner, to: job.to, got: channel.actual(wid), e: channel.actual(wid) == nil ? -1 : 0, pre: nil)
+            let ticket = tickets[wid], currentSlot = channel.receiptCheck(wid)
+            var result = CfgResult(wid: wid, owner: job.owner, to: job.to, got: channel.actual(wid), e: channel.actual(wid) == nil ? -1 : 0, pre: previous.removeValue(forKey: wid))
             result.pid = job.pid; result.birth = job.birth
+            result.isCurrent = { [weak self] in
+                guard let self, let ticket else { return false }
+                return self.tickets[wid] == ticket && currentSlot() && self.channel.destination(wid) == job.to
+            }
             completed(result)
         }
     }
