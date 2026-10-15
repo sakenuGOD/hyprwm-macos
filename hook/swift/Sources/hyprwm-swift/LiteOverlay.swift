@@ -107,14 +107,26 @@ enum LiteMotion {
 /// No timer tries to chase a separately animated foreign window.
 final class LiteProxy {
     let window: LiteOverlayWindow, imageLayer = CALayer(), border = CAGradientLayer(), mask = CAShapeLayer()
-    let image: CGImage
+    private var backingImage: CGImage
+    private var contentFade: (from: CGImage, started: Double, duration: Double)?
+    var image: CGImage {
+        guard let fade = contentFade else { return backingImage }
+        let progress = min(1, max(0, (CACurrentMediaTime()-fade.started)/fade.duration))
+        guard progress < 1, let context = CGContext(data: nil, width: backingImage.width, height: backingImage.height,
+            bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return backingImage }
+        let bounds = CGRect(x: 0, y: 0, width: backingImage.width, height: backingImage.height)
+        context.setBlendMode(.copy); context.setAlpha(1-progress); context.draw(fade.from, in: bounds)
+        context.setBlendMode(.plusLighter); context.setAlpha(progress); context.draw(backingImage, in: bounds)
+        return context.makeImage() ?? backingImage
+    }
     let canvas: Rect
     let target: Rect
     let width: Double, radius: Double
     private(set) var began = 0.0, duration = 0.0
     private var focusColors: [RGBA] = []
     init(image: CGImage, from: Rect, to: Rect, motionFrames: [Rect], appearance: Appearance, focused: Bool, relativeTo wid: Int) {
-        self.image = image; target = to; width = appearance.width; radius = appearance.radius
+        backingImage = image; target = to; width = appearance.width; radius = appearance.radius
         let padding = max(appearance.width + 4, 8)
         let frames = motionFrames + [from, to]
         let x = frames.map(\.x).min()! - padding, y = frames.map(\.y).min()! - padding
@@ -173,8 +185,22 @@ final class LiteProxy {
     }
     func freeze() {
         let frame = presented
+        let contents = image; backingImage = contents; contentFade = nil
         imageLayer.removeAllAnimations(); border.removeAllAnimations(); mask.removeAllAnimations()
+        CATransaction.begin(); CATransaction.setDisableActions(true); imageLayer.contents = contents; CATransaction.commit()
         setModel(frame)
+    }
+    func replaceImage(_ image: CGImage, duration: Double) {
+        let previous = self.image
+        let started = CACurrentMediaTime()
+        backingImage = image; contentFade = (previous, started, duration)
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        let fade = CATransition(); fade.type = .fade; fade.duration = duration
+        fade.beginTime = started
+        fade.timingFunction = CAMediaTimingFunction(name: .linear)
+        imageLayer.add(fade, forKey: "content")
+        imageLayer.contents = image
+        CATransaction.commit()
     }
     func focus(_ active: Bool, appearance: Appearance, config: HyprConfig) {
         let colors = active ? appearance.gradient : Array(repeating: appearance.inactive, count: 8)

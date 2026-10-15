@@ -256,6 +256,21 @@ final class LiteChannel: ChannelAPI {
                 proxy.window.order(.above, relativeTo: slot.wid)
                 slot.presented = start; self.sys.presentation[slot.wid] = start
                 self.proxyMotions += 1
+                // Capture the resized backing surface while its real window is
+                // still parked. Blend it during geometry motion, so landing does
+                // not replace a stretched old title/content in a single frame.
+                guard self.capturePending.count < 2, self.capturePending.insert(slot.wid).inserted else { return }
+                let capturedID = slot.wid
+                self.captures.image(slot.wid, pid: slot.pid, frame: actual) { [weak self, weak slot, weak proxy] image in
+                    guard let self else { return }; self.capturePending.remove(capturedID)
+                    guard let slot, let proxy, let image,
+                          self.current(slot, version), slot.proxy === proxy, slot.busy, !slot.landing,
+                          !self.sys.applicationHidden(slot.pid) else { return }
+                    let remaining = slot.started + slot.duration - CACurrentMediaTime()
+                    guard remaining >= 0.08 else { return }
+                    proxy.replaceImage(image, duration: min(0.12 * self.config.timeScale, remaining - 0.034))
+                    slot.cached = image; slot.capturedAt = self.sys.now()
+                }
             }
         }
         if let image = oldProxy?.image { captured(image) }
