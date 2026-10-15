@@ -117,6 +117,16 @@ final class LiteSys: SysAPI {
         return (frames.map { $0.x + $0.w }.max().map { $0 - 1 } ?? 1439,
                 frames.map { $0.y + $0.h }.max().map { $0 - 1 } ?? 899)
     }
+    static func parked(_ frame: Rect, screens: [Rect]) -> Bool {
+        guard [frame.x, frame.y, frame.w, frame.h].allSatisfy(\.isFinite), frame.w > 0, frame.h > 0,
+              !screens.isEmpty else { return false }
+        return screens.allSatisfy { screen in
+            let width = max(0, min(frame.x+frame.w, screen.x+screen.w)-max(frame.x, screen.x))
+            let height = max(0, min(frame.y+frame.h, screen.y+screen.h)-max(frame.y, screen.y))
+            return width <= 2 || height <= 2
+        }
+    }
+    func parked(_ frame: Rect) -> Bool { Self.parked(frame, screens: NSScreen.screens.map { Self.rect($0.frame) }) }
     func park(_ frame: Rect) -> Rect { let point = parkingPoint; return Rect(point.0, point.1, frame.w, frame.h) }
     func snapshot() throws -> Snapshot {
         guard let rows = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { throw CmdError("Lite public window census unavailable") }

@@ -190,7 +190,8 @@ final class LiteChannel: ChannelAPI {
                 self.counters.errors += 1; completion?(false); return
             }
             slot.actual = actual; slot.configureError = result
-            if slot.proxy != nil, slot.actual.maxDiff(frame) > 8 {
+            let verified = concealed ? self.sys.parked(slot.actual) : slot.actual.maxDiff(frame) <= 8
+            if !verified, concealed || slot.proxy != nil {
                 // Keep a visible frozen proxy and the recovery record when AX
                 // refuses the landing. Never reveal a still-parked real body.
                 slot.proxy?.freeze(); slot.busy = false; slot.landing = false
@@ -234,7 +235,11 @@ final class LiteChannel: ChannelAPI {
                 if result != 0 {
                     self.counters.errors += 1; self.place(slot, frame: geometry.to, logical: geometry.to); return
                 }
-                if let accepted { slot.actual = accepted }
+                guard let actual = accepted ?? self.sys.winBounds(slot.wid), self.sys.parked(actual) else {
+                    self.counters.errors += 1; self.directPlacements += 1
+                    self.place(slot, frame: geometry.to, logical: geometry.to); return
+                }
+                slot.actual = actual
                 slot.capturing = false
                 slot.started = CACurrentMediaTime()+0.008; slot.duration = geometry.duration
                 proxy.animate(frames: frames, duration: geometry.duration, started: slot.started, fromAlpha: opening ? 0 : 1)
