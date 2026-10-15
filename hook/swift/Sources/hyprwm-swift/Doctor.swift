@@ -10,7 +10,13 @@ func doctor(hook: String, controlPath: String) -> String {
     let version = Bundle.main.object(forInfoDictionaryKey:"CFBundleShortVersionString") as? String ?? "development"
     lines.append("Version: \(version)")
     let reply = try? ControlClient(path:controlPath).request("status")
-    let status = reply.flatMap { try? JSON.parse($0) }
+    let status: JSON? = reply.flatMap {
+        guard let value=try? JSON.parse($0),value.object != nil,
+              let pid=value["daemon"]?["pid"]?.int,pid>1,
+              value["daemon"]?["runtime"]?.string?.isEmpty == false,
+              case .bool = value["enabled"] ?? .null else { return nil }
+        return value
+    }
     let requested = ProcessInfo.processInfo.environment["HYPRWM_MODE"] ?? "auto"
     let mode = status?["mode"]?.string ?? status?["daemon"]?["mode"]?.string ?? status?["engine"]?["mode"]?.string
     lines.append("Mode: \(mode ?? (status == nil ? "not running (requested: \(requested))" : "engine"))")
