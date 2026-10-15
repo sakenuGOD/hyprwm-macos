@@ -36,7 +36,7 @@ final class CommandTests: XCTestCase {
         XCTAssertEqual(try cmd("bogus x"), "unknown command: bogus x")
         XCTAssertEqual(try cmd("focus"), "unknown command: focus")       // without direction, as in Python
         XCTAssertEqual(try cmd("resize 5"), "unknown command: resize 5")
-        XCTAssertThrowsError(try cmd("resize abc 1"))                    // float() -> ValueError: no response
+        XCTAssertThrowsError(try cmd("resize abc 1"))                    // Invalid numeric arguments are refused before mutation.
         XCTAssertEqual(try cmd("preselect l"), "preselect left")
         XCTAssertEqual(try cmd("preselect"), "preselect None")
         XCTAssertEqual(try cmd("preselect zz"), "preselect None")
@@ -117,10 +117,10 @@ final class SocketTests: XCTestCase {
         XCTAssertEqual(seen.filter { $0 != "" }.suffix(2), ["status", "focus l"])
         XCTAssertEqual(reply(a), "ok:status\n")
         XCTAssertEqual(reply(b), "ok:focus l\n")
-        // command failed: close the connection without a response (as in Python)
+        // A refused command gets one explanatory response before the connection closes.
         let c = client(path, "resize abc 1\n")
         srv.drain { _ in throw CmdError("ValueError") }
-        XCTAssertEqual(reply(c), "")
+        XCTAssertEqual(reply(c), "error: ValueError\n")
     }
 }
 
