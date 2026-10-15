@@ -45,7 +45,7 @@ runtime_options = (root / 'hook/swift/Sources/HyprCore/RuntimeOptions.swift').re
 snapshot_default = re.search(r'public\s+var\s+snapshotFrames\s*=\s*(true|false)\b', runtime_options)
 if not snapshot_default or snapshot_default[1] != 'false':
     raise SystemExit('Release requires the compiled snapshotFrames default to remain false.')
-info = dict(CFBundleDevelopmentRegion='ru', CFBundleDisplayName='HyprWM',
+info = dict(CFBundleDevelopmentRegion='en', CFBundleDisplayName='HyprWM',
             CFBundleName='HyprWM', CFBundleExecutable='hyprwm-swift', CFBundlePackageType='APPL',
             CFBundleIdentifier='dev.hyprwm.HyprWM', CFBundleShortVersionString=version,
             CFBundleVersion=build, CFBundleIconFile='AppIcon', LSUIElement=True,

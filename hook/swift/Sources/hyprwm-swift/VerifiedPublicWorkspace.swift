@@ -158,7 +158,8 @@ final class VerifiedPublicWorkspace {
             guard before.sameSession(original),before.active==original.active || before.active==sid else{throw CmdError("public source/current changed before commit")}
             let request=try before.request(sid),pid=OverviewBinding.integer(before.dock["pid"])!
             if before.active != sid {
-                let description="выйти на Рабочий стол \(try before.ordinal(sid))"
+                // Match the Russian accessibility label emitted by the verified Dock session.
+                let description="\u{432}\u{44b}\u{439}\u{442}\u{438} \u{43d}\u{430} \u{420}\u{430}\u{431}\u{43e}\u{447}\u{438}\u{439} \u{441}\u{442}\u{43e}\u{43b} \(try before.ordinal(sid))"
                 let expected=JSON.object([("identifier",.string("")),("role",.string("AXButton")),("description",.string(description)),("press",.bool(true))])
                 var inspection=try helper(proof,["--inspect",String(pid)],epoch)
                 if !(inspection["controls"]?.array ?? []).contains(expected) {
