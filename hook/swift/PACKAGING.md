@@ -1,5 +1,7 @@
 # Local HyprWM app packaging
 
+The launch branch runs Engine only. `./install.sh` packages a daemon app and CLI without launching them; it does not supply a complete native Engine installation. Running it needs the already verified matching external `hook` resources, engine attachment and system prerequisites in the [README](../../README.md). Lite remains on a separate experimental branch.
+
 Build an ad-hoc signed macOS menu companion with a native menu, settings, icon and bundle identifier `dev.hyprwm.HyprWM`:
 
 ```sh

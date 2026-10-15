@@ -1,5 +1,7 @@
 # Troubleshooting and recovery
 
+This launch branch is Engine-only and requires an already verified native installation. Lite-specific recovery, workspace and capture guidance below applies to the separate experimental `lite/2026-10-16` branch. Setting `HYPRWM_MODE=lite` here does not enable it; see [branch availability](../README.md#experimental-lite).
+
 Start with the mode, permissions and configuration diagnosis. Use the installed CLI:
 
 ```sh
@@ -12,7 +14,7 @@ Keep its output local until you have removed personal paths and private applicat
 
 In **System Settings → Privacy & Security → Accessibility**, enable the process that actually controls windows. For an installed app that is HyprWM; for a command-line development launch, macOS may attribute access to your terminal host or the executable shown in the permission prompt. Use doctor for permission state and the OS prompt to identify the responsible process. Relaunch HyprWM after changing permissions.
 
-Screen capture animation needs **Screen & System Audio Recording** permission (called **Screen Recording** on some macOS versions). A denied capture permission should reduce Lite to live AX placement rather than make windows disappear. Carbon runtime shortcuts do not need Input Monitoring. The settings shortcut recorder uses an event tap and can request **Input Monitoring**. **Automation → System Events** is for GUI scripting used in testing, not an instruction to grant blanket Automation access to every process.
+Screen capture animation needs **Screen & System Audio Recording** permission (called **Screen Recording** on some macOS versions). A denied capture permission should reduce Lite to live AX placement rather than make windows disappear. The Engine daemon’s fixed Carbon panic shortcut does not need Input Monitoring; its separate legacy watcher can require it. The settings shortcut recorder uses an event tap and can request **Input Monitoring**. **Automation → System Events** is for GUI scripting used in testing, not an instruction to grant blanket Automation access to every process.
 
 If you recently rebuilt or moved the app, verify that the granted item is the current copy. Avoid running an old companion and a new daemon from different checkouts. Close the old companion through its menu before opening another.
 
@@ -81,7 +83,7 @@ Float-rule classification is currently latched for an observed window lifetime i
 
 ## A shortcut does nothing
 
-Settings → Hotkeys lists configured bindings; a registration conflict can still prevent a chord from working. Check duplicate chords, imported modifier translation and whether the watcher is running. Carbon runtime bindings do not require Input Monitoring; check that permission if the settings shortcut recorder cannot observe keys. Readable text bindings map `SUPER` to Command, `ALT` to Option and `CTRL` to Control. The legacy Lua defaults use a separate translation; the README lists the actual macOS keys.
+Settings → Hotkeys lists configured bindings; a registration conflict can still prevent a chord from working. Check duplicate chords, imported modifier translation and whether the watcher is running. Engine ordinary shortcuts require the separate legacy watcher; the installer does not start it. Check Input Monitoring for that watcher and the settings recorder. The daemon’s fixed Carbon panic shortcut does not require it. Readable text bindings map `SUPER` to Command, `ALT` to Option and `CTRL` to Control. The legacy Lua defaults use a separate translation; the README lists the actual macOS keys.
 
 A shortcut contains a HyprWM command argument array, not arbitrary shell syntax. Imported shell commands and unsupported actions produce warnings. See [MIGRATING.md](MIGRATING.md) for the supported subset.
 
@@ -105,7 +107,7 @@ Lite's current discovery path does not guarantee placement before the first disp
 
 ## Installation or removal fails
 
-Read the first error rather than repeatedly rebuilding. Check the macOS/Swift requirements and command-line tools, writable `~/Applications`, the existing configuration and the selected checkout. The installed Lite app bundles its base resources. Keep the checkout for the matching uninstaller; a separately built development menu companion still depends on its checkout. See [packaging](../hook/swift/PACKAGING.md) for the difference between the local menu bundle and a standalone installer.
+Read the first error rather than repeatedly rebuilding. Check the macOS/Swift requirements and command-line tools, writable `~/Applications`, the existing configuration and the selected checkout. The installed app bundles base configuration resources; Engine still needs its matching external native resources. Keep the checkout for the matching uninstaller; a separately built development menu companion still depends on its checkout. See [packaging](../hook/swift/PACKAGING.md) for the difference between the local menu bundle and a standalone installer.
 
 Run the matching `./uninstall.sh` from the same checkout. It must restore managed windows before deleting the app. If restoration is pending, keep the app, state and checkout and follow the recovery message. User preferences/backups should be kept unless you intentionally remove them afterwards. An uninstall does not automatically reverse independently configured Engine security settings; follow [Engine reversal](../README.md#returning-from-engine-to-lite).
 

@@ -1,5 +1,7 @@
 # Configuration
 
+This launch branch is Engine-only. Lite applicability below describes the separate experimental `lite/2026-10-16` implementation, not a selectable mode in this build. See [branch availability](../README.md#experimental-lite).
+
 HyprWM reads `~/.config/hyprwm/hyprwm.conf`. Set `HYPRWM_CONFIG` to an explicit file path to use another document. The settings UI and daemon share this file. Save to reload; the watcher observes the containing directory as well as the file, so atomic-save editors are supported. A 65 ms debounce coalesces writes. Invalid assignments produce line-numbered warnings while independent valid assignments remain usable.
 
 ```conf
@@ -25,7 +27,7 @@ Each section opener, assignment and closing brace goes on its own line. Dotted a
 
 The tables describe the portable baseline in [`hyprland.lua`](../hook/config/defaults/.config/hypr/hyprland.lua), generated text defaults in [`TextConfig.swift`](../hook/swift/Sources/HyprCore/TextConfig.swift), and consumer fallbacks. An existing configuration remains authoritative. On legacy first startup, `TextConfig.read` can also migrate `hook/config/runtime.json` and `swift-runtime.json`; those may contain local overrides and are not portable defaults. Environment overrides take precedence where listed below.
 
-The schema is [`runtime.schema.json`](../hook/config/runtime.schema.json). Swift adds `runtime.enabled`, `runtime.menu_bar`, `runtime.startup_animation` and rule role/subrole fields while loading it. Parsing a field is distinct from a renderer consuming it. Engine consumers below refer to the native path; see [Lite mode](LITE_RESEARCH.md) for its capability and validation limits.
+The schema is [`runtime.schema.json`](../hook/config/runtime.schema.json). Swift adds `runtime.enabled`, `runtime.menu_bar`, `runtime.startup_animation` and rule role/subrole fields while loading it. Parsing a field is distinct from a renderer consuming it. Engine consumers below refer to the native path; see the [separate Lite research report](https://github.com/sakenuGOD/hyprwm-macos/blob/lite/2026-10-16/docs/LITE_RESEARCH.md) for its capability and validation limits.
 
 ## Runtime, layout, focus and drag
 

@@ -1,5 +1,7 @@
 # HyprWM API
 
+This launch branch is Engine-only. Sections explicitly describing Lite, its status fields or virtual workspaces document the separate experimental `lite/2026-10-16` implementation; they are unavailable in this branch. See [branch availability](../README.md#experimental-lite).
+
 HyprWM exposes local Unix sockets owned by the current user with mode `0600`.
 The command socket is `/tmp/hyprwm.ctl`; set `HYPRWM_CTL` in both the daemon and
 client environment to use another path. No network port is opened.
@@ -158,7 +160,7 @@ After the source installer has bundled the base configuration:
 
 ## Recovery and diagnostics
 
-`hyprwm doctor` reports version, requested/running mode, the control socket, config path and line-numbered parse issues, and the current process's Accessibility, Screen Recording, Input Monitoring and Automation status. It does not request a permission prompt or create config. Carbon runtime shortcuts do not need Input Monitoring; the settings recorder's event tap can. Automation → System Events is for scripted desktop verification.
+`hyprwm doctor` reports version, requested/running mode, the control socket, config path and line-numbered parse issues, and the current process's Accessibility, Screen Recording, Input Monitoring and Automation status. It does not request a permission prompt or create config. The Engine daemon's fixed Carbon panic shortcut does not need Input Monitoring. Its separate legacy hotkey watcher and the settings recorder can require it; Lite's runtime Carbon bindings belong to the experimental branch. Automation → System Events is for scripted desktop verification.
 
 `hyprwm --init-config` explicitly creates commented defaults only when the selected config is absent, and preserves an existing file. The source installer uses this entry point with the portable bundled baseline.
 

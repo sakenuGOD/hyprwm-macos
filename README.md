@@ -1,13 +1,13 @@
 # HyprWM for macOS
 
-HyprWM is an independent, experimental tiling window manager that brings Hyprland-inspired binary split layouts and motion to macOS. Open a window and the layout makes room; move focus or rearrange tiles from the keyboard, tune gaps and appearance in a native settings window, and keep the same configuration in a hot-reloaded text file. If you are new to tiling, start with two disposable windows; if you already use Hyprland or AeroSpace, start with the [migration guide](docs/MIGRATING.md). Lite is the intended everyday path without system security changes; Engine is an opt-in development path with deeper native integration.
+HyprWM is an independent, experimental tiling window manager that brings Hyprland-inspired binary split layouts and motion to macOS. Open a window and the layout makes room; move focus or rearrange tiles from the keyboard, tune gaps and appearance in a native settings window, and keep the same configuration in a hot-reloaded text file. If you are new to tiling, start with two disposable windows; if you already use Hyprland or AeroSpace, start with the [migration guide](docs/MIGRATING.md). This launch branch runs the native Engine and requires an already configured development system. A no-injection Lite implementation is being tested separately; it has not passed its full live acceptance gate.
 
 <a id="showcase"></a>
 **Showcase pending:** the launch recording and hero GIF/WebP will be linked here after real desktop capture and frame review. Existing [settings screenshots](#settings) show the interface, not proof of runtime motion.
 
 ## 60-second quickstart
 
-The commands take about a minute to enter; the first build takes longer. This preview currently lives on `launch/2026-10-16`, so clone that branch. You need macOS 14 or later, Xcode Command Line Tools with Swift 5.9 or later, and Python 3. The installed Lite path uses a bundled baseline and does not need Lua. This is a source preview; no downloadable standalone release is promised here.
+The commands take about a minute to enter; the first build takes longer. This source preview lives on `launch/2026-10-16`. You need macOS 14 or later, Xcode Command Line Tools with Swift 5.9 or later, and Python 3. No downloadable standalone release is promised here.
 
 ```sh
 git clone --branch launch/2026-10-16 https://github.com/sakenuGOD/hyprwm-macos.git
@@ -15,9 +15,19 @@ cd hyprwm-macos
 ./install.sh
 ```
 
-**Install/launch verification pending on this development branch.** The install and recovery CLI are being integrated. Do not treat this section as a clean-machine pass until the final verification note replaces this paragraph. The installer builds the app into `~/Applications`, adds `hyprwm` and `hyprwmctl` under `~/.local/bin`, preserves existing config and does not launch a daemon. Launch after granting permissions with `open ~/Applications/HyprWM.app`; desktop launch still needs separate verification.
+**This installs an app and CLI without launching a window manager. It does not complete Engine setup.** The installer builds into `~/Applications`, adds `hyprwm` and `hyprwmctl` under `~/.local/bin`, preserves existing configuration and bundles portable configuration resources. Final clean-HOME command verification is pending on the selected launch revision.
 
-Grant **Accessibility** access to HyprWM (or the exact controlling process named by the OS prompt) in **System Settings → Privacy & Security → Accessibility**. If the installed app is missing, use **+** and select `~/Applications/HyprWM.app`. Screen capture animations additionally need **Screen & System Audio Recording** / **Screen Recording**; [Apple documents adding a missing app with **+**](https://support.apple.com/guide/mac-help/control-access-screen-system-audio-recording-mchld6aa7d23/mac). Carbon runtime shortcuts do not need Input Monitoring; the settings shortcut recorder can request it. Relaunch after granting permissions. Stop another automatic tiler before starting HyprWM.
+Running this branch additionally requires **SIP disabled**, `amfi_get_out_of_my_way=1`, a matching native engine already injected into the current WindowServer, and its verified development `hook` directory with `anim4.state` and generated configuration. Required native resources and lifecycle helpers are not all tracked in the public checkout; cloning and installing alone cannot establish this runtime. The installer does not configure those prerequisites. If you do not already have a verified Engine installation, stop after packaging and follow the [experimental Lite branch](#experimental-lite).
+
+Grant **Accessibility** to the process controlling windows in **System Settings → Privacy & Security → Accessibility**, then relaunch it. For an installed app, add `~/Applications/HyprWM.app` with **+** if needed. Screen recording is needed for verification captures; [Apple documents its permission pane](https://support.apple.com/guide/mac-help/control-access-screen-system-audio-recording-mchld6aa7d23/mac). Engine's separate legacy hotkey watcher can require Input Monitoring; the daemon's fixed panic shortcut uses Carbon. Stop another automatic tiler before starting HyprWM.
+
+After quitting the previous instance normally, an explicit foreground launch using your **already verified** native installation is:
+
+```sh
+HYPRWM_HOOK=/path/to/verified-native-checkout/hook ~/.local/bin/hyprwm
+```
+
+Replace the placeholder with that installation's real path. This starts a real Engine window manager in the desktop session. `HYPRWM_MODE=lite` does not select Lite on this launch branch.
 
 Once running, open two disposable Terminal or TextEdit windows. Try the focus/move shortcuts below and keep the recovery commands available:
 
@@ -31,7 +41,7 @@ Once running, open two disposable Terminal or TextEdit windows. Try the focus/mo
 
 ## Default shortcuts
 
-These are actual macOS keys from the portable baseline. An existing or imported configuration may differ; **Settings → Hotkeys** shows the mode’s configured bindings. Shortcuts require the mode’s hotkey handler, and another application can already own a chord. Carbon runtime shortcuts do not require Input Monitoring; the settings recorder uses an event tap.
+These are the actual macOS keys represented by the portable baseline. Engine ordinary bindings require the separate legacy `hyprkeys` watcher and its generated baseline; the source app installer does not start that watcher. An existing native installation or imported configuration may differ. **Settings → Hotkeys** shows configured bindings, which does not prove a watcher registered them. The daemon independently registers the fixed Control–Option–P panic shortcut through Carbon; it does not require Input Monitoring. The watcher and settings recorder can need that permission, and another application can already own a chord.
 
 | Shortcut | Action |
 | --- | --- |
@@ -51,41 +61,37 @@ These are actual macOS keys from the portable baseline. An existing or imported 
 
 Workspace bindings in the baseline do not establish native Space creation or switching support. Engine uses existing macOS Spaces through capability-checked backends; Lite's virtual workspace path is tracked separately. Read the mode status before relying on workspace actions.
 
-## Lite and Engine
+## Engine and experimental Lite
 
-| | Lite | Engine |
+| | This launch branch: Engine | Separate experimental Lite branch |
 | --- | --- | --- |
-| System changes | Intended to run with SIP on, no boot arguments, no WindowServer injection, no root at runtime. | Requires a development system with SIP disabled and `amfi_get_out_of_my_way=1`, plus an injected native engine. |
-| Window control | Accessibility-based live placement and focus. | Swift policy and AX client frames plus native presented-frame control. |
-| Motion and borders | Overlay/proxy path; capture permission and available capabilities determine animation support. | WindowServer engine owns the presented body/border timeline. |
-| Workspace model | Virtual workspace implementation; consult the current capability report. | Existing native macOS Spaces; backend availability is checked. |
-| Validation | SIP-on compatibility must be sourced or tested on SIP-on hardware. A SIP-off test is insufficient. | Private integration is OS-sensitive; macOS 14 deployment target does not prove broad engine compatibility. |
+| System changes | SIP disabled, `amfi_get_out_of_my_way=1`, matching WindowServer injection and native development resources. | Designed for SIP on, no boot arguments, no injection and no root at runtime. SIP-on behavior has not been verified on this SIP-off test host. |
+| Window control | Swift policy and AX client frames plus native presented-frame control. | Public AX placement/focus with capability-checked optional mapping and captured overlays. |
+| Motion and borders | Native body/border renderer; first-map, close and landing defects remain under investigation. | Proxy motion and borders exist, but the full flash-free open/close/swap gate remains failed. |
+| Workspaces | Existing native macOS Spaces through checked backends. | Virtual workspaces, separate from Mission Control Spaces. |
+| Availability | Runtime requires your already verified native setup; app packaging alone is insufficient. | Source implementation on `lite/2026-10-16`; not enabled by this launch branch. |
 
-**Lite integration and its live acceptance gate are pending in this branch.** See [Lite research](docs/LITE_RESEARCH.md) for capability probes, fallbacks and the distinction between source evidence and local verification. Mode selection uses `HYPRWM_MODE=auto` by default and chooses Lite if verified Engine attachment fails. `HYPRWM_MODE=lite` skips Engine channel attachment entirely; `HYPRWM_MODE=engine` fails with the actual attachment error instead of falling back. The installer does not alter security settings.
+The installer does not disable SIP, change boot arguments or inject code. Engine changes the system's security posture; [Apple's SIP overview](https://support.apple.com/en-us/102149) explains the protection being relaxed. The macOS 14 deployment target is a build minimum, not proof that private integration works on every macOS version.
 
-Lite currently does not guarantee placement before an application's first displayed frame. A newly opened window can appear briefly at its default position before discovery and tiling; this was observed with TextEdit during development. Apple's [window-created notification](https://developer.apple.com/documentation/applicationservices/kaxwindowcreatednotification) could improve discovery timing, but does not specify ordering before presentation. Proxy animation uses a captured image while the real window changes frame, so its content is static during that transition. Do not expect a universal flash-free entrance or live video inside a moving proxy.
+<a id="experimental-lite"></a>
+### Experimental Lite
 
-After quitting an existing instance, a foreground installed Lite launch is:
-
-```sh
-HYPRWM_MODE=lite ~/.local/bin/hyprwm
-```
-
-Engine additionally needs the matching native development installation's `hook` resources, including its `anim4.state` and generated base config. An app installed for Lite does not bundle those external native installation records. A development launch uses an explicit path:
+The [Lite branch](https://github.com/sakenuGOD/hyprwm-macos/tree/lite/2026-10-16) and its [research report](https://github.com/sakenuGOD/hyprwm-macos/blob/lite/2026-10-16/docs/LITE_RESEARCH.md) contain the unmerged implementation and actual verification limits. Use a separate checkout to inspect or test it:
 
 ```sh
-HYPRWM_HOOK=/path/to/native-checkout/hook HYPRWM_MODE=engine ~/.local/bin/hyprwm
+git clone --branch lite/2026-10-16 https://github.com/sakenuGOD/hyprwm-macos.git hyprwm-macos-lite
+cd hyprwm-macos-lite
 ```
 
-These commands start a real window manager and require a desktop session; they are not part of the no-launch installation dry run.
+These commands only obtain source. Follow that branch's current instructions and recovery prerequisites before installing or launching it. Its `HYPRWM_MODE=lite` selection, automatic fallback and Carbon runtime bindings are branch-specific; this launch branch does not implement them.
 
-Engine changes the system's security posture and loads code into WindowServer through a separate development procedure. Installing the menu app does not install the engine, disable SIP or set boot arguments. Lite is the appropriate first install path. Apple's [SIP overview](https://support.apple.com/en-us/102149) explains the protection being relaxed.
+Lite's observed failures include a default-position first-map flash and stretched/crossfaded content during motion. Accepted native sizes can also differ from logical targets. A captured proxy contains static content during a transition. Apple's [window-created notification](https://developer.apple.com/documentation/applicationservices/kaxwindowcreatednotification) does not guarantee delivery before presentation. No universal flash-free or clean-landing claim is made.
 
 ### Returning from Engine to Lite
 
-First run `~/.local/bin/hyprwm restore-all` while Engine is still available, confirm managed windows are visible, and quit HyprWM normally. Lite cannot restore native Engine alpha/Space ownership: unresolved Engine hidden-window records leave Lite paused with `lite.recovery_error`. Preserve that state and finish recovery in the matching Engine runtime before switching.
+First run `~/.local/bin/hyprwm restore-all` while Engine is still available, confirm managed windows are visible, and quit HyprWM normally. Preserve state and finish unresolved recovery in the matching Engine runtime before changing modes. The experimental Lite implementation refuses outstanding native Engine hidden-window records because public AX cannot restore their alpha/Space ownership.
 
-Stop any engine auto-injection helper installed by your development setup. A loaded WindowServer library is removed by a normal reboot; do not kill WindowServer to unload it. Restore the saved pre-Engine boot-argument value, removing only the changes you made for Engine and preserving unrelated arguments. If you did not record that value, inspect the existing arguments rather than deleting the whole variable. Re-enable SIP from macOS Recovery with `csrutil enable`, then reboot and verify `csrutil status`, following [Apple’s Recovery procedure](https://developer.apple.com/documentation/security/disabling-and-enabling-system-integrity-protection). Start Lite explicitly and confirm its reported mode. App uninstall does not perform these system changes for you.
+Stop any engine auto-injection helper installed by your development setup. A loaded WindowServer library is removed by a normal reboot; do not kill WindowServer to unload it. Restore the saved pre-Engine boot-argument value, removing only the changes you made for Engine and preserving unrelated arguments. If you did not record that value, inspect the existing arguments rather than deleting the whole variable. Re-enable SIP from macOS Recovery with `csrutil enable`, then reboot and verify `csrutil status`, following [Apple’s Recovery procedure](https://developer.apple.com/documentation/security/disabling-and-enabling-system-integrity-protection). Testing Lite then requires the separate branch and its prerequisites. App uninstall does not perform these system changes for you.
 
 ## How it compares
 
@@ -93,7 +99,7 @@ Different workflows have different strengths. These descriptions were checked ag
 
 | Project | What it offers / does better | Why try HyprWM |
 | --- | --- | --- |
-| [AeroSpace](https://nikitabobko.github.io/AeroSpace/guide) | Documented i3-style tree/accordion layouts, binding modes, callbacks, monitor assignment and virtual workspaces. Its current config also supports focus follows mouse. | A Hyprland-inspired binary split workflow with a native settings UI and configurable motion path; validate the current Lite build before switching a daily session. |
+| [AeroSpace](https://nikitabobko.github.io/AeroSpace/guide) | Documented i3-style tree/accordion layouts, binding modes, callbacks, monitor assignment and virtual workspaces. Its current config also supports focus follows mouse. | A Hyprland-inspired binary split workflow with a native settings UI and configurable motion path; check the documented Engine prerequisites and current behavior before switching a daily session. |
 | [yabai](https://github.com/asmvik/yabai) | Established BSP command/scripting ecosystem and native Space integration. Its [SIP guide](https://github.com/asmvik/yabai/wiki/Disabling-System-Integrity-Protection) lists features such as animations and Space mutation that need the scripting addition. | A shared text/UI configuration and a planned no-injection Lite motion path, with Engine as a separate opt-in. |
 | [Amethyst](https://github.com/ianyh/Amethyst) | A broad choice of tall, wide, column, BSP and custom layouts, plus GUI/YAML configuration. Prefer it if cycling those layouts is central to your workflow. | A focused binary split model with Hyprland-style curve and per-event motion controls. |
 
@@ -151,7 +157,7 @@ The matching uninstaller must restore windows before removing the installed app.
 
 **Is this Hyprland or a fork?** No. It is an independent macOS window manager inspired by Hyprland's behavior and motion.
 
-**Must I disable SIP?** Lite is designed to avoid that requirement. Engine requires the development prerequisites above. Do not weaken system security merely to try the menu app.
+**Must I disable SIP?** Running this branch requires the Engine prerequisites above. The separate Lite implementation is designed to avoid that requirement, but its full live gate remains failed. Packaging or inspecting the interface does not require changing SIP.
 
 **Is it ready for my main desktop?** It is experimental. Check current mode capability, permissions and recovery, then test your apps with disposable windows. A build/test pass is not live desktop evidence.
 
@@ -159,7 +165,7 @@ The matching uninstaller must restore windows before removing the installed app.
 
 **Does fullscreen mean macOS fullscreen?** Layout fullscreen/maximized changes HyprWM's layout. Native macOS fullscreen uses a different Space and lifecycle.
 
-**Can I delete the checkout after installing?** The source installer bundles the Lite app’s configuration resources and installs local CLI launchers; keep the checkout for the matching `uninstall.sh`. The separate `build_app.sh` development menu companion still records a checkout dependency. See [packaging](hook/swift/PACKAGING.md).
+**Can I delete the checkout after installing?** The source installer bundles configuration resources and installs local CLI launchers. Engine still needs its matching external native resources; keep those and the checkout for the matching `uninstall.sh`. The separate `build_app.sh` development menu companion still records a checkout dependency. See [packaging](hook/swift/PACKAGING.md).
 
 **Where is the release download?** This README uses the source install flow. A draft release without assets is not an installable distribution.
 
