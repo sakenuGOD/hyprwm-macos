@@ -238,7 +238,10 @@ extension WM {
         }
         guard let window=actor,rects.contains(window.wid), !sys.protectedProcess(window.pid), tileable(window),
             sys.winPidLevel(window.wid).pid == window.pid,
-            !eng.c.wins().contains(where: { $0.wid == window.wid && $0.moving }),
+            !eng.c.wins().contains(where: { slot in
+                slot.wid == window.wid && (slot.posActive || slot.sizeActive || slot.held ||
+                    (slot.settling && slot.visible.maxDiff(slot.real)>TOL))
+            }),
             let birth = sys.processBirth(window.pid) else { return }
         if let native, native.birth != birth || native.phase > 2 || native.epoch == 0 { return }
         let frame = native?.frame ?? sys.winBounds(window.wid) ?? window.rect

@@ -17,6 +17,39 @@ final class ProductionPolicyTests: XCTestCase {
     }
     func pair(_ split: String = "v") -> Node { Node(split: split, ratio: 0.5, a: Node(leaf: 1), b: Node(leaf: 2)) }
 
+    func testIdleClippedFrameAdmitsResizeAndThrowWithinTolerance() throws {
+        for resize in [true,false] {
+            let (wm,sys,eng,wins)=try world(pair()),goal=sys.bounds[1]!
+            let actual=Rect(goal.x,goal.y,goal.w-1,goal.h-3)
+            sys.bounds[1]=actual
+            eng.ch.eng=[EngWin(wid:1,pos:(goal.x,goal.y),size:(goal.w,goal.h),settling:true,a:actual)]
+            sys.m=resize ? (actual.x+actual.w-1,actual.y+100):(actual.x+50,actual.y+10)
+            wm.beginInteraction(area,1,wins)
+            XCTAssertEqual(wm.dragSession?.wid,1)
+            if resize {
+                sys.bounds[1]=Rect(actual.x,actual.y,actual.w+80,actual.h)
+                XCTAssertTrue(wm.updateSharedResize(area,1,wins))
+                XCTAssertEqual(wm.layout(area,wm.sp(1))[2]!.x,goal.x+goal.w+80+2*wm.tile.gapsIn,accuracy:0.01)
+            } else {
+                sys.bounds[1]=Rect(actual.x+38,actual.y-8,actual.w,actual.h)
+                XCTAssertTrue(wm.endInteraction(area,1,wins))
+                XCTAssertEqual(Dwindle.leaves(wm.sp(1).tree).compactMap(\.wid),[2,1])
+            }
+        }
+    }
+    func testActiveHeldOrUnresolvedPresentationRefusesInteraction() throws {
+        for mode in 0..<4 {
+            let (wm,sys,eng,wins)=try world(pair()),goal=sys.bounds[1]!
+            var slot=EngWin(wid:1,pos:(goal.x,goal.y),size:(goal.w,goal.h),a:goal)
+            if mode==0 {slot.posActive=true}
+            if mode==1 {slot.sizeActive=true}
+            if mode==2 {slot.held=true}
+            if mode==3 {slot.settling=true;slot.aw-=20}
+            eng.ch.eng=[slot];sys.m=(goal.x+goal.w-1,goal.y+100)
+            wm.beginInteraction(area,1,wins)
+            XCTAssertNil(wm.dragSession,"mode \(mode)")
+        }
+    }
     func testAcceptedNativeFrameWinsOverUnchangedServerFrameAndEpochCannotReplay() throws {
         let (wm,sys,_,wins)=try world(pair()),start=sys.bounds[1]!
         let native=NativeResizeContext(pid:101,birth:"birth-1",wid:1,epoch:7,sequence:2,phase:1,
