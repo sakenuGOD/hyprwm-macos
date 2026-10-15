@@ -144,6 +144,7 @@ final class LiteSys: SysAPI {
             window.layer = row[kCGWindowLayer as String] as? Int ?? 0
             window.alpha = row[kCGWindowAlpha as String] as? Double ?? 1
             physical.append(window)
+            if ax.confirmedClosed(pid, wid) { continue }
             if let sid = membership[wid] { window.space = sid; window.on = sid == workspace && !concealed.contains(wid) }
             if let virtual = presentation[wid] { window.x = virtual.x; window.y = virtual.y; window.w = virtual.w; window.h = virtual.h }
             if let metadata = ax.window(pid, wid) {
@@ -154,7 +155,7 @@ final class LiteSys: SysAPI {
         }
         rawWindows = windows
         physicalWindows = physical
-        for pid in Set(windows.filter { $0.layer == 0 && !protectedProcess($0.pid) }.map(\.pid)) {
+        for pid in Set(physical.filter { $0.layer == 0 && !protectedProcess($0.pid) }.map(\.pid)) {
             ax.refresh(pid, rows: physical.filter { $0.pid == pid })
         }
         var result = Snapshot(space: workspace, stable: true, area: area, windows: windows)

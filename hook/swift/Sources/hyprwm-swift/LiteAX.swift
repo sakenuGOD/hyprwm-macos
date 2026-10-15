@@ -20,9 +20,10 @@ final class LiteAX {
         let application: AXUIElement
         let birth: String
         var windows: [Int: Window] = [:]
+        var closed = Set<Int>()
         var focused: Int?, flags = NativeFocusFlags.unknown
         var refreshed = 0.0, refreshing = false, enumerated = false
-        var cursor = 0
+        var cursor = 0, complete = false
         init(pid: Int, birth: String) {
             queue = DispatchQueue(label: "hyprwm.lite.ax.\(pid)", qos: .userInteractive)
             application = AXUIElementCreateApplication(pid_t(pid)); self.birth = birth
@@ -85,6 +86,10 @@ final class LiteAX {
         guard let client = client(pid) else { return nil }
         lock.lock(); defer { lock.unlock() }; return client.windows[wid]
     }
+    func confirmedClosed(_ pid: Int, _ wid: Int) -> Bool {
+        guard let client = client(pid) else { return false }
+        lock.lock(); defer { lock.unlock() }; return client.closed.contains(wid) || client.complete && client.windows[wid] == nil
+    }
     func context(_ pid: Int) -> (wid: Int?, flags: Int) {
         guard let client = client(pid) else { return (nil, NativeFocusFlags.unknown) }
         lock.lock(); defer { lock.unlock() }; return (client.focused, client.flags)
@@ -111,13 +116,14 @@ final class LiteAX {
                 client.flags |= NativeFocusFlags.unknown; self.lock.unlock(); return
             }
             self.lock.lock(); let known = client.windows, cursor = client.cursor; self.lock.unlock()
-            var windows = known.filter { wid, _ in rows.contains { $0.wid == wid && $0.pid == pid } }
-            var processed = 0
+            let closed = Set(known.filter { _, value in !elements.contains { CFEqual($0, value.element) } }.keys)
+            var windows = known.filter { wid, _ in !closed.contains(wid) && rows.contains { $0.wid == wid && $0.pid == pid } }
+            var processed = 0, failed = false
             for offset in 0..<min(256, elements.count) {
                 if processed > 0, ProcessInfo.processInfo.systemUptime-began > 0.05 { break }
                 let element = elements[(cursor+offset)%elements.count]; processed += 1
                 AXUIElementSetMessagingTimeout(element, 0.08)
-                guard let attributes = Self.attributes(element) else { break }
+                guard let attributes = Self.attributes(element) else { failed = true; break }
                 let wid: Int?
                 var number: CGWindowID = 0
                 if let bridge = self.bridge, bridge(element, &number) == .success,
@@ -129,9 +135,9 @@ final class LiteAX {
                     let matches = rows.filter { $0.pid == pid && $0.rect.maxDiff(frame) <= 2 && (title.isEmpty || $0.name.isEmpty || $0.name == title) }
                     wid = matches.count == 1 ? matches[0].wid : nil
                 } else { wid = nil }
-                guard let wid else { continue }
+                guard let wid else { failed = true; continue }
                 var settable = DarwinBoolean(false)
-                guard AXUIElementIsAttributeSettable(element, kAXSizeAttribute as CFString, &settable) == .success else { continue }
+                guard AXUIElementIsAttributeSettable(element, kAXSizeAttribute as CFString, &settable) == .success else { failed = true; continue }
                 windows[wid] = Window(element: element, role: attributes[kAXRoleAttribute] as? String ?? "",
                     subrole: attributes[kAXSubroleAttribute] as? String ?? "", resizable: settable.boolValue,
                     modal: attributes[kAXModalAttribute] as? Bool ?? false, fullscreen: attributes["AXFullScreen"] as? Bool ?? false)
@@ -151,6 +157,8 @@ final class LiteAX {
             }
             guard Self.birth(pid) == client.birth else { self.lock.lock(); client.refreshing = false; self.lock.unlock(); return }
             self.lock.lock()
+            client.closed.formUnion(closed); client.closed.subtract(windows.keys)
+            client.complete = !failed && processed >= elements.count
             client.windows = windows; client.focused = focused; client.flags = flags
             client.cursor = elements.isEmpty ? 0 : (cursor+processed)%elements.count
             client.refreshed = ProcessInfo.processInfo.systemUptime; client.refreshing = false; client.enumerated = true

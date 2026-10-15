@@ -127,7 +127,7 @@ final class LiteRuntime {
         for record in Array(sys.recovery.records.values) {
             if sys.processExited(record.pid) || sys.processBirth(record.pid).map({ $0 != record.birth }) == true ||
                 sys.winPidLevel(record.wid).pid.map({ $0 != record.pid }) == true { sys.recovery.remove(record.wid); engine.channel.recovered(record.wid); continue }
-            if sys.winPidLevel(record.wid).pid == nil, sys.ax.enumerated(record.pid), sys.ax.window(record.pid, record.wid) == nil { sys.recovery.remove(record.wid); engine.channel.recovered(record.wid); continue }
+            if sys.ax.confirmedClosed(record.pid, record.wid) { sys.recovery.remove(record.wid); engine.channel.recovered(record.wid); continue }
             guard sys.processBirth(record.pid) == record.birth, sys.winPidLevel(record.wid).pid == record.pid,
                   let frame = Rect(record.frame), sys.ax.window(record.pid, record.wid) != nil else { continue }
             if sys.axFrame(record.pid, record.wid, frame) == 0,
@@ -246,8 +246,7 @@ final class LiteRuntime {
             _ = try? sys.snapshot()
             for record in Array(sys.recovery.records.values) {
                 if sys.processExited(record.pid) || sys.processBirth(record.pid).map({ $0 != record.birth }) == true { sys.recovery.remove(record.wid); continue }
-                if sys.winPidLevel(record.wid).pid.map({ $0 != record.pid }) == true ||
-                    sys.winPidLevel(record.wid).pid == nil && sys.ax.enumerated(record.pid) && sys.ax.window(record.pid, record.wid) == nil { sys.recovery.remove(record.wid); continue }
+                if sys.winPidLevel(record.wid).pid.map({ $0 != record.pid }) == true || sys.ax.confirmedClosed(record.pid, record.wid) { sys.recovery.remove(record.wid); continue }
                 guard sys.processBirth(record.pid) == record.birth, sys.winPidLevel(record.wid).pid == record.pid,
                       let frame = Rect(record.frame), sys.ax.window(record.pid, record.wid) != nil else { continue }
                 if sys.axFrame(record.pid, record.wid, frame) == 0, sys.axGetFrame(record.pid, record.wid).map({ $0.maxDiff(frame) <= 8 }) == true { sys.recovery.remove(record.wid) }
