@@ -211,6 +211,17 @@ final class SettingsStore: ObservableObject {
         }
         return (value(path,fallback:fallback) as? NSNumber)?.boolValue ?? fallback
     }
+    func setTiling(_ value: Bool) {
+        send(value ? "resume" : "pause") { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case let .success(response) where response == (value ? "enabled" : "paused"):
+                self.enabled=value;self.set("runtime.enabled",value)
+            case let .success(response): self.error=response
+            case let .failure(error): self.error=error.localizedDescription
+            }
+        }
+    }
     func set(_ path: String, _ value: Any) {
         guard loaded else {return}
         editRevision += 1
