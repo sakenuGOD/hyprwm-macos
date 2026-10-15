@@ -2,13 +2,15 @@
 
 HyprWM has a binary split layout, a shared text configuration, a native settings UI and a local command socket. It borrows concepts from other window managers without implementing their complete configuration languages. Stop your other automatic tiler before starting HyprWM so two managers do not resize the same windows.
 
-From the checkout, after building/installing:
+After `./install.sh`, use the installed CLI (or add `~/.local/bin` to PATH and run `hyprwm`):
 
 ```sh
-scripts/hyprwm import /path/to/aerospace.toml
+~/.local/bin/hyprwm import /path/to/aerospace.toml
 ```
 
 Import reads a regular UTF-8 file no larger than 256 KiB, parses it as data, merges supported values, and makes a sibling `hyprwm.conf.backup-<UUID>` before replacing an existing configuration. It never executes the source file. Unsupported or invalid entries produce warnings with their original line numbers; supported independent entries can still apply. If nothing maps, import fails and preserves the configuration. Review the warnings and resulting file before running a session. To undo an import, quit/pause HyprWM and copy the reported sibling backup back over `hyprwm.conf`.
+
+The examples below show the supported patch against a fresh baseline. Binding IDs can be reassigned when merging with existing overrides; command and chord values are what matter.
 
 The filename helps identify the format: use names containing `hyprland`, `aerospace`, `yabai`, `skhd`, `i3`, `sway`, `amethyst` or `rectangle`. Files are handled individually: import `yabairc` and `skhdrc` separately. The importer does not recursively follow includes, invoke shell scripts, expand arbitrary environment variables or interpret every TOML/YAML construct.
 
@@ -204,10 +206,10 @@ This is a real HyprWM binding, but it rearranges the split layout; it does not p
 
 ## Check the result
 
-Read the edited `hyprwm.conf` and import warnings. Inspect effective configuration without starting a daemon:
+Read the edited `hyprwm.conf` and import warnings. Inspect effective configuration through the installed bundled baseline without starting a daemon:
 
 ```sh
-scripts/hyprwm --print-config
+~/.local/bin/hyprwm --print-config
 ```
 
 A configuration printout establishes parsing and resolved values. Test actual focus, tiling, workspace and recovery behavior separately with disposable windows. Keep the source file and generated backup until the new session behaves as expected. See [troubleshooting](TROUBLESHOOTING.md) for permissions and recovery.

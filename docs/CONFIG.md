@@ -87,6 +87,25 @@ Colors use `rgb(RRGGBB)`, `rgba(RRGGBBAA)` or `0xAARRGGBB`. Alpha is the final b
 | `appearance.glow.color` | `rgba(ffb4a433)` | color string | Active glow color. |
 | `appearance.glow.color_inactive` | `rgba(ffb4a400)` | color string | Inactive glow color; absent field inherits active color. |
 
+## Lite applicability
+
+The shared parser accepts the same document for both modes. The Lite adapter has a narrower rendering surface; accepted configuration does not imply a foreign macOS window can be styled through public AX APIs. These are source-level capabilities, not a live acceptance claim.
+
+| Keys | Lite behavior |
+| --- | --- |
+| Layout, focus, drag, rules, runtime enable, text reload | Shared policy is used through the Lite adapters; verify actual app behavior separately. |
+| Border size, active colors/angle, inactive color | Consumed by overlay borders and proxy borders. |
+| `appearance.rounding` | Rounds overlay/proxy edges; does not change a foreign application's native corner shape. |
+| `appearance.rounding_power`, `appearance.shadow.*`, `appearance.glow.*` | **Accepted, not yet effective in Lite:** no corresponding overlay rendering consumer. |
+| `appearance.active_opacity`, `inactive_opacity`, `fullscreen_opacity`, rule `opacity` | **Accepted, not effective as user transparency in Lite:** foreign clients remain opaque. Internal zero-alpha commands mean parking/hiding, not public control of another process's window alpha. |
+| `runtime.prehide`, `hold_max_ms`, `window_resize_mode`, `capture_sampling` | **Accepted, not effective in Lite:** native first-frame/resize/edge-sampling knobs. Lite capture availability comes from Screen Recording permission and the capture capability. |
+| `runtime.overview_hidden_windows` | Forced off in Lite; virtual workspaces do not enable the native hidden-window Mission Control pool. |
+| `animations.windowsIn`, `windowsMove`, `windowsOut` and geometry curves | Used by captured-proxy motion when capture is available. Denial/failure falls back to direct AX placement. |
+| `animations.border.duration_ms` / enabled | Controls overlay border color transition duration. The selected curve is not applied to that color animation. |
+| `animations.fadeShadow`, `fadeGlow` | **Accepted, not yet effective in Lite:** no shadow/glow render path. |
+| `animations.fadeIn`, `fadeOut` | No independent foreign-client fade curve. Opening alpha requests trigger the proxy entrance; cached close proxy duration is bounded by `windowsOut` and `fadeOut` durations. |
+| `animations.fadeSwitch` | Does not provide fractional foreign-client focus opacity in Lite. |
+
 ## Curves and animations
 
 Use a named curve object and an animation event object. A spring settles according to its physical parameters; `duration_ms` is rejected for a spring. Scale its time with `time_scale` instead. At most 16 distinct active native curves are supported.
@@ -168,7 +187,7 @@ bind = CTRL ALT, H, focus, left
 | `enabled` | `true` | `WindowProperties.matches`; false skips a rule. |
 | `match.class` | absent | `WindowProperties.matches` against owner name; `"^Calculator$"`. |
 | `match.title` | absent | `WindowProperties.matches` against title; `".*Preview.*"`. |
-| `match.role`, `match.subrole` | absent | Text syntax accepts these fields, but baseline semantic validation rejects them until role matching is integrated. Do not rely on these conditions in that build. |
+| `match.role`, `match.subrole` | absent | `WindowProperties.matches` against AX role/subrole, e.g. `"^AXWindow$"` / `"^AXDialog$"`. Unknown/empty metadata never satisfies either a positive or negative match. |
 | `float` | unchanged | WM classification; `true` floats, `false` tiles when otherwise eligible. |
 | `ignore` | `false` | `WM.ignored`/`releaseIgnored` excludes a window from management. |
 | `no_anim` | `false` | `WM.windowPolicy` bypasses that window's animation. |

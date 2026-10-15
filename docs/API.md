@@ -6,21 +6,20 @@ client environment to use another path. No network port is opened.
 
 ## Command-line client
 
-From a checkout, use `scripts/hyprwmctl`, or install it on your PATH:
+From a checkout, use `scripts/hyprwmctl`. The installer also adds `~/.local/bin/hyprwmctl`; use that absolute path or add `~/.local/bin` to your PATH for the short command.
 
 ```bash
-install -m 755 scripts/hyprwmctl /usr/local/bin/hyprwmctl
-hyprwmctl status
-hyprwmctl focus left
-hyprwmctl move right
-hyprwmctl layout balance
-hyprwmctl layout togglesplit
-hyprwmctl layout retile
-hyprwmctl layout fullscreen
-hyprwmctl float
-hyprwmctl reload
-hyprwmctl pause
-hyprwmctl resume
+scripts/hyprwmctl status
+scripts/hyprwmctl focus left
+scripts/hyprwmctl move right
+scripts/hyprwmctl layout balance
+scripts/hyprwmctl layout togglesplit
+scripts/hyprwmctl layout retile
+scripts/hyprwmctl layout fullscreen
+scripts/hyprwmctl float
+scripts/hyprwmctl reload
+scripts/hyprwmctl pause
+scripts/hyprwmctl resume
 ```
 
 `status` prints the daemon's JSON state. Directional `move` rearranges the focused
@@ -85,7 +84,7 @@ request. Each line is a JSON object. The first line is
 | `space_changed` | The WM observes another current Space. |
 
 ```bash
-hyprwmctl subscribe
+scripts/hyprwmctl subscribe
 # Example event (sequence numbers restart with the daemon):
 # {"event":"window_focused","sequence":3,"timestamp":1792050000.5,"space":1,"window":{"wid":42,"pid":1234,"space":1}}
 ```
@@ -113,3 +112,25 @@ The stream has no history or replay guarantee. Slow clients are disconnected whe
 their pending output exceeds 32 KiB; at most 16 subscribers are accepted. Reconnect
 and query state after disconnection. The event version covers envelope semantics;
 clients should ignore unknown fields and event types.
+
+## Configuration and offline CLI
+
+The editable file is `~/.config/hyprwm/hyprwm.conf`, or the explicit `HYPRWM_CONFIG` path. [CONFIG.md](CONFIG.md) lists all accepted keys, defaults, consumers and currently ineffective settings. [MIGRATING.md](MIGRATING.md) gives the supported foreign formats and conversion limits.
+
+After the source installer has bundled the base configuration:
+
+```sh
+~/.local/bin/hyprwm --help
+~/.local/bin/hyprwm --print-config
+~/.local/bin/hyprwm import /path/to/aerospace.toml
+```
+
+`--print-config` resolves and prints selected layout/curve/animation values; it does not start a daemon or prove live behavior. If the text config is absent, reading it may create a default file. `import FILE` applies supported settings and creates a sibling backup before replacing an existing configuration. Foreign input is never executed. It requires a regular UTF-8 file up to 256 KiB. Unsupported statements are reported by original line number; zero mapped settings is an error. Rectangle is detected but not converted.
+
+`scripts/hyprwm` is the developer wrapper for the source binary; its config-dependent modes additionally need the generated `hook/config/hypr_cfg.json`. The installed CLI uses the app’s bundled baseline instead. `HYPRWM_HOOK` locates a `hook` directory and its schema/base configuration. `HYPRWM_STATE_DIR` selects the persistent daemon-state directory (native default `/tmp/hyprwm-swift`). `HYPRWM_TIME_SCALE` overrides geometry timing in the range `0.1…4`. `HYPRWM_NO_DECO=1` disables the optional native decoration helper. Debug/experimental environment switches are implementation details, not stable API contracts.
+
+## Recovery and diagnostics
+
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for permission panes, visibility recovery, config warnings and safe shutdown. A session pause and restoring hidden windows are separate operations. Treat refusal/pending responses as incomplete work, preserve state, and verify real windows before deleting an installation.
+
+The command protocol is local control, not a remote-service authentication boundary. Do not expose its Unix socket through a network bridge or share a socket with another user. Window/PID identities can be reused; the daemon revalidates ownership for mutations. Consumers should never persist a window ID as a durable external identity.
