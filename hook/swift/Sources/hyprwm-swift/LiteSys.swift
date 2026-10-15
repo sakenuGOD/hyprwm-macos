@@ -89,6 +89,7 @@ final class LiteSys: SysAPI {
     private var locked = false
     private let sessionLock = NSLock(), focusLock = NSLock()
     private var focusEpoch = 0, focusing = 0, closing = 0
+    private var restackPending = false, restackedAt = 0.0
     private var observers: [NSObjectProtocol] = []
     var beforeClose: ((Int, @escaping (Bool) -> Void) -> Void)?
     var onFrame: ((Int, Rect) -> Void)?
@@ -261,9 +262,40 @@ final class LiteSys: SysAPI {
         }
     }
     func preserveAppFloats(_ tile: WinInfo, space: Int, windows: [WinInfo]) {
-        for window in windows.reversed() where window.pid == tile.pid && window.wid != tile.wid && window.on && axTileable(window.pid, window.wid) == 0 {
-            _ = ax.perform(window.pid, window.wid) { _, element in Int(AXUIElementPerformAction(element, kAXRaiseAction as CFString).rawValue) }
+        preserveAppFloats(tile, space: space, windows: windows, explicitFloats: [])
+    }
+    func preserveAppFloats(_ tile: WinInfo, space: Int, windows: [WinInfo], explicitFloats: Set<Int>) {
+        guard space == workspace, !restackPending, now()-restackedAt >= 0.1,
+              !mouseDown(), !sessionLocked(), frontPid() == tile.pid,
+              let birth = processBirth(tile.pid), !protectedProcess(tile.pid),
+              let parent = ax.window(tile.pid, tile.wid) else { return }
+        let context = focusContext(tile.pid)
+        guard context.wid == tile.wid, context.flags & (NativeFocusFlags.menu|NativeFocusFlags.unknown|NativeFocusFlags.fullscreen) == 0 else { return }
+        let candidates = windows.reversed().filter {
+            $0.pid == tile.pid && $0.wid != tile.wid && $0.on && $0.space == space && $0.layer == 0 &&
+            $0.alpha >= 0.05 && !$0.nativeFullscreen && !concealed.contains($0.wid) &&
+            (explicitFloats.contains($0.wid) || axTileable($0.pid, $0.wid) == 0)
         }
+        guard !candidates.isEmpty else { return }
+        focusLock.lock(); let epoch = focusEpoch; focusLock.unlock()
+        let deadline = now()+0.5
+        restackPending = true; restackedAt = now()
+        // One app worker preserves sibling ordering without blocking census or
+        // pointer focus. Every raise rechecks the actual AX key and lifetime.
+        ax.performAsync(tile.pid, tile.wid, { [weak self] application, _ in
+            guard let self else { return -1 }
+            for candidate in candidates {
+                guard self.focusCurrent(epoch), self.now() < deadline, !self.mouseDown(), !self.sessionLocked(),
+                      self.processBirth(tile.pid) == birth,
+                      NSRunningApplication(processIdentifier: pid_t(tile.pid))?.isActive == true,
+                      let focused = LiteAX.attribute(application, kAXFocusedWindowAttribute), CFEqual(focused, parent.element),
+                      let rows = CGWindowListCopyWindowInfo(.optionIncludingWindow, CGWindowID(candidate.wid)) as? [[String: Any]],
+                      rows.first?[kCGWindowOwnerPID as String] as? Int == tile.pid,
+                      let window = self.ax.window(candidate.pid, candidate.wid) else { return -1 }
+                _ = AXUIElementPerformAction(window.element, kAXRaiseAction as CFString)
+            }
+            return 0
+        }) { [weak self] _ in self?.restackPending = false }
     }
     func axMenuPress(_ pid: Int, _ title: String) -> Int { -1 }
     func wsClose(_ pid: Int, _ wid: Int) -> Int {
