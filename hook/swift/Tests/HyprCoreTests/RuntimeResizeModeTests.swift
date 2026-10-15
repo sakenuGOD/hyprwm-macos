@@ -5,8 +5,25 @@ final class RuntimeResizeModeTests: XCTestCase {
     func withConfig(_ document: String?, _ body: (String) throws -> Void) throws {
         let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
-        defer { try? FileManager.default.removeItem(at:directory) }
-        if let document { try document.write(to:directory.appendingPathComponent("runtime.json"),atomically:true,encoding:.utf8) }
+        let original=ProcessInfo.processInfo.environment["HYPRWM_CONFIG"]
+        setenv("HYPRWM_CONFIG",directory.appendingPathComponent("hyprwm.conf").path,1)
+        defer {
+            if let original { setenv("HYPRWM_CONFIG",original,1) } else { unsetenv("HYPRWM_CONFIG") }
+            try? FileManager.default.removeItem(at:directory)
+        }
+        guard TextConfig.url(configDir:directory.path).path == directory.appendingPathComponent("hyprwm.conf").path else {
+            throw CmdError("Runtime fixture config path is not isolated")
+        }
+        let source=URL(fileURLWithPath:#filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("config/runtime.schema.json")
+        try FileManager.default.copyItem(at:source,to:directory.appendingPathComponent("runtime.schema.json"))
+        try Data(Fx.config().raw.dumps().utf8).write(to:directory.appendingPathComponent("hypr_cfg.json"))
+        if let document {
+            // Keep deliberately invalid object values as assignments rather than
+            // canonicalizing an empty object into an absent preference.
+            let runtime=try JSON.parse(document)["runtime"]?.object ?? []
+            let text=runtime.map { "runtime."+$0.0+" = "+$0.1.dumps(indent:nil) }.joined(separator:"\n")+"\n"
+            try text.write(to:directory.appendingPathComponent("hyprwm.conf"),atomically:true,encoding:.utf8)
+        }
         try body(directory.path)
     }
     func testMissingFieldUsesNativeWithoutEnablingSnapshots() throws {
@@ -23,7 +40,8 @@ final class RuntimeResizeModeTests: XCTestCase {
     func testBothModesAndReloadResolveFromLatestFile() throws {
         try withConfig("{\"runtime\":{\"window_resize_mode\":\"buffer\"}}") { path in
             XCTAssertFalse(try RuntimeOptions.load(configDir:path,environment:[:]).nativeFrames)
-            try "{\"runtime\":{\"window_resize_mode\":\"native\"}}".write(toFile:path+"/runtime.json",atomically:true,encoding:.utf8)
+            XCTAssertEqual(try NativeRuntimeConfig.load(base:Fx.config(),configDir:path,environment:[:]).raw["runtime"]?["window_resize_mode"]?.string,"buffer")
+            try TextConfig.write(JSON.parse("{\"runtime\":{\"window_resize_mode\":\"native\"}}"),configDir:path)
             XCTAssertFalse(try RuntimeOptions.load(configDir:path,environment:[:]).nativeFrames)
             let config=try NativeRuntimeConfig.load(base:Fx.config(),configDir:path,environment:[:])
             XCTAssertEqual(config.raw["runtime"]?["window_resize_mode"]?.string,"native")
@@ -43,11 +61,12 @@ final class RuntimeResizeModeTests: XCTestCase {
             }
         }
     }
-    func testInvalidValuesFailBothRuntimeConsumers() throws {
+    func testInvalidValuesAreReportedByTextLoaderAndRejectedByStrictBuilder() throws {
         for value in ["\"zoom\"","false","3","null","{}"] {
             let text="{\"runtime\":{\"window_resize_mode\":\(value)}}"
             try withConfig(text) { path in
-                XCTAssertThrowsError(try RuntimeOptions.load(configDir:path,environment:[:]))
+                XCTAssertEqual(try TextConfig.read(configDir:path).issues.count,1)
+                XCTAssertFalse(try RuntimeOptions.load(configDir:path,environment:[:]).nativeFrames)
                 XCTAssertThrowsError(try NativeRuntimeConfig.build(base:Fx.config(),document:JSON.parse(text)))
             }
         }
@@ -67,7 +86,8 @@ final class RuntimeResizeModeTests: XCTestCase {
         for value in ["1","\"true\"","null"] {
             let text="{\"runtime\":{\"overview_hidden_windows\":\(value)}}"
             try withConfig(text) { path in
-                XCTAssertThrowsError(try RuntimeOptions.load(configDir:path,environment:[:]))
+                XCTAssertEqual(try TextConfig.read(configDir:path).issues.count,1)
+                XCTAssertFalse(try RuntimeOptions.load(configDir:path,environment:[:]).overviewHiddenWindows)
                 XCTAssertThrowsError(try NativeRuntimeConfig.build(base:Fx.config(),document:JSON.parse(text)))
             }
         }
