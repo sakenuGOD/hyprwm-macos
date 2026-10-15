@@ -113,11 +113,12 @@ final class LiteProxy {
     let width: Double, radius: Double
     private(set) var began = 0.0, duration = 0.0
     private var focusColors: [RGBA] = []
-    init(image: CGImage, from: Rect, to: Rect, appearance: Appearance, focused: Bool, relativeTo wid: Int) {
+    init(image: CGImage, from: Rect, to: Rect, motionFrames: [Rect], appearance: Appearance, focused: Bool, relativeTo wid: Int) {
         self.image = image; target = to; width = appearance.width; radius = appearance.radius
         let padding = max(appearance.width + 4, 8)
-        let x = min(from.x, to.x) - padding, y = min(from.y, to.y) - padding
-        canvas = Rect(x, y, max(from.x+from.w, to.x+to.w)-x+padding, max(from.y+from.h, to.y+to.h)-y+padding)
+        let frames = motionFrames + [from, to]
+        let x = frames.map(\.x).min()! - padding, y = frames.map(\.y).min()! - padding
+        canvas = Rect(x, y, frames.map { $0.x+$0.w }.max()!-x+padding, frames.map { $0.y+$0.h }.max()!-y+padding)
         window = LiteOverlayWindow(frame: LiteSys.cocoa(canvas))
         guard let root = window.contentView?.layer else { return }
         imageLayer.contents = image; imageLayer.contentsGravity = .resize; imageLayer.masksToBounds = true

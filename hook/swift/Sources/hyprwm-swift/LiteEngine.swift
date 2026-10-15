@@ -195,6 +195,8 @@ final class LiteChannel: ChannelAPI {
         let oldProxy = slot.proxy
         let start = oldProxy?.presented ?? geometry.from ?? slot.presented
         let velocity = oldProxy == nil ? [] : slot.velocity
+        let curves = config.sortedCurves(), curve = curves.indices.contains(geometry.curve) ? curves[geometry.curve].1 : nil
+        let frames = LiteMotion.frames(from: start, to: geometry.to, velocity: velocity, duration: geometry.duration, curve: curve, timeScale: config.timeScale)
         slot.target = geometry.to; slot.busy = true; slot.capturing = true; slot.landing = false
         borders.hide(slot.wid)
         func captured(_ image: CGImage?) {
@@ -204,7 +206,7 @@ final class LiteChannel: ChannelAPI {
                 self.place(slot, frame: geometry.to, logical: geometry.to); return
             }
             slot.cached = image; slot.capturedAt = self.sys.now()
-            let proxy = LiteProxy(image: image, from: start, to: geometry.to, appearance: self.borders.appearance, focused: self.focused == slot.wid, relativeTo: slot.wid)
+            let proxy = LiteProxy(image: image, from: start, to: geometry.to, motionFrames: frames, appearance: self.borders.appearance, focused: self.focused == slot.wid, relativeTo: slot.wid)
             if opening { proxy.window.orderOut(nil) }
             slot.proxy = proxy; oldProxy?.close()
             self.sys.presentation[slot.wid] = start
@@ -219,9 +221,6 @@ final class LiteChannel: ChannelAPI {
                 if let accepted { slot.actual = accepted }
                 slot.capturing = false
                 slot.started = CACurrentMediaTime()+0.008; slot.duration = geometry.duration
-                let curves = self.config.sortedCurves()
-                let curve = curves.indices.contains(geometry.curve) ? curves[geometry.curve].1 : nil
-                let frames = LiteMotion.frames(from: start, to: geometry.to, velocity: velocity, duration: geometry.duration, curve: curve, timeScale: self.config.timeScale)
                 proxy.animate(frames: frames, duration: geometry.duration, started: slot.started, fromAlpha: opening ? 0 : 1)
                 proxy.window.order(.above, relativeTo: slot.wid)
                 slot.presented = start; self.sys.presentation[slot.wid] = start
@@ -312,11 +311,12 @@ final class LiteChannel: ChannelAPI {
         guard let image, config.anim("windowsOut").on else { return }
         let animation = config.anim("windowsOut"), scale = config.popin("windowsOut") ?? 0.92
         let to = Rect(from.x+from.w*(1-scale)/2, from.y+from.h*(1-scale)/2, from.w*scale, from.h*scale)
-        let proxy = LiteProxy(image: image, from: from, to: to, appearance: borders.appearance, focused: focused == slot.wid, relativeTo: 0)
         let curves = config.sortedCurves(), curve = curves.indices.contains(animation.curve) ? curves[animation.curve].1 : nil
         let duration = min(animation.dur, config.anim("fadeOut").dur)
+        let frames = LiteMotion.frames(from: from, to: to, velocity: [], duration: duration, curve: curve, timeScale: config.timeScale)
+        let proxy = LiteProxy(image: image, from: from, to: to, motionFrames: frames, appearance: borders.appearance, focused: focused == slot.wid, relativeTo: 0)
         let start = CACurrentMediaTime()
-        proxy.animate(frames: LiteMotion.frames(from: from, to: to, velocity: [], duration: duration, curve: curve, timeScale: config.timeScale), duration: duration, started: start, toAlpha: 0)
+        proxy.animate(frames: frames, duration: duration, started: start, toAlpha: 0)
         departures.append((proxy, start+duration)); proxyMotions += 1
     }
     private func updateBorder(_ slot: Slot) {
