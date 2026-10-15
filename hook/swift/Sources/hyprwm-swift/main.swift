@@ -314,6 +314,9 @@ NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActiva
 
 let application = NSApplication.shared
 application.setActivationPolicy(.accessory)
+let panicHotkey: PanicHotkey?
+do { panicHotkey = try PanicHotkey { wm.setEnabled(!wm.enabled) } }
+catch { panicHotkey = nil; log("panic hotkey:", error) }
 var menu: MenuBarController?
 let shutdown=ShutdownCoordinator(wm:wm,overview:overview,sys:sys)
 if wm.options.menuBar {
@@ -329,5 +332,5 @@ let signalSources = [SIGTERM, SIGINT].map { value -> DispatchSourceSignal in
     source.setEventHandler { shutdown.request { ready in if ready { application.terminate(nil) } } }
     source.resume(); return source
 }
-withExtendedLifetime((menu,signalSources,firstMapService,configWatcher,ecosystemAPI)) { application.run() }
+withExtendedLifetime((menu,panicHotkey,signalSources,firstMapService,configWatcher,ecosystemAPI)) { application.run() }
 firstMapService?.close()
