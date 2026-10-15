@@ -100,7 +100,7 @@ def install(root):
                     CFBundlePackageType='APPL', CFBundleShortVersionString=version,
                     CFBundleVersion='1', LSMinimumSystemVersion='14.0', LSUIElement=True,
                     NSHighResolutionCapable=True, HyprWMLaunchRole='daemon',
-                    NSScreenCaptureUsageDescription='HyprWM captures windows to animate Lite tiling transitions.')
+                    NSScreenCaptureUsageDescription='HyprWM captures managed windows in memory to animate layout changes. Images are not saved.')
         iconset = Path(temporary) / 'AppIcon.iconset'
         subprocess.run(['swift', str(root / 'hook/swift/tools/AppIcon.swift'), str(iconset)], check=True)
         subprocess.run(['iconutil', '--convert', 'icns', str(iconset), '--output', str(resources / 'AppIcon.icns')], check=True)
