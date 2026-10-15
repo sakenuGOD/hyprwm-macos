@@ -1,4 +1,4 @@
-// Заголовок канала — hook/src/chan.h как есть (структуры не дублируются), плюс прототипы chanlib.c.
+// Channel header: hook/src/chan.h unchanged (no duplicated structures), plus chanlib.c declarations.
 #pragma once
 int hs_curve_compatible(unsigned id,unsigned type,double a,double b,double c,double d);
 #include "../../../../src/chan.h"

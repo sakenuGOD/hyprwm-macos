@@ -1,2 +1,2 @@
-// Шим: собирается сам hook/src/winsnap.m (ARC).
+// Shim: compiles hook/src/winsnap.m itself (ARC).
 #include "../../../src/winsnap.m"

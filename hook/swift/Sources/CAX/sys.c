@@ -1,4 +1,4 @@
-// Обёртки приватных функций SkyLight и CoreGraphics — 1:1 с ctypes-вызовами hook/hyprwm.py.
+// Wrappers for private SkyLight and CoreGraphics functions, matching ctypes calls in hook/hyprwm.py.
 #include <ApplicationServices/ApplicationServices.h>
 #include <stdint.h>
 #include <libproc.h>
@@ -39,7 +39,7 @@ extern uint64_t SLSGetActiveSpace(int cid);
 extern OSStatus GetProcessPID(const ProcessSerialNumber *psn, pid_t *pid);
 
 static int cid;
-int hs_cid(void) {                     // соединение с WS — лениво, только когда демон реально работает
+int hs_cid(void) {                     // WS connection: lazy, only while the daemon actually runs
     if (!cid) cid = SLSMainConnectionID();
     return cid;
 }
@@ -63,7 +63,7 @@ int hs_window_connection(unsigned wid, int expected_pid) {
 int hs_win_pid_level(unsigned wid, int *pid, int *level) {
     int o = 0; pid_t p = 0; int lv = 0;
     if (SLSGetWindowOwner(hs_cid(), wid, &o) || SLSConnectionGetPID(o, &p)) return -1;
-    SLSGetWindowLevel(hs_cid(), wid, &lv);      // как в Python: ошибка уровня не проверяется
+    SLSGetWindowLevel(hs_cid(), wid, &lv);      // as in Python: window-level errors are not checked
     *pid = p; *level = lv;
     return 0;
 }
@@ -106,8 +106,8 @@ void hs_mouse(double *x, double *y) {
     *x = p.x; *y = p.y;
 }
 
-// Как в Python: CGEventSourceButtonState(1, 0). 1 = kCGEventSourceStateHIDSystemState (комментарий в
-// hyprwm.py говорит «combinedSessionState», но число там 1 — оставлено 1:1).
+// As in Python: CGEventSourceButtonState(1, 0). 1 = kCGEventSourceStateHIDSystemState (the comment in
+// hyprwm.py says "combinedSessionState", but the number there is 1; preserved exactly).
 int hs_mouse_down(void) { return CGEventSourceButtonState((CGEventSourceStateID)1, kCGMouseButtonLeft); }
 
 void hs_spotlight(void) {               // Cmd+Space

@@ -1,4 +1,4 @@
-// Прототипы hook/src/winsnap.m.
+// Declarations for hook/src/winsnap.m.
 #pragma once
 int ws_snapshot(char *buf, int cap);
 int ws_close(int pid, unsigned wid);

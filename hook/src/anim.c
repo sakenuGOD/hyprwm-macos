@@ -1,42 +1,42 @@
-// Покадровый тик анимации окон внутри WindowServer (таймер _gMainThreadQueue).
-// Колбэк: run_timer_pass -> blraaz fn(x0=ctx, d0=now). Таймер одноразовый.
-// Синхронизация с кадром: anim_frame висит в metalCallbacks (зовётся из composite() раз за кадр,
-// на главном потоке внутри update_display_callback) и лишь ставит anim_tick в очередь "сейчас" —
-// тик выполняется сразу после кадра N, кадр N+1 берёт новый трансформ: ровно шаг на кадр.
-// policy=1 — заменяет уже стоящий таймер (fn,ctx), оставляя более раннее время: без дублей.
-// Сам тик ставит лишь страховочный таймер на +fallback (если кадр не придёт).
-// Модель: окно уже стоит в конечной позиции (CGXMoveWindowList), визуальный сдвиг x/y
-// (old - new) гасится пружиной Hyprland (drift: m1 k210 d24). Трансформ окна мапит экран->окно,
-// поэтому translate = -offset. offset=0 -> identity -> слот удаляется сервером.
-// Сборка: clang -arch arm64e -O2 -ffreestanding -fno-builtin -fno-stack-protector -c; без релокаций.
+// Per-frame window animation tick inside WindowServer (_gMainThreadQueue timer).
+// Callback: run_timer_pass -> blraaz fn(x0=ctx, d0=now). One-shot timer.
+// Frame synchronization: anim_frame is in metalCallbacks (called once per frame from composite(),
+// on the main thread inside update_display_callback) and only enqueues anim_tick for "now";
+// the tick runs immediately after frame N; frame N+1 uses the new transform: exactly one step per frame.
+// policy=1 replaces an existing (fn,ctx) timer, keeping the earlier time and avoiding duplicates.
+// The tick only schedules a safety timer at +fallback (in case no frame arrives).
+// Model: the window is already at its final position (CGXMoveWindowList); the visual x/y offset
+// (old - new) decays with a Hyprland spring (drift: m1 k210 d24). Window transforms map screen->window,
+// so translate = -offset. offset=0 -> identity -> server removes the slot.
+// Build: clang -arch arm64e -O2 -ffreestanding -fno-builtin -fno-stack-protector -c; no relocations.
 
 typedef void (*set_xform_fn)(void *conn, unsigned *wid, unsigned *key, double *m);
 typedef double (*d1_fn)(double);
 typedef void (*resched_fn)(void *queue, void *fn, void *ctx, void *session, int policy, int nodelay, double at);
 
-// Пружина Hyprland (hyprutils advanceSpring): нормированное value 0->1, аналитика,
-// затухание недодемпфированного осциллятора. value применяем к исходному вектору сдвига.
+// Hyprland spring (hyprutils advanceSpring): normalized value 0->1, analytic solution,
+// underdamped oscillator decay. Apply value to the original offset vector.
 struct Win {            // 0x40
     unsigned wid, active;
-    double x0, y0;      // исходный визуальный сдвиг (экранные pt)
-    double v, vel;      // value и его скорость (нормированные, как у Hyprland)
+    double x0, y0;      // initial visual offset (screen pt)
+    double v, vel;      // value and its velocity (normalized, as in Hyprland)
     double pad;
 };
 
 struct Ctx {
     set_xform_fn set_xform;   // 0x00  IA/0
     resched_fn   resched;     // 0x08  IA/0
-    void        *self;        // 0x10  IA/0 (этот колбэк)
+    void        *self;        // 0x10 IA/0 (this callback)
     void        *queue;       // 0x18  &gMainThreadQueue
     void        *session;     // 0x20  (*__sessionControlRef)->+0x20
     double       k, d;        // 0x28, 0x30  stiffness / damping (mass = 1)
     double       last;        // 0x38
     unsigned     key, n;      // 0x40, 0x44
-    double       frame;       // 0x48  dt первого шага, сек
+    double       frame;       // 0x48 first-step dt, seconds
     unsigned     ticks, running; // 0x50, 0x54
     d1_fn        f_exp, f_sin, f_cos; // 0x58, 0x60, 0x68  IA/0 (libSystem)
-    double       eps;         // 0x70  порог Hyprland (value и velocity), 0.001
-    double       one;         // 0x78  = 1.0 (из ctx: иначе компилятор заводит __literal16)
+    double       eps;         // 0x70 Hyprland threshold (value and velocity), 0.001
+    double       one;         // 0x78 = 1.0 (from ctx: otherwise compiler emits __literal16)
     struct Win   w[16];       // 0x80
 };
 
@@ -55,15 +55,15 @@ void anim_tick(struct Ctx *c, double now) {
         struct Win *w = &c->w[i];
         if (!w->active) continue;
 
-        if (wd2 > 0) {                          // недодемпфированный случай (drift, bounce)
-            double wdv = wd2, r = wdv;          // sqrt без libm: Ньютон
+        if (wd2 > 0) {                          // underdamped case (drift, bounce)
+            double wdv = wd2, r = wdv;          // sqrt without libm: Newton's method
             for (int it = 0; it < 24; it++) r = 0.5 * (r + wdv / r);
             double disp = w->v - 1.0;
             double e = c->f_exp(-g * dt), sn = c->f_sin(r * dt), cs = c->f_cos(r * dt);
             double nd = e * ((disp * cs) + (((w->vel + g * disp) / r) * sn));
             w->vel = e * ((w->vel * cs) - (((g * w->vel) + (w0 * disp)) / r) * sn);
             w->v = 1.0 + nd;
-        } else {                                // критический/передемпфированный: шаговый интегратор
+        } else {                                // critically damped / overdamped: step integrator
             const double h = 1.0 / 480;
             int steps = (int)(dt / h) + 1;
             double hs = dt / steps;
@@ -77,16 +77,16 @@ void anim_tick(struct Ctx *c, double now) {
         double dv = w->v - 1.0, av = dv < 0 ? -dv : dv;
         double sp = w->vel < 0 ? -w->vel : w->vel;
         double x, y;
-        if (av <= c->eps && sp <= c->eps) {     // порог Hyprland
+        if (av <= c->eps && sp <= c->eps) {     // Hyprland threshold
             w->v = 1.0; w->vel = 0.0; w->active = 0;
             x = 0; y = 0;
         } else {
             any = 1;
-            x = w->x0 * (1.0 - w->v);           // value 0 -> полный сдвиг, 1 -> на месте
+            x = w->x0 * (1.0 - w->v);           // value 0 -> full offset, 1 -> in place
             y = w->y0 * (1.0 - w->v);
         }
-        // volatile + поэлементно: иначе компилятор кладёт константу в __literal16
-        // и адресует её через adrp (релокация) — в инжектируемом блобе её нет.
+        // volatile + individual elements: otherwise compiler puts a constant in __literal16
+        // and addresses it through adrp (relocation); it is absent from the injected blob.
         volatile double m[16];
         for (int j = 0; j < 16; j++) m[j] = 0.0;
         double one = c->one;

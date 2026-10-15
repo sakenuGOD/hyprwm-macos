@@ -1,7 +1,7 @@
-// Быстрый «configure» приложению: позиция+размер окна одним синхронным вызовом (≈1–10 мс),
-// и признаки окна для тайлинга (обычное окно, размер можно менять). Элементы кэшируются по wid.
-// Видимую анимацию делает движок в WindowServer; сюда — только конечная/промежуточная рамка.
-// Сборка: clang -O2 -dynamiclib -framework ApplicationServices src/axlib.c -o build/libax.dylib
+// Fast application configure: window position+size in one synchronous call (~1-10 ms),
+// plus tiling attributes (standard window, resizable). Elements are cached by wid.
+// The WindowServer engine handles visible animation; this receives only final/intermediate frames.
+// Build: clang -O2 -dynamiclib -framework ApplicationServices src/axlib.c -o build/libax.dylib
 #include <ApplicationServices/ApplicationServices.h>
 #include <pthread.h>
 #include "axpolicy.h"
@@ -19,8 +19,8 @@ static struct { CGWindowID wid; pid_t pid; AXUIElementRef el; } cache[NC];
 
 int ax_focus(int pid, unsigned wid, int raise);
 
-static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;   // кэш общий для потоков configure
-static int evict;                                        // следующий слот на вытеснение (кэш полон)
+static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;   // cache shared by configure threads
+static int evict;                                        // next eviction slot (cache full)
 static uint64_t cache_epoch; // prevents an in-flight application snapshot reintroducing forgotten proxies
 
 // Only pointer ownership changes occur under mu. AX calls can block and must remain outside it.
@@ -66,7 +66,7 @@ static AXUIElementRef lookup(pid_t pid, CGWindowID wid, int refresh) {
             for (int j = 0; j < NC; j++)
                 if (cache[j].el && cache[j].wid == ids[i] && cache[j].pid == pid) { slot = j; break; }
             if (slot < 0) for (int j = 0; j < NC; j++) if (!cache[j].el) { slot = j; break; }
-            if (slot < 0) { slot = evict; evict = (evict + 1) % NC; }   // кэш полон: вытеснить по кругу
+            if (slot < 0) { slot = evict; evict = (evict + 1) % NC; }   // cache full: round-robin eviction
             if (cache[slot].el) retired[nretired++] = cache[slot].el;
             cache[slot].wid = ids[i]; cache[slot].pid = pid;
             cache[slot].el = (AXUIElementRef)CFRetain(fetched[i]);
@@ -295,7 +295,7 @@ int ax_focus_context(int pid, unsigned *focused_wid, unsigned *context) {
     return error == kAXErrorSuccess || *context != AXWM_FOCUS_UNKNOWN ? 0 : -1;
 }
 
-// Рамка окна в глобальных pt (начало сверху слева). 0 — успех, иначе код AXError.
+// Window frame in global pt (top-left origin). 0 = success; otherwise AXError code.
 int ax_frame(int pid, unsigned wid, double x, double y, double w, double h) {
     for (int attempt = 0; attempt < 2; attempt++) {
         AXUIElementRef el = lookup(pid, wid, attempt);
@@ -303,8 +303,8 @@ int ax_frame(int pid, unsigned wid, double x, double y, double w, double h) {
         CGPoint p = {x, y};
         CGSize s = {w, h};
         AXValueRef pv = AXValueCreate(kAXValueCGPointType, &p), sv = AXValueCreate(kAXValueCGSizeType, &s);
-        // позиция -> размер -> позиция: AppKit подрезает рамку о край экрана, поэтому окно, растущее
-        // вверх, сначала поднимаем, а сжимающееся вниз, которое при подъёме упёрлось, — ставим ещё раз.
+        // position -> size -> position: AppKit clamps the frame to the screen edge, so first move up
+        // a window growing upward, then reposition a shrinking window that hit the edge on the first move.
         AXUIElementSetAttributeValue(el, kAXPositionAttribute, pv);
         AXError e = AXUIElementSetAttributeValue(el, kAXSizeAttribute, sv);
         if (e == kAXErrorSuccess) AXUIElementSetAttributeValue(el, kAXPositionAttribute, pv);
@@ -315,7 +315,7 @@ int ax_frame(int pid, unsigned wid, double x, double y, double w, double h) {
     return -1;
 }
 
-// Только размер — для live-resize каждый кадр (позицию окна уже поставил движок).
+// Size only: per-frame live-resize (the engine already set the window position).
 int ax_size(int pid, unsigned wid, double w, double h) {
     AXUIElementRef el = lookup(pid, wid, 0);
     if (!el) return -1;
@@ -340,9 +340,9 @@ void ax_forget(unsigned wid) {
     for (int i = 0; i < nretired; i++) CFRelease(retired[i]);
 }
 
-// ── фокус конкретного окна из фонового процесса (как yabai: focus_window) ─────────────────────
-// activateWithOptions с macOS 14 из фона игнорируется; SkyLight делает процесс передним с нужным
-// окном, а два синтетических event-record делают окно key. raise=1 — ещё поднять окно (AXRaise).
+// Focus a specific window from a background process (like yabai: focus_window).
+// Since macOS 14, background activateWithOptions is ignored; SkyLight brings the process forward with
+// the desired window, and two synthetic event records make it key. raise=1 also raises it (AXRaise).
 #include <string.h>
 extern CGError _SLPSSetFrontProcessWithOptions(ProcessSerialNumber *psn, uint32_t wid, uint32_t mode);
 extern CGError SLPSPostEventRecordTo(ProcessSerialNumber *psn, uint8_t *bytes);
@@ -383,9 +383,9 @@ int ax_focus(int pid, unsigned wid, int raise) {
     return e;
 }
 
-// ── цвет края окна для подложки (аналог CLAMP_TO_EDGE в Hyprland) ──────────────────────────────
-// Снимок только этого окна (без тени): средний цвет столбца у правого края и строки у нижнего,
-// с отступом от скруглённых углов. rgb — 0..1 sRGB. 0 — успех.
+// Window edge color for the backdrop (similar to CLAMP_TO_EDGE in Hyprland).
+// Snapshot of this window only (without shadow): average color of the rightmost column and bottom row,
+// inset from rounded corners. rgb = 0..1 sRGB. 0 = success.
 #include <dlfcn.h>
 typedef CGImageRef (*wlimg_fn)(CGRect, CGWindowListOption, CGWindowID, CGWindowImageOption);
 
@@ -403,13 +403,13 @@ int ax_edge_color(unsigned wid, double x, double y, double w, double h, double *
     CGContextRef cx = CGBitmapContextCreate(px, W, H, 8, W * 4, cs, kCGImageAlphaPremultipliedLast);
     CGContextDrawImage(cx, CGRectMake(0, 0, W, H), img);
     double s[3] = {0, 0, 0}; long n = 0;
-    size_t m = 30;                                         // мимо скруглений
-    for (size_t yy = m; yy + m < H; yy += 4) {             // правый столбец (2 px от края)
+    size_t m = 30;                                         // avoid rounded corners
+    for (size_t yy = m; yy + m < H; yy += 4) {             // right column (2 px from edge)
         uint8_t *p = px + (yy * W + (W - 3)) * 4;
         if (p[3] < 200) continue;
         s[0] += p[0]; s[1] += p[1]; s[2] += p[2]; n++;
     }
-    for (size_t xx = m; xx + m < W; xx += 4) {             // нижняя строка (в CG-контексте — верх массива)
+    for (size_t xx = m; xx + m < W; xx += 4) {             // bottom row (top of array in CG context)
         uint8_t *p = px + (2 * W + xx) * 4;
         if (p[3] < 200) continue;
         s[0] += p[0]; s[1] += p[1]; s[2] += p[2]; n++;
@@ -420,7 +420,7 @@ int ax_edge_color(unsigned wid, double x, double y, double w, double h, double *
     return 0;
 }
 
-// Фактическая рамка окна глазами приложения (AX): что оно реально приняло после configure.
+// Actual application-side window frame (AX): what it accepted after configure.
 static int frame_values(CFTypeRef p, CFTypeRef s, double *out) {
     CGPoint pt; CGSize sz;
     if (!out || !p || !s || CFGetTypeID(p) != AXValueGetTypeID() || CFGetTypeID(s) != AXValueGetTypeID() ||
@@ -443,20 +443,21 @@ int ax_get_frame(int pid, unsigned wid, double *out) {
     return result;
 }
 
-// ── вывести окно из встроенного тайлинга macOS (половины/четверти без зазоров) ─────────────────
-// Пока окно «разложено системой», WindowManager игнорирует чужие размеры и возвращает его в плитку.
-// Снимается пунктом меню приложения «Окно → Переместить и изменить размер → Вернуть к предыдущему
-// размеру» (действует на key-окно приложения — окно сначала делается key). 0 — пункт нажат.
+// Release a window from macOS native tiling (halves/quarters without gaps).
+// While system-tiled, WindowManager ignores external sizes and restores the tile.
+// Release through the application's Window -> Move & Resize -> Return to Previous Size menu item
+// (acts on the application's key window, so first make this window key). 0 = item pressed.
 static int title_match(CFStringRef t) {
     if (!t) return 0;
-    const char *keys[] = {"Previous Size", "предыдущему размеру", "предыдущий размер", NULL};
+    // Preserve Russian menu-title matches as their original UTF-8 bytes.
+    const char *keys[] = {"Previous Size", "\xd0\xbf\xd1\x80\xd0\xb5\xd0\xb4\xd1\x8b\xd0\xb4\xd1\x83\xd1\x89\xd0\xb5\xd0\xbc\xd1\x83\x20\xd1\x80\xd0\xb0\xd0\xb7\xd0\xbc\xd0\xb5\xd1\x80\xd1\x83", "\xd0\xbf\xd1\x80\xd0\xb5\xd0\xb4\xd1\x8b\xd0\xb4\xd1\x83\xd1\x89\xd0\xb8\xd0\xb9\x20\xd1\x80\xd0\xb0\xd0\xb7\xd0\xbc\xd0\xb5\xd1\x80", NULL};
     char buf[256];
     if (!CFStringGetCString(t, buf, sizeof buf, kCFStringEncodingUTF8)) return 0;
     for (int i = 0; keys[i]; i++) if (strstr(buf, keys[i])) return 1;
     return 0;
 }
 
-static const char *want_title;   // точное название пункта меню для ax_menu_press (NULL — «Previous Size»)
+static const char *want_title;   // exact menu item title for ax_menu_press (NULL = "Previous Size")
 
 static int find_press(AXUIElementRef el, int depth) {
     if (depth > 7) return -1;
@@ -502,7 +503,7 @@ int ax_untile(int pid, unsigned wid) {
     return r;
 }
 
-// Нажать пункт меню приложения по точному названию (например «New Window»). 0 — нажат.
+// Press an application menu item by exact title (e.g. "New Window"). 0 = pressed.
 int ax_menu_press(int pid, const char *title) {
     AXUIElementRef app = AXUIElementCreateApplication(pid);
     AXUIElementSetMessagingTimeout(app, 0.5f);
@@ -518,8 +519,8 @@ int ax_menu_press(int pid, const char *title) {
     return r;
 }
 
-// Только «окно стало key» для процесса — без смены переднего процесса (клавиатура остаётся у
-// активного). Проверка: будет ли приложение рисовать окно в активном виде.
+// Only tell the process its window became key, without changing the front process (keyboard stays
+// with the active process). Test: whether the application draws the window as active.
 int ax_key_appearance(int pid, unsigned wid) {
     ProcessSerialNumber psn = {0, 0};
     if (GetProcessForPID(pid, &psn) != 0) return -1;
@@ -534,16 +535,16 @@ int ax_key_appearance(int pid, unsigned wid) {
     return 0;
 }
 
-// Сказать приложению «ты активно» (kCGSEventResume 0x13), не забирая клавиатуру у переднего
-// процесса: AppKit _handleActivatedEvent -> _activateWindows -> key-вид окна (notes/wayland_gap.md §2.3 A).
-// Раскладка записи как у серверного PostCGSEventToProcess — [гипотеза], поля подтверждаются вживую.
+// Tell the application it is active (kCGSEventResume 0x13), without taking the keyboard from the front
+// process: AppKit _handleActivatedEvent -> _activateWindows -> key appearance (notes/wayland_gap.md section 2.3 A).
+// Record layout matches server PostCGSEventToProcess [hypothesis]; fields are confirmed live.
 int ax_resume(int pid, unsigned flags, unsigned long long d30) {
     ProcessSerialNumber psn = {0, 0};
     if (GetProcessForPID(pid, &psn) != 0) return -1;
     uint8_t b[0xf8];
     memset(b, 0, sizeof b);
     uint32_t len = 0xf8, type = 0x13, fl = flags;
-    memcpy(b + 0x04, &len, 4); memcpy(b + 0x08, &type, 4);       // как PostCGSEventToProcess
+    memcpy(b + 0x04, &len, 4); memcpy(b + 0x08, &type, 4);       // as in PostCGSEventToProcess
     memcpy(b + 0x30, &d30, 8);
     memcpy(b + 0x38, &fl, 4);
     uint16_t f16 = (uint16_t)flags; memcpy(b + 0x8a, &f16, 2);

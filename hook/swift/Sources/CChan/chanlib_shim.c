@@ -1,4 +1,4 @@
-// Шим: собирается сам hook/src/chanlib.c (одна копия кода на Python- и Swift-демона).
+// Shim: compiles hook/src/chanlib.c itself (shared code for the Python and Swift daemons).
 #include "../../../src/chanlib.c"
 #include <math.h>
 

@@ -1,8 +1,8 @@
-// Снимок окон для демона одним вызовом в его же процессе (без форка): все окна слоя 0
-// (вкл. скрытые и на других рабочих столах), у каждого — его Space, видно ли на экране;
-// активный Space читается до и после списка: если он сменился посреди снимка — stable=0.
-// Рамки из CGWindowList — ВИДИМЫЕ (с серверным трансформом); реальные даёт движок (chan A).
-// Сборка: clang -O2 -fobjc-arc -dynamiclib -framework AppKit -framework ApplicationServices
+// Snapshot windows for the daemon in one call within its own process (no fork): all layer-0 windows
+// (including hidden windows and other desktops), each with its Space and on-screen status;
+// read the active Space before and after the list: if it changes during the snapshot, stable=0.
+// CGWindowList frames are VISIBLE frames (with server transform); engine provides actual frames (chan A).
+// Build: clang -O2 -fobjc-arc -dynamiclib -framework AppKit -framework ApplicationServices
 //         src/winsnap.m -o build/libwinsnap.dylib
 #import <AppKit/AppKit.h>
 #include "snapshot_policy.h"
@@ -60,8 +60,8 @@ extern CFArrayRef SLSCopyManagedDisplaySpaces(CGSConnectionID cid);
 extern CFArrayRef SLSCopyWindowsWithOptionsAndTags(CGSConnectionID cid, uint32_t owner, CFArrayRef spaces,
                                                    uint32_t options, uint64_t *set_tags, uint64_t *clear_tags);
 
-// wid -> Space для всех окон: по одному запросу на рабочий стол (раньше — запрос на каждое окно, ~35 RPC
-// в WindowServer на снимок, 60 снимков/с).
+// wid -> Space for every window: one query per desktop (previously one per window, ~35 RPCs
+// to WindowServer per snapshot, 60 snapshots/sec).
 static NSMutableDictionary *current_display_spaces(CFArrayRef displays) {
     NSMutableDictionary *current = [NSMutableDictionary dictionary];
     if (!displays) return current;
@@ -101,10 +101,10 @@ static NSMutableDictionary *space_map(CGSConnectionID cid, NSMutableDictionary *
 static NSString *esc(NSString *s) {
     NSData *d = [NSJSONSerialization dataWithJSONObject:@[ s ?: @"" ] options:0 error:nil];
     NSString *j = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
-    return [j substringWithRange:NSMakeRange(1, j.length - 2)];       // уже в кавычках
+    return [j substringWithRange:NSMakeRange(1, j.length - 2)];       // already quoted
 }
 
-// JSON в buf; возвращает длину или -нужный_размер, если buf мал.
+// Write JSON to buf; return length or -required_size if buf is too small.
 int ws_snapshot(char *buf, int cap) {
     @autoreleasepool {
         CGSConnectionID cid = SLSMainConnectionID();
@@ -161,8 +161,8 @@ int ws_snapshot(char *buf, int cap) {
         [o appendFormat:@"\"workspace_native\":%@,", [[NSString alloc] initWithData:workspaceJSON encoding:NSUTF8StringEncoding]];
         [o appendFormat:@"\"front_pid\":%d,\"windows\":[",
                         NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier];
-        // Сначала окна на экране в НАСТОЯЩЕМ z-порядке (OnScreenOnly идёт спереди назад; OptionAll
-        // порядок не гарантирует — из-за этого «переднее окно» было неверным), потом остальные.
+        // First on-screen windows in TRUE z-order (OnScreenOnly goes front to back; OptionAll
+        // does not guarantee order, which previously produced an incorrect front window), then the rest.
         CFArrayRef on = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
                                                    kCGNullWindowID);
         CFArrayRef all = CGWindowListCopyWindowInfo(kCGWindowListOptionAll | kCGWindowListExcludeDesktopElements,
@@ -234,7 +234,7 @@ int ws_snapshot(char *buf, int cap) {
     }
 }
 
-// ── операции над окном по CGS wid через Accessibility (нужен доступ у процесса-родителя) ──
+// Window operations by CGS wid through Accessibility (parent process needs permission).
 extern AXError _AXUIElementGetWindow(AXUIElementRef el, CGWindowID *wid);
 
 static AXUIElementRef ax_window(pid_t pid, CGWindowID wid) {
@@ -253,7 +253,7 @@ static AXUIElementRef ax_window(pid_t pid, CGWindowID wid) {
     return found;
 }
 
-// 0 — успех; -1 нет окна; -2 нет кнопки/ошибка AX
+// 0 = success; -1 = no window; -2 = no button / AX error
 int ws_close(int pid, unsigned wid) {
     AXUIElementRef w = ax_window(pid, wid);
     if (!w) return -1;
@@ -267,7 +267,7 @@ int ws_close(int pid, unsigned wid) {
     return r;
 }
 
-// Фокус на конкретное окно (а не на приложение целиком).
+// Focus a specific window (rather than the entire application).
 int ws_focus(int pid, unsigned wid) {
     AXUIElementRef w = ax_window(pid, wid);
     if (!w) return -1;

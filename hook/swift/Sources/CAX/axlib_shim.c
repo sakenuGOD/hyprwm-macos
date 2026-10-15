@@ -1,4 +1,4 @@
-// Шим: собирается сам hook/src/axlib.c.
+// Shim: compiles hook/src/axlib.c itself.
 #include <stdlib.h>
 #include <unistd.h>
 #include "include/CAX.h"

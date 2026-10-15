@@ -1,7 +1,7 @@
-// Клиентская сторона канала (демон): открыть /tmp/hyprwm/chan, писать команды пачкой и
-// публиковать одним атомарным store, задавать кривые (запекание безье — 1:1 hyprutils, во float),
-// читать события. Грузится из Python через ctypes (hook/chan.py).
-// Сборка: clang -O2 -dynamiclib src/chanlib.c -o build/libhyprchan.dylib
+// Client side of the channel (daemon): open /tmp/hyprwm/chan, write commands in batches,
+// publish with one atomic store, set curves (bezier baking matches hyprutils, using floats),
+// and read events. Loaded from Python through ctypes (hook/chan.py).
+// Build: clang -O2 -dynamiclib src/chanlib.c -o build/libhyprchan.dylib
 #include "chan.h"
 #include <fcntl.h>
 #include <string.h>
@@ -10,8 +10,8 @@
 #include <unistd.h>
 
 static struct ch *ch;
-static u32 pend;             // следующая свободная позиция (ещё не опубликована)
-static u32 pub;              // голова, которую опубликовали мы последней
+static u32 pend;             // next free position (not yet published)
+static u32 pub;              // head most recently published by us
 
 unsigned ch_abi(void) { return (unsigned)sizeof(struct ch); }
 unsigned ch_off(int what) {
@@ -31,8 +31,8 @@ unsigned ch_off(int what) {
     return 0;
 }
 
-// create=1: создать НОВЫЙ файл (O_EXCL: существующий канал под живым движком не трогаем никогда);
-// иначе — подключиться к живому.
+// create=1: create a NEW file (O_EXCL: never touch an existing channel used by a live engine);
+// otherwise, connect to the live channel.
 void *ch_open(const char *path, int create) {
     size_t sz = (sizeof(struct ch) + 0x3fff) & ~(size_t)0x3fff;
     int fd = open(path, O_RDWR | (create ? O_CREAT | O_EXCL : 0), 0666);
@@ -69,11 +69,11 @@ void ch_curve_spring(int id, double mass, double k, double d) {
 }
 
 static struct ch_cmd *next_cmd(void) {
-    // начало новой пачки: голову мог сдвинуть другой писатель (тестовый скрипт) — продолжить от неё,
-    // иначе наша публикация отодвинула бы голову назад и движок переприменил бы старые команды
+    // Start a new batch: another writer (test script) may have advanced the head; continue from it,
+    // otherwise publishing would move the head backward and the engine would reapply old commands.
     if (pend == pub) pend = pub = __atomic_load_n(&ch->h.cmd_head, __ATOMIC_ACQUIRE);
     u32 tail = __atomic_load_n(&ch->h.cmd_tail, __ATOMIC_ACQUIRE);
-    if (pend - tail >= CH_NCMD) return 0;       // кольцо полно: движок не забирает
+    if (pend - tail >= CH_NCMD) return 0;       // ring full: engine is not consuming
     struct ch_cmd *k = &ch->cmd[pend % CH_NCMD];
     memset(k, 0, sizeof *k);
     pend++;
@@ -126,7 +126,7 @@ int ch_forget(unsigned wid) {
     return 0;
 }
 
-// Подложка окна wid: under = wid окна-подложки (0 — убрать).
+// Backdrop for window wid: under = backdrop window wid (0 to remove).
 int ch_under(unsigned wid, unsigned under) {
     struct ch_cmd *k = next_cmd();
     if (!k) return -1;
@@ -134,7 +134,7 @@ int ch_under(unsigned wid, unsigned under) {
     return 0;
 }
 
-// Перенести окно на рабочий стол sid (исполняет движок внутри WS).
+// Move a window to desktop sid (executed by the engine inside WS).
 int ch_space(unsigned wid, unsigned long long sid) {
     struct ch_cmd *k = next_cmd();
     if (!k) return -1;
@@ -142,7 +142,7 @@ int ch_space(unsigned wid, unsigned long long sid) {
     return 0;
 }
 
-// Конечная рамка окна приложению через WS (OP_CFG): движок шлёт её владельцу окна в тик старта пачки.
+// Final window frame sent to the application through WS (OP_CFG): engine notifies its owner at batch start.
 int ch_cfg_flags(unsigned wid, unsigned flags, double x, double y, double w, double h) {
     struct ch_cmd *k = next_cmd();
     if (!k) return -1;
@@ -154,7 +154,7 @@ int ch_cfg(unsigned wid, double x, double y, double w, double h) {
     return ch_cfg_flags(wid, 0, x, y, w, h);
 }
 
-// Цвет края окна (RGBA8, 0 — нет): им движок закрывает пустую полосу, пока буфер меньше видимой рамки.
+// Window edge color (RGBA8, 0 = none): fills the empty band while the buffer is smaller than the visible frame.
 int ch_fill(unsigned wid, unsigned rgba) {
     struct ch_cmd *k = next_cmd();
     if (!k) return -1;
@@ -162,7 +162,7 @@ int ch_fill(unsigned wid, unsigned rgba) {
     return 0;
 }
 
-// Поднять окно над rel (0 — над всеми своего уровня) без активации приложения.
+// Raise the window above rel (0 = above all windows at its level) without activating the application.
 int ch_raise(unsigned wid, unsigned rel) {
     struct ch_cmd *k = next_cmd();
     if (!k) return -1;
@@ -170,7 +170,7 @@ int ch_raise(unsigned wid, unsigned rel) {
     return 0;
 }
 
-// Подкладка-снимок окна на время хода (движок снимет её сам по концу анимации окна).
+// Snapshot backdrop during motion (engine removes it when the window animation ends).
 int ch_snap(unsigned wid) {
     struct ch_cmd *k = next_cmd();
     if (!k) return -1;
@@ -178,10 +178,10 @@ int ch_snap(unsigned wid) {
     return 0;
 }
 
-// Опубликовать всё записанное: движок применит это в одном тике.
+// Publish all queued commands: the engine applies them in one tick.
 void ch_commit(void) { __atomic_store_n(&ch->h.cmd_head, pend, __ATOMIC_RELEASE); pub = pend; }
 
-// Следующее событие от движка: 1 — есть (записано в *out), 0 — нет.
+// Next engine event: 1 = available (written to *out), 0 = none.
 int ch_event(struct ch_evt *out) {
     u32 hd = __atomic_load_n(&ch->h.evt_head, __ATOMIC_ACQUIRE), tl = ch->h.evt_tail;
     if (hd - tl > CH_NEVT) tl = hd - CH_NEVT;

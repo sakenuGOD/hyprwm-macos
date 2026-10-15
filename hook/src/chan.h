@@ -1,8 +1,8 @@
-// Общая память демон <-> движок в WindowServer (/tmp/hyprwm/chan, mmap MAP_SHARED с обеих сторон).
-// Демон пишет команды в кольцо cmd и публикует cmd_head одним атомарным store (release):
-// всё, что опубликовано одной публикацией, движок применяет в ОДНОМ тике с одним t0 —
-// как в Hyprland, где все переменные одного события стартуют в одном тике.
-// Движок пишет состояние окон (wins), события (evt) и пульс (ticks/now).
+// Shared memory between daemon and WindowServer engine (/tmp/hyprwm/chan, MAP_SHARED mmap on both sides).
+// Daemon writes commands to the cmd ring and publishes cmd_head with one atomic release store:
+// the engine applies everything published together in ONE tick with a shared t0,
+// as in Hyprland, where all variables for one event start in the same tick.
+// Engine writes window state (wins), events (evt), and heartbeat (ticks/now).
 #pragma once
 
 typedef unsigned int u32;
@@ -31,97 +31,97 @@ enum { OP_GEOM = 1, OP_ALPHA = 2, OP_FORGET = 3, OP_WARP = 4, OP_UNDER = 5, OP_S
 // Production permission is independent of a per-window client preparation grant.
 #define CH_EDGE_PERMISSION 0xffffffffu
    // CFG: explicit frame/cancel (w=h=0); F_NATIVE also sends intermediate frames via this CAP6 transport.
-#define CH_CFG_NOTIFY 0x7f17     // тип уведомления WS → приложение
+#define CH_CFG_NOTIFY 0x7f17     // WS -> application notification type
 #define CH_CFG_MAGIC  0x47464348u // "HCFG"
 #define CH_STREAM_NOTIFY 0x7f18u  // additive configure-only bridge; distinct from retained CAP5 callback
 #define CH_STREAM_MAGIC 0x47464353u // "SCFG"
-struct ch_cfgmsg { u32 magic, wid; double x, y, w, h; double t0; };   // полезная нагрузка (0x30)
-   // SNAP: подкладка-снимок окна под ним на время хода (сжатие: где бокс больше нового буфера — прежнее содержимое)
-   // RAISE: окно над окном k.flags (wid; 0 — над всеми своего уровня), без активации — активное поверх соседей (Hyprland)
-   // FILL: k.flags = цвет края окна RGBA8 (0 — нет): пустая полоса B−A закрашивается им (дотяжка края)   // UNDER: k.flags = wid подложки
-   // SPACE: перенести окно на рабочий стол (k.x = id стола) изнутри WS — клиентский SLSMoveWindowsToManagedSpace чужие окна не двигает
+struct ch_cfgmsg { u32 magic, wid; double x, y, w, h; double t0; };   // payload (0x30)
+   // SNAP: window snapshot below it during motion (shrinking: preserve old content where the box exceeds the new buffer)
+   // RAISE: above window k.flags (wid; 0 = above all at its level), without activation; active above neighbors (Hyprland)
+   // FILL: k.flags = RGBA8 window edge color (0 = none): fills empty band B-A (edge extension); UNDER: k.flags = backdrop wid
+   // SPACE: move window to desktop (k.x = desktop id) inside WS; client SLSMoveWindowsToManagedSpace cannot move foreign windows
 enum { F_FROM = 1, F_MOVE = 2, F_STRETCH = 4, F_WAIT = 8, F_HOLD = 16, F_NATIVE = 32, F_STREAM = 64, F_EDGE = 128, F_SNAPSHOT = 256, F_MOVE_END = 512 }; // MOVE_END: keep native origin until live visual geometry completes.
-   // STRETCH: содержимое тянется на B (открытие, как m_animatingIn)           // флаги OP_GEOM / OP_ALPHA
+   // STRETCH: stretch content to B (opening, like m_animatingIn); OP_GEOM / OP_ALPHA flags
 enum { EV_GONE = 1, EV_SETTLED = 2, EV_DONE = 3, EV_NEW = 4, EV_MOVED = 5, EV_REL = 6, EV_CLONE = 7, EV_ERROR = 8, EV_SNAPSHOT = 9 };
 enum { SNAP_ACQUIRED=1, SNAP_DEFERRED=2, SNAP_REVEALED=3, SNAP_CANCELLED=4, SNAP_CONFIGURED=5 };
 // SNAPSHOT: source WID; x=clone WID, y=result, w=pending mode(3=cover), h=positive epoch.
 enum { ERR_SLOT = 1, ERR_CFG_OWNER = 2, ERR_SPACE_ABI = 3, ERR_SPACE_TARGET = 4, ERR_CMD_RING = 5 };
 // ERROR: exact failing opcode in x (0 for ring overflow), reason in y,
 // monotonically increasing error counter in w; WID is 0 for ring overflow.
-   // REL: окно освобождается (0x3e9): x = на экране (бит 44), y = есть владелец, w = уровень, h = наш слот (1) / geo (2)
-   // CLONE: снимок закрытия выставлен (wid = клон, x = исходное окно)   // MOVED: покоящееся окно ушло с цели (x,y,w,h = A)
-   // NEW: на сервере появилось окно (номера растут)   // DONE: видимые анимации окна кончились (B = цель)
+   // REL: window released (0x3e9): x = on screen (bit 44), y = has owner, w = level, h = our slot (1) / geo (2)
+   // CLONE: close snapshot displayed (wid = clone, x = source window); MOVED: idle window left target (x,y,w,h = A)
+   // NEW: server window appeared (increasing ids); DONE: visible window animations ended (B = target)
 
 struct ch_curve {                // 0x1010
     u32 type, pad;
     double mass, k, d;           // spring
-    double bx[CH_BAKED], by[CH_BAKED];   // bezier: запечённые точки t=(i+1)/255, как hyprutils
+    double bx[CH_BAKED], by[CH_BAKED];   // bezier: baked points t=(i+1)/255, matching hyprutils
 };
 
 struct ch_cmd {                  // 0x88
     u32 op, wid, flags, cpos, csize, calpha, pad0, pad1;
-    double x, y, w, h;           // цель (глобальные pt, начало сверху слева)
-    double fx, fy, fw, fh;       // откуда (F_FROM)
-    double dpos, dsize, dalpha;  // длительность bezier, с (speed*100 мс)
-    double a, fa;                // альфа: цель / откуда (F_FROM)
+    double x, y, w, h;           // target (global pt, top-left origin)
+    double fx, fy, fw, fh;       // source (F_FROM)
+    double dpos, dsize, dalpha;  // bezier duration, seconds (speed*100 ms)
+    double a, fa;                // alpha: target / source (F_FROM)
 };
 
 struct ch_var {                  // 0x70
     double b[2], g[2], v[2];     // begun / goal / value
-    double sv, svel;             // нормированное значение пружины и скорость
-    double t0, last, dur;        // начало, последний шаг пружины, длительность bezier
+    double sv, svel;             // normalized spring value and velocity
+    double t0, last, dur;        // start, last spring step, bezier duration
     u32 curve, active;
 };
 
 struct ch_win {                  // 0x1e8
-    u32 wid, used, settling, clipped;   // clipped: стоит серверная обрезка по видимой рамке
+    u32 wid, used, settling, clipped;   // clipped: server clip follows visible frame
     struct ch_var pos, size, alpha;
-    double ax, ay, aw, ah;       // фактическая рамка окна на сервере (последний тик)
-    double m[4];                 // применённый трансформ: sx, sy, tx, ty
-    double done_t;               // когда закончились анимации (ожидание размера от приложения)
-    double cur_alpha;            // применённая альфа
-    double clip[4];              // последняя поставленная обрезка (глобальные pt)
-    u32 stretch, under;          // stretch: тянуть содержимое на B (открытие); under: wid подложки (0 — нет)
-    double um[4];                // применённый трансформ подложки
-    double ualpha;               // применённая альфа подложки
-    double radius;               // радиус скругления окна у сервера (resolved_corner_radius)
-    double pa[4];                // A прошлого тика
-    u32 stable, rset;            // stable: сколько тиков подряд A не менялась; rset: движок поставил окну радиус Hyprland
-    double a0[2];                // размер буфера в момент старта анимации (старый кадр приложения)
-    u32 held, needs;             // held: ждёт старта пачки; needs: ждём от приложения кадр нового размера
+    double ax, ay, aw, ah;       // actual server window frame (last tick)
+    double m[4];                 // applied transform: sx, sy, tx, ty
+    double done_t;               // when animations ended (waiting for application size)
+    double cur_alpha;            // applied alpha
+    double clip[4];              // last applied clip (global pt)
+    u32 stretch, under;          // stretch: content to B (opening); under: backdrop wid (0 = none)
+    double um[4];                // applied backdrop transform
+    double ualpha;               // applied backdrop alpha
+    double radius;               // server window corner radius (resolved_corner_radius)
+    double pa[4];                // previous tick's A
+    u32 stable, rset;            // stable: consecutive ticks with unchanged A; rset: engine applied Hyprland radius
+    double a0[2];                // buffer size at animation start (old application frame)
+    u32 held, needs;             // held: awaiting batch start; needs: awaiting application frame at new size
     u32 geo, moved;              // geo: 0=unowned, 1=visual, 2=native stream, 3=live edge, 4=terminal native-origin move; moved: EV_MOVED already sent
-    double ub[6];                // последняя обрезка подложки: B (x,y,w,h) и видимая часть буфера (w,h)
+    double ub[6];                // last backdrop clip: B (x,y,w,h) and visible buffer area (w,h)
     u32 wait, fill;              // wait: 1=F_WAIT frame readiness, 2=unclaimed prehide lease (≤150ms); fill: RGBA8
-    double wait_t;               // с какого момента ждёт
-    u64 mask;                    // CALayer маски на слое Hosting окна (0 — нет); живёт в WS
-    double mrect[2];             // поставленный размер видимой части (cw, ch)
-    double mhost[2];             // bounds слоя Hosting при постановке маски (y0, h): слой меняет размер позже формы окна
-    struct ch_var act;           // П6: прогресс активной рамки 0..1 (кривая border, кроссфейд 600 мс)
+    double wait_t;               // when waiting started
+    u64 mask;                    // mask CALayer on window Hosting layer (0 = none); lives in WS
+    double mrect[2];             // applied visible size (cw, ch)
+    double mhost[2];             // Hosting bounds when masking (y0, h): layer resizes after window shape
+    struct ch_var act;           // P6: active border progress 0..1 (border curve, 600 ms crossfade)
     u64 bl_in, bl_act;           // hidden compatibility ring, single visible gradient (colors interpolate on focus)
     double bframe[4];            // applied border rectangle in Server root coordinates
-    double bop;                  // поставленная непрозрачность активного слоя
-    struct ch_var sact;          // прогресс активной тени 0..1 (fadeShadow, 800 мс)
-    u64 bl_sh;                   // слой тени (под системным Shadow), маска — кольцо (тень вне окна)
-    double sop;                  // поставленная shadowOpacity
-    u64 bl_fill;                 // CAShapeLayer заливки пустой полосы B−A (цвет края, под содержимым)
-    double fkey[5];              // поставленные bw, bh, aw, ah, цвет — путь пересчитывается только при изменении
+    double bop;                  // applied active layer opacity
+    struct ch_var sact;          // active shadow progress 0..1 (fadeShadow, 800 ms)
+    u64 bl_sh;                   // shadow layer (under system Shadow), ring mask (shadow outside window)
+    double sop;                  // applied shadowOpacity
+    u64 bl_fill;                 // CAShapeLayer filling empty band B-A (edge color, under content)
+    double fkey[5];              // applied bw, bh, aw, ah, color; recalculate path only on change
 };
 
-// П6: рамка фокуса (general.col.*, border_size, rounding). Пишет демон, читает движок.
+// P6: focus border (general.col.*, border_size, rounding). Daemon writes, engine reads.
 struct ch_deco {
-    u32 on, focus;               // focus: wid активного окна (0 — нет)
-    u32 curve, ngrad;            // кривая border; число цветов градиента (≤8, запечено в OkLab демоном)
-    double dur, width, radius;   // длительность кроссфейда, с; ширина рамки, pt; радиус окна, pt (внешний = radius+width)
-    double grad[8][4];           // RGBA (sRGB, не premult)
-    double inact[4];             // неактивная рамка
-    double start[2], end[2];     // startPoint/endPoint CAGradientLayer (единичные координаты слоя, ось Y вверх)
-    u32 nofull, only;            // nofull: окно без рамки (fullscreen); only: рамка только у этого окна (проверка)
-    u32 sh_on, scurve;           // своя тень (decoration.shadow); кривая fadeShadow
-    double sdur, srad, soff;     // длительность кроссфейда; shadowRadius (σ); смещение вниз, pt
-    double sop_act, sop_in;      // shadowOpacity активного/неактивного (α цвета × плотность гаусса)
-    u32 sys_off, inset10;        // sys_off: гасить системную тень/контур окна; inset10: кольцо заходит внутрь окна на N/10 pt
-                                 // (закрывает светлый внутренний контур, который рисует само приложение на Tahoe)
-    double bez[4], sbez[4];      // кривые кроссфейда рамки/тени (cubic-bezier x1,y1,x2,y2) — CABasicAnimation в CA
+    u32 on, focus;               // focus: active window wid (0 = none)
+    u32 curve, ngrad;            // border curve; gradient color count (<=8, baked in OkLab by daemon)
+    double dur, width, radius;   // crossfade duration, seconds; border width, pt; window radius, pt (outer = radius+width)
+    double grad[8][4];           // RGBA (sRGB, not premultiplied)
+    double inact[4];             // inactive border
+    double start[2], end[2];     // CAGradientLayer startPoint/endPoint (unit layer coordinates, Y axis upward)
+    u32 nofull, only;            // nofull: borderless window (fullscreen); only: border only on this window (test)
+    u32 sh_on, scurve;           // custom shadow (decoration.shadow); fadeShadow curve
+    double sdur, srad, soff;     // crossfade duration; shadowRadius (sigma); downward offset, pt
+    double sop_act, sop_in;      // active/inactive shadowOpacity (color alpha x Gaussian density)
+    u32 sys_off, inset10;        // sys_off: suppress system window shadow/outline; inset10: ring extends inward by N/10 pt
+                                 // (covers the bright inner outline drawn by the application itself on Tahoe)
+    double bez[4], sbez[4];      // border/shadow crossfade curves (cubic-bezier x1,y1,x2,y2), CABasicAnimation in CA
 };
 
 struct ch_evt { u32 type, wid; double t, x, y, w, h; };   // 0x30
@@ -129,31 +129,31 @@ struct ch_evt { u32 type, wid; double t, x, y, w, h; };   // 0x30
 struct ch_hdr {                  // 0x100
     u64 magic;
     u32 version, size;
-    u32 cmd_head;                // пишет демон (release)
-    u32 cmd_tail;                // пишет движок
-    u32 evt_head;                // пишет движок (release)
-    u32 evt_tail;                // пишет демон
-    u32 ticks, frames;           // пульс движка
-    double now;                  // время последнего тика (SLSCurrentRealTime)
+    u32 cmd_head;                // daemon writes (release)
+    u32 cmd_tail;                // engine writes
+    u32 evt_head;                // engine writes (release)
+    u32 evt_tail;                // daemon writes
+    u32 ticks, frames;           // engine heartbeat
+    double now;                  // last tick time (SLSCurrentRealTime)
     u32 nactive, errors;
-    double idle_poll;            // период опроса команд в простое, с
-    double settle;               // сколько ждать, пока приложение примет конечный размер, с
-    double settle_px;            // допуск размера, pt (сетка символов терминалов)
-    u32 stop, applied;           // stop: движок перестаёт перепланировать себя; applied: число set_xform
+    double idle_poll;            // idle command polling interval, seconds
+    double settle;               // time to wait for application to accept final size, seconds
+    double settle_px;            // size tolerance, pt (terminal character grid)
+    u32 stop, applied;           // stop: engine stops rescheduling itself; applied: set_xform count
     double last_dt;
-    double phase;                // фаза тика в кадре: доля периода после развёртки
-    double period;               // период развёртки, с (из кэша WS)
-    double margin;               // te — первая развёртка позже now+margin
-    double te;                   // момент показа, на который посчитан последний кадр
-    u32 wid_max, holding;        // wid_max: наибольший виденный номер окна; holding: пачка ждёт кадров приложений
-    double hold_t;               // когда пачка начала ждать
-    double hold_max;             // сколько ждать кадр приложения, с (потом старт всё равно)
-    double tick_us_last, tick_us_max;   // стоимость тика (mach-тики → мкс по timebase, считает движок)
-    u32 ticks_late, te_skips;    // тик позже 0.6·T после развёртки; шаг te ≠ T при анимации
+    double phase;                // tick phase within frame: fraction of period after vblank
+    double period;               // vblank period, seconds (from WS cache)
+    double margin;               // te = first vblank after now+margin
+    double te;                   // presentation time used to calculate last frame
+    u32 wid_max, holding;        // wid_max: highest window id seen; holding: batch awaiting application frames
+    double hold_t;               // when batch started waiting
+    double hold_max;             // time to wait for application frame, seconds (then start anyway)
+    double tick_us_last, tick_us_max;   // tick cost (mach ticks -> microseconds via timebase, computed by engine)
+    u32 ticks_late, te_skips;    // tick later than 0.6*T after vblank; te step != T during animation
     u32 traj_head, pad_t;        // 0=off; WID=device gate; CH_EDGE_PERMISSION=per-window grants
-    double te_prev;              // te прошлого тика с анимацией
-    u32 use_mask, mask_only;     // П4: обрезка B маской в CA-дереве окна вместо экранного клипа; mask_only — только это окно
-    u32 mask_flip, mask_errs;    // mask_flip: ось Y слоя вверх (y = h − ch); mask_errs: сколько раз дерево не нашлось
+    double te_prev;              // te of previous animated tick
+    u32 use_mask, mask_only;     // P4: clip B with mask in window CA tree instead of screen clip; mask_only: only this window
+    u32 mask_flip, mask_errs;    // mask_flip: layer Y axis upward (y = h - ch); mask_errs: failed tree lookup count
     u64 reserved[5];
 };
 
@@ -166,9 +166,9 @@ struct ch {
     struct ch_evt evt[CH_NEVT];
     struct ch_win win[CH_NW];
     struct ch_traj traj[CH_NTRAJ];
-    // соединения (CGXConnection*) приложений, чьи окна движок вёл в плитку: новое окно уровня 0 такого
-    // приложения прячется в тот же тик, когда появилось (демон решит: popin или показать) — пишет движок
+    // Connections (CGXConnection*) of applications whose windows were tiled by the engine: a new level-0 window
+    // from one is hidden on its creation tick (daemon decides popin or show); engine writes.
     u64 conn[CH_NCONN];
-    u32 conn_next, prehide;      // prehide: включено демоном
+    u32 conn_next, prehide;      // prehide: enabled by daemon
     struct ch_deco deco;
 };

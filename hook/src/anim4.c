@@ -1,18 +1,18 @@
-// Движок анимаций v4 внутри WindowServer: центральный покадровый такт, как в Hyprland.
+// Animation engine v4 inside WindowServer: central per-frame tick, as in Hyprland.
 //
-// Каждый тик (раз за кадр, на главном потоке WS):
-//   1. забирает из общей памяти все опубликованные команды и применяет их с одним t0;
-//   2. продвигает переменные всех окон (позиция, размер, альфа) по кривым Hyprland —
-//      пружина аналитикой hyprutils advanceSpring, безье с запеканием 255 точек и getYForPoint;
-//   3. читает фактическую рамку A. Legacy visual mode показывает её в B(t);
+// Each tick (once per frame, on the WS main thread):
+// 1. consumes all published commands from shared memory and applies them with one t0;
+// 2. advances all window variables (position, size, alpha) along Hyprland curves:
+// spring uses analytic hyprutils advanceSpring; bezier uses 255 baked points and getYForPoint;
+// 3. reads actual frame A. Legacy visual mode displays it in B(t);
 //      F_NATIVE sends the central intermediate geometry to the app, while real A
 //      owns presentation/ring/input. Native app handler has no second animation clock.
-// Когда анимации окна кончились и приложение приняло размер (или вышло время ожидания) —
-// identity, слот трансформа удаляется сервером, окно рисуется как есть.
+// When window animations end and the application accepts the size (or waiting times out),
+// apply identity; the server removes the transform slot and draws the window as is.
 //
-// Тик идёт по таймеру главного потока, в фазе развёртки выбранного дисплея WS.
-// anim_frame не устанавливается в metalCallbacks: повторная перепланировка ломает фазу.
-// Сборка: build_anim4.sh (плоский образ __TEXT, без релокаций и без обращений к __DATA).
+// The main-thread timer ticks in phase with the selected WS display's vblank.
+// anim_frame is not installed in metalCallbacks: rescheduling would break the phase.
+// Build: build_anim4.sh (flat __TEXT image, no relocations or __DATA references).
 #include "chan.h"
 #include "live_edge.h"
 #include "../effects/config_command.h"
@@ -32,7 +32,7 @@ typedef void *(*rgn_fn)(rect r);
 typedef void (*rel_fn)(void *cf);
 
 struct ctx {
-    set_xform_fn set_xform;  // 0x00  все указатели функций подписаны IA/0
+    set_xform_fn set_xform;  // 0x00 all function pointers signed IA/0
     resched_fn   resched;    // 0x08
     void        *self;       // 0x10  anim_tick
     void        *queue;      // 0x18  &gMainThreadQueue
@@ -44,35 +44,35 @@ struct ctx {
     d1_fn        f_exp, f_sin, f_cos;  // 0x48 0x50 0x58
     struct ch   *ch;         // 0x60
     u32          key, running;        // 0x68 0x6c
-    u32          shape_off, dead;     // 0x70  смещение формы окна в CGXWindow (0x170); dead: снят установщиком
-    vbl_fn       vbl;                 // 0x78  WSDisplayScheduleGetPrevNextVBL (кэш развёртки дисплея)
-    u32          display, pad2;       // 0x80  CGDirectDisplayID главного дисплея
+    u32          shape_off, dead;     // 0x70 window shape offset in CGXWindow (0x170); dead: removed by installer
+    vbl_fn       vbl;                 // 0x78 WSDisplayScheduleGetPrevNextVBL (display vblank cache)
+    u32          display, pad2;       // 0x80 CGDirectDisplayID of main display
     clip_fn      clip;                // 0x88  CGXWindow::set_window_list_global_clip_shape(conn, region, wids, n)
     rgn_fn       rgn;                 // 0x90  CGRegionCreateWithRect
     rel_fn       release;             // 0x98  CFRelease
     double     (*corner)(void *win);  // 0xa0  CGXWindow::resolved_corner_radius() const
     void      *(*rdiff)(void *a, void *b);   // 0xa8  CGRegionCreateDifferenceWithRegion (a − b)
-    u64        (*mabs)(void);         // 0xb0  mach_absolute_time (замер стоимости тика)
-    double       mabs_us;             // 0xb8  мкс на один mach-тик (timebase)
-    // П4: ObjC/CA внутри WS. Всё — в ОДНОЙ транзакции WS на вызов (ctor → addContextToCommit → свойства → dtor):
-    // WS коммитит только явно перечисленные контексты (setCommittingContexts: в ~WSCAContextScopeTransaction)
-    void        *msg;                 // 0xc0  objc_msgSend (вызов через приведённые типы)
+    u64        (*mabs)(void);         // 0xb0 mach_absolute_time (measures tick cost)
+    double       mabs_us;             // 0xb8 microseconds per mach tick (timebase)
+    // P4: ObjC/CA inside WS. ONE WS transaction per call (ctor -> addContextToCommit -> properties -> dtor):
+    // WS commits only explicitly listed contexts (setCommittingContexts: in ~WSCAContextScopeTransaction).
+    void        *msg;                 // 0xc0 objc_msgSend (called through cast types)
     void      *(*sel)(const char *);  // 0xc8  sel_registerName
     void      *(*cls)(const char *);  // 0xd0  objc_getClass
     void      *(*srgb)(double, double, double, double);   // 0xd8  CGColorCreateSRGB
     void       (*tx_ctor)(void *tx, unsigned params);     // 0xe0  WSCAContextScopeTransaction(WSCAScopeParameters)
     void       (*tx_add)(void *tx, void *cactx);          // 0xe8  addContextToCommit(CAContext*)
     void       (*tx_dtor)(void *tx);                      // 0xf0  ~WSCAContextScopeTransaction (commit)
-    void        *black;               // 0xf8  CGColor (кэш)
-    void        *s_layer, *s_retain, *s_release, *s_frame, *s_radius, *s_bg, *s_mask;   // 0x100.. селекторы (кэш)
-    void        *c_layer;             // 0x138 класс CALayer
+    void        *black;               // 0xf8 CGColor (cached)
+    void        *s_layer, *s_retain, *s_release, *s_frame, *s_radius, *s_bg, *s_mask;   // 0x100.. selectors (cached)
+    void        *c_layer;             // 0x138 CALayer class
     void        *s_bounds;            // 0x140
-    // перенос окна на стол — как серверный __XMoveWindowsToManagedSpace, но от соединения-владельца окна
+    // Move window to desktop like server __XMoveWindowsToManagedSpace, using the window owner's connection.
     void      *(*space_for_id)(u64 sid);                                  // 0x148 PKGSpaceForID
     void      *(*wlist)(void *conn, const unsigned *wids, unsigned n);    // 0x150 window_ordering_group_list_create_from_window_id_array
     void       (*wmove)(void *conn, void *list, void *managed);           // 0x158 PKGWindowsMoveToManagedSpace
     void       (*xfree)(void *p);                                         // 0x160 free
-    // П6: рамка фокуса (селекторы и классы — кэш, заполняет deco_ready)
+    // P6: focus border (selectors and classes cached by deco_ready)
     void        *s_bwidth, *s_bcolor, *s_colors, *s_start, *s_end, *s_opacity;   // 0x168..0x190
     void        *s_addsub, *s_remove, *s_convert, *s_arr, *s_getmask, *s_curve;  // 0x198..0x1c0
     void        *c_grad, *c_array, *str_cont;                                    // 0x1c8 0x1d0 0x1d8
@@ -81,21 +81,21 @@ struct ctx {
     void       (*path_rel)(void *p);                                                    // 0x220 CGPathRelease
     void       (*dbg_radius)(void *win, double r);                                     // 0x228 CGXWindow::set_debug_corner_radius
     void       (*dbg_clear)(void *win);                                                // 0x230 CGXWindow::clear_debug_corner_radius
-    // заливка пустой полосы B−A (дотяжка края): CAShapeLayer с путём even-odd
+    // Fill empty band B-A (edge extension): CAShapeLayer with even-odd path
     void      *(*path_mut)(void);                                                       // 0x238 CGPathCreateMutable
     void       (*path_addrr)(void *p, const void *t, struct rect4_ r, double cw, double ch);   // 0x240 CGPathAddRoundedRect
     void       (*path_addrect)(void *p, const void *t, struct rect4_ r);               // 0x248 CGPathAddRect
     void        *s_path, *s_fillcolor, *s_fillrule, *s_hidden, *c_shape, *str_eo;      // 0x250..0x278
-    // после своей CA-транзакции — заявка на перерисовку дисплеев окна: WS композитит «отсоединённо» и сам
-    // чужой коммит слоёв может не показать до постороннего события (клик) — кроссфейд шёл рывками/застревал
+    // After our CA transaction, request redraw of window displays: WS composites independently and may
+    // not show an external layer commit until another event (click); crossfades previously stuttered or stalled.
     void       (*sched_win)(void *conn, void *win);                                     // 0x280 CGXScheduleUpdateDisplaysIntersectingWindow
-    // кроссфейд через CABasicAnimation (кадры интерполирует CA в момент рендера — без покадровых коммитов)
+    // Crossfade via CABasicAnimation (CA interpolates at render time, without per-frame commits)
     void        *c_basic, *s_akp, *s_from, *s_to, *s_adur, *s_tf, *s_addanim, *s_pres;  // 0x288..0x2c0
     void        *s_opget, *s_shopget, *c_num, *s_numf, *c_tfn, *s_tfcp, *str_op, *str_shop; // 0x2c8..0x300
-    u64          cleaned;                                                               // 0x308 слои сняты при stop
+    u64          cleaned;                                                               // 0x308 layers removed on stop
     void        *s_subl, *s_count, *s_objat, *s_iskind, *s_shpathget;                   // 0x310..0x330
     void       (*order)(void *conn, unsigned wid, int op, unsigned rel);                // 0x338 CGXOrderWindow
-    // П8: снимок закрытия (notes/research/close_clone.md)
+    // P8: close snapshot (notes/research/close_clone.md)
     void      *(*clone)(void *src, rect frame, const void *disp, int server_owned);     // 0x340 CreateCloneOfWindow
     rect       (*srr)(void *win, rect r);                                               // 0x348 screen_rect_from_rect
     void      *(*win_disp)(void *win);                                                  // 0x350 PKGWindowGetDisplay
@@ -108,15 +108,15 @@ struct ctx {
     unsigned   (*get_id)(void *win);                                                    // 0x388 WSWindowGetID
     u32          cb_on, in_cb;                                                          // 0x390
     u32          nclone, nskip;                                                         // 0x398
-    void        *s_curveget, *cur_curve;                                               // 0x3a0 0x3a8 форма угла окна
-    void       (*tags)(void *conn, void **wins, u64 mask, int clear);                  // 0x3b0 set_window_list_tags (1 окно; clear=1 — снять)
+    void        *s_curveget, *cur_curve;                                               // 0x3a0 0x3a8 window corner shape
+    void       (*tags)(void *conn, void **wins, u64 mask, int clear);                  // 0x3b0 set_window_list_tags (one window; clear=1 removes)
     void        *str_circ;                                                              // 0x3b8 "circular"
-    // configure через приложение (native_hooks §1): уведомление WS владельцу окна, модуль hyprforce применяет
+    // Application configure (native_hooks section 1): WS notifies window owner; hyprforce module applies it
     void       (*post)(void *conn, unsigned type, const void *data, unsigned len);      // 0x3c0 WSPostNotificationToConnection
     void      *(*owner)(void *win);                                                     // 0x3c8 CGXWindowGetOwner
     void        *s_arm;                                                                 // 0x3d0 setAutoresizingMask:
-    // невидимая системная тень override-ом (beyond_bounds.md §1.7): WS сам держит её невидимой при любой
-    // смене активности, клип рисования окна остаётся раздутым под наши кольцо/тень
+    // Invisible system shadow via override (beyond_bounds.md section 1.7): WS keeps it invisible across
+    // activity changes, while the window drawing clip stays expanded for our ring/shadow
     void       (*wm_shadow)(void *win, const void *act, const void *inact);             // 0x3d8 WSWindowSetWindowManagerShadowProperties
     void       (*sh_inval)(void *conn, void *win);                                      // 0x3e0 WSWindowInvalidateShadowFrame
     void       (*sh_sched)(void *win, void *conn);                                      // 0x3e8 CGXWindow::invalidate_shadow_and_schedule_update
@@ -159,7 +159,7 @@ _Static_assert(__builtin_offsetof(struct ctx, pending_edge_generation) == 0x458,
 _Static_assert(sizeof(struct ctx) == 0x658, "ctx pending prepare extent");
 struct edge_lease { u32 wid, on; double generation, expires; }; // on:1=device/prepare,3=ACKed grant
 _Static_assert(512 + CH_NW * (sizeof(struct edge_state) + sizeof(struct edge_lease)) <= 16384, "edge mapping overflow");
-_Static_assert(sizeof(struct ctx) <= 0x800, "ctx заходит на P8_TAB");
+_Static_assert(sizeof(struct ctx) <= 0x800, "ctx overlaps P8_TAB");
 _Static_assert(__builtin_offsetof(struct ctx, s_shpathget) == 0x330, "ctx");
 _Static_assert(__builtin_offsetof(struct ctx, order) == 0x338, "ctx");
 _Static_assert(__builtin_offsetof(struct ctx, cb) == 0x380, "ctx");
@@ -289,7 +289,7 @@ static void live_edge_client(struct ctx *c, struct ch_win *w, int on) {
 static inline double dabs(double x) { return x < 0 ? -x : x; }
 static inline int finite(double x) { return x == x && dabs(x) < 1e7; }
 
-// ── кривые ─────────────────────────────────────────────────────────────────
+// Curves
 static double bezier_y(const struct ch_curve *c, double x) {      // hyprutils getYForPoint
     if (x >= 1.0) return 1.0;
     if (x <= 0.0) return 0.0;
@@ -376,7 +376,7 @@ static void warp(struct ch_var *v, int n, const double *x) {        // setValueA
     v->active = 0; v->sv = 1.0; v->svel = 0.0;
 }
 
-// Продвинуть переменную; 1 — ещё анимируется.
+// Advance a variable; return 1 while still animating.
 static int step(struct ctx *c, struct ch_var *v, int n, double now) {
     if (!v->active) return 0;
     struct ch *ch = c->ch;
@@ -389,7 +389,7 @@ static int step(struct ctx *c, struct ch_var *v, int n, double now) {
         if (fin) { v->sv = 1.0; v->svel = 0.0; }
         y = v->sv;
     } else {
-        // время в double (Hyprland считает в целых мс: на 180 Гц не видно, на 60 Гц даёт неровность до ±4% — P25)
+        // Double time (Hyprland uses integer ms: negligible at 180 Hz; up to +/-4% unevenness at 60 Hz, P25)
         double pct = v->dur > 0 ? (now - v->t0) / v->dur : 1.0;
         fin = pct >= 1.0 || v->curve >= CH_NCURVE || ch->curve[v->curve].type != CV_BEZIER;
         y = fin ? 1.0 : bezier_y(&ch->curve[v->curve], pct);
@@ -399,7 +399,7 @@ static int step(struct ctx *c, struct ch_var *v, int n, double now) {
     return !fin;
 }
 
-// ── окна ───────────────────────────────────────────────────────────────────
+// Windows
 static void post_evt(struct ch *ch, u32 type, u32 wid, double now, double x, double y, double w, double h) {
     u32 hd = ch->h.evt_head;
     struct ch_evt *e = &ch->evt[hd % CH_NEVT];
@@ -486,9 +486,9 @@ static void put_xform(struct ctx *c, struct ch_win *w, double sx, double sy, dou
     c->ch->h.applied++;
 }
 
-// Серверная обрезка окна по видимой рамке B (глобальные pt): содержимое 1:1 от левого верхнего
-// угла, лишнее справа/снизу отрезано — как uv-обрезка Hyprland при resize. on=0 — снять.
-// conn = владелец окна: тогда сервер не заводит «чужой» override.
+// Server window clip to visible frame B (global pt): content is 1:1 from the top-left corner,
+// cropped on the right/bottom, like Hyprland UV cropping on resize. on=0 removes it.
+// conn = window owner: prevents the server from creating a foreign override.
 static void put_clip(struct ctx *c, struct ch_win *w, void *win, int on, double x, double y, double ww, double hh) {
     if (!on && !w->clipped) return;
     if (on && w->clipped && dabs(x - w->clip[0]) < 0.25 && dabs(y - w->clip[1]) < 0.25 &&
@@ -508,14 +508,14 @@ static void put_clip(struct ctx *c, struct ch_win *w, void *win, int on, double 
 
 static void put_identity(struct ctx *c, struct ch_win *w) { put_xform(c, w, 1.0, 1.0, 0.0, 0.0); }
 
-// ── П4: маска видимой рамки B на слое Hosting CA-дерева окна (compositor.md §1б, §3) ─────────────────────
-// Маска едет вместе с окном (трансформ/Space-переход), скругляется и сглаживается CA; экранный клип этого не умел.
+// P4: visible frame B mask on Hosting layer in window CA tree (compositor.md sections 1b, 3)
+// Mask moves with the window (transform/Space transition), rounded and antialiased by CA; screen clip could not.
 struct rect4 { double x, y, w, h; };
 typedef void *(*msg0_t)(void *, void *);
 typedef void (*msgp_t)(void *, void *, void *);
 typedef void (*msgd_t)(void *, void *, double);
 typedef void (*msgr_t)(void *, void *, struct rect4);
-typedef struct rect4 (*msgb_t)(void *, void *);     // CGRect-возврат: HFA в d0–d3 (arm64, без stret)
+typedef struct rect4 (*msgb_t)(void *, void *);     // CGRect return: HFA in d0-d3 (arm64, no stret)
 
 static void layers_commit(struct ctx *c, void *tx) {
     c->tx_dtor(tx);
@@ -573,32 +573,32 @@ static void restore_mask(struct ctx *c, struct ch_win *w, void *H) {
     s->original_mask = 0; s->mask_set = 0;
 }
 
-// Слой держится у ВЕРХНЕГО края родителя (ось Y слоёв окна — вверх): WS меняет bounds Hosting/Server root в
-// ingestion на кадр позже нашего тика, и маска/кольца, отсчитанные от нижнего края, на этот кадр съезжали на
-// величину изменения высоты. kCALayerMinYMargin (8) — CA сам двигает их в той же транзакции (resizeSublayers…
-// и маску @0x18a5fde54, native_hooks §3.3; sync_protocol.md).
+// Anchor the layer to its parent's TOP edge (window layer Y axis is upward): WS updates Hosting/Server root bounds
+// during ingestion one frame after our tick; masks/rings measured from the bottom moved for that frame
+// by the height change. kCALayerMinYMargin (8) makes CA move them in the same transaction (resizeSublayers...
+// and mask @0x18a5fde54, native_hooks section 3.3; sync_protocol.md).
 typedef void (*msgu_t)(void *, void *, unsigned);
 static void keep_top(struct ctx *c, void *L) {
     if (L && c->s_arm) ((msgu_t)c->msg)(L, c->s_arm, 8);
 }
 
-// on: показать окно только в (0,0,cw,chh) от левого верхнего угла буфера; off: снять маску.
+// on: show only (0,0,cw,chh) from buffer's top-left corner; off: remove mask.
 static void put_mask(struct ctx *c, struct ch_win *w, void *win, int on, double cw, double chh) {
     struct ch *ch = c->ch;
     if (!on && !w->mask) return;
     if (!mask_ready(c)) return;
     void *cwc = *(void **)((char *)win + 0x18);
     void *H = cwc ? *(void **)((char *)cwc + 0x98) : 0;          // "Hosting"
-    void *cactx = cwc ? *(void **)((char *)cwc + 0x38) : 0;      // CAContext окна
+    void *cactx = cwc ? *(void **)((char *)cwc + 0x38) : 0;      // window CAContext
     if (!H || !cactx) { ch->h.mask_errs++; return; }
-    // Высота — у самого слоя, не у формы окна: слой меняет размер на кадр-два позже формы (приложение уже
-    // прислало новый размер). По высоте формы маска уходила за слой — окно пропадало на кадр [V rec2 f_010].
+    // Use the layer's own height, not the window shape: layer resizes one or two frames after the shape
+    // (application already sent the new size). Shape height moved the mask beyond the layer, hiding a frame [V rec2 f_010].
     struct rect4 hb = on ? ((msgb_t)c->msg)(H, c->s_bounds) : (struct rect4){0, 0, 0, 0};
     if (on && !(hb.h >= 1 && finite(hb.h) && finite(hb.y))) { ch->h.mask_errs++; return; }
     if (on && w->mask && dabs(cw - w->mrect[0]) < 0.25 && dabs(chh - w->mrect[1]) < 0.25 &&
         dabs(hb.y - w->mhost[0]) < 0.25 && dabs(hb.h - w->mhost[1]) < 0.25) return;
-    unsigned long long tx[4] = {0, 0, 0, 0};                     // {CFArray*, disableActions, began} — 16 байт
-    c->tx_ctor(tx, 1);                                           // бит0: disableActions
+    unsigned long long tx[4] = {0, 0, 0, 0};                     // {CFArray*, disableActions, began}: 16 bytes
+    c->tx_ctor(tx, 1);                                           // bit0: disableActions
     c->tx_add(tx, cactx);
     if (on) {
         void *M = (void *)w->mask;
@@ -624,8 +624,8 @@ static void put_mask(struct ctx *c, struct ch_win *w, void *win, int on, double 
                 }
                 s->mask_set = 1;
             }
-            double hh = chh < hb.h ? chh : hb.h;                  // буфер видим от верхнего края слоя
-            double y = ch->h.mask_flip ? hb.y + hb.h - hh : hb.y;  // ось Y слоя вверх [V rec2 f_011]
+            double hh = chh < hb.h ? chh : hb.h;                  // buffer visible from layer's top edge
+            double y = ch->h.mask_flip ? hb.y + hb.h - hh : hb.y;  // layer Y axis upward [V rec2 f_011]
             struct rect4 f = {hb.x, y, cw, hh};
             ((msgr_t)c->msg)(M, c->s_frame, f);
             ((msgd_t)c->msg)(M, c->s_radius, w->radius > 0 ? w->radius : 18.0);
@@ -645,10 +645,10 @@ static int use_mask(struct ctx *c, struct ch_win *w) {
     return c->ch->h.use_mask && (!c->ch->h.mask_only || c->ch->h.mask_only == w->wid);
 }
 
-// ── П6: рамка фокуса — слои в Server root CA-дерева окна (compositor.md §3 п.3) ─────────────────────────
-// Неактивное кольцо: CALayer с borderWidth/borderColor/cornerRadius. Активное: CAGradientLayer (цвета градиента
-// Hyprland, запечённые в OkLab демоном), маска — такое же кольцо; кроссфейд = opacity активного слоя.
-// Кольцо — снаружи видимой рамки B (Hyprland: рамка снаружи контента), внешний радиус = radius + width.
+// P6: focus border: layers in Server root of window CA tree (compositor.md section 3 item 3)
+// Inactive ring: CALayer with borderWidth/borderColor/cornerRadius. Active ring: CAGradientLayer (Hyprland gradient
+// colors baked in OkLab by daemon), masked with the same ring; crossfade = active layer opacity.
+// Ring outside visible frame B (Hyprland borders are outside content); outer radius = radius + width.
 struct pt2 { double x, y; };
 typedef void (*msgf_t)(void *, void *, float);
 typedef void (*msgpt_t)(void *, void *, struct pt2);
@@ -710,7 +710,7 @@ static void *ring(struct ctx *c, double wd, double r, void *color) {
     ((msgd_t)c->msg)(L, c->s_bwidth, wd);
     ((msgp_t)c->msg)(L, c->s_bcolor, color);
     ((msgd_t)c->msg)(L, c->s_radius, r);
-    void *cv = c->cur_curve ? c->cur_curve : c->str_cont;     // форма угла — как у самого окна (Hosting)
+    void *cv = c->cur_curve ? c->cur_curve : c->str_cont;     // corner shape matches the window itself (Hosting)
     if (cv) ((msgp_t)c->msg)(L, c->s_curve, cv);
     return L;
 }
@@ -720,7 +720,7 @@ static void border_make(struct ctx *c, struct ch_win *w, void *root) {
     struct ch_deco *d = &c->ch->deco;
     double r = d->radius + d->width;
     void *ci = c->srgb(d->inact[0], d->inact[1], d->inact[2], d->inact[3]);
-    double band = (d->sys_off == 1 ? 0.0 : d->width) + d->inset10 / 10.0;   // как в border_win: наружу + внутрь
+    double band = (d->sys_off == 1 ? 0.0 : d->width) + d->inset10 / 10.0;   // as in border_win: outward + inward
     if (band < 0.5) band = d->width;
     void *I = ci ? ring(c, band, r, ci) : 0;
     if (ci) c->release(ci);
@@ -749,8 +749,8 @@ static void border_make(struct ctx *c, struct ch_win *w, void *root) {
     w->bl_in = (u64)I; w->bl_act = (u64)G; w->bop = 0; w->bframe[2] = -1;
 }
 
-// Снять рамку и маску окна (слот освобождается). cactx может быть 0 (окна уже нет): тогда транзакция без
-// контекста — только чтобы release/removeFromSuperlayer шли внутри сбалансированной транзакции WS.
+// Remove window border and mask (freeing slot). cactx may be 0 (window gone): use a context-free transaction
+// only to keep release/removeFromSuperlayer inside a balanced WS transaction.
 static void layers_drop(struct ctx *c, struct ch_win *w, void *cactx, void *H) {
     if (!w->bl_in && !w->bl_act && !w->bl_sh && !w->bl_fill && !w->mask) return;
     if (!mask_ready(c)) return;
@@ -769,10 +769,10 @@ static void layers_drop(struct ctx *c, struct ch_win *w, void *cactx, void *H) {
     if (cactx && c->by_id) decoration_damage(c, c->by_id(w->wid));
 }
 
-// WSShadowProperties (0x40): sigma, density, rimDens, rimRad, innerDens, innerRad, offY (float), flags, …, маска
-// override @+0x38 [V сеттер копирует ldp q0..q3; beyond_bounds §1.7.1]. on: sigma 23 (frame_bounds +65 pt),
-// density 0.001 (порог «тень включена» — клип не схлопывается; 0.26/255 — невидимо), контур Tahoe 0, маска 0xfff —
-// AppKit не перебьёт. off: восстановить ровно прежние active/inactive override, не сбрасывать чужую настройку.
+// WSShadowProperties (0x40): sigma, density, rimDens, rimRad, innerDens, innerRad, offY (float), flags, ..., mask
+// override @+0x38 [V setter copies ldp q0..q3; beyond_bounds section 1.7.1]. on: sigma 23 (frame_bounds +65 pt),
+// density 0.001 (shadow-enabled threshold keeps clip expanded; 0.26/255 is invisible), Tahoe outline 0, mask 0xfff:
+// AppKit cannot override it. off: restore exact prior active/inactive overrides, preserving others' settings.
 struct ws_shadow { float f[14]; u32 mask, pad; };
 static void shadow_override(struct ctx *c, struct ch_win *w, void *win, int on) {
     struct saved_window *old = saved_window(c, w);
@@ -795,8 +795,8 @@ static void shadow_override(struct ctx *c, struct ch_win *w, void *win, int on) 
 
 static void radius_restore(struct ctx *c, struct ch_win *w, void *win) {
     if ((w->rset & 4) && win && c->wm_shadow) shadow_override(c, w, win, 0);
-    if ((w->rset & 1) && win && c->dbg_clear) c->dbg_clear(win);    // радиус приложения снова в силе
-    if ((w->rset & 2) && win && c->tags) { void *a[1] = {win}; c->tags(0, a, 8, 1); }   // тень/контур Tahoe — назад
+    if ((w->rset & 1) && win && c->dbg_clear) c->dbg_clear(win);    // application radius takes effect again
+    if ((w->rset & 2) && win && c->tags) { void *a[1] = {win}; c->tags(0, a, 8, 1); }   // restore Tahoe shadow/outline
     w->rset = 0;
 }
 
@@ -813,10 +813,10 @@ static void slot_free(struct ctx *c, struct ch_win *w, void *win) {
 }
 
 typedef void (*msgi_t)(void *, void *, void *, unsigned);
-#define SH_E 64.0              // ширина кольца-маски тени: тень видна до SH_E pt наружу (range 34 + offset 10 + запас)
+#define SH_E 64.0              // shadow ring mask width: visible up to SH_E pt outward (range 34 + offset 10 + margin)
 
-// Тень: слой под системным Shadow (индекс 0 в Server root); рисуется только shadowPath; маска — кольцо,
-// внутренний край которого = бокс с рамкой, поэтому внутри окна тени нет (как Hyprland).
+// Shadow layer under system Shadow (index 0 in Server root); only shadowPath draws; ring mask
+// has inner edge at bordered box, leaving no shadow inside the window (like Hyprland).
 static void shadow_make(struct ctx *c, struct ch_win *w, void *root, void *shadow_sys) {
     struct ch_deco *d = &c->ch->deco;
     void *S = ((msg0_t)c->msg)(c->c_layer, c->s_layer);
@@ -825,7 +825,7 @@ static void shadow_make(struct ctx *c, struct ch_win *w, void *root, void *shado
     void *black = c->black;
     ((msgp_t)c->msg)(S, c->s_shcolor, black);
     ((msgd_t)c->msg)(S, c->s_shrad, d->srad);
-    struct pt2 off = {0, -d->soff};                     // ось Y слоя вверх: вниз = −
+    struct pt2 off = {0, -d->soff};                     // layer Y axis upward: downward = negative
     ((msgpt_t)c->msg)(S, c->s_shoff, off);
     ((msgf_t)c->msg)(S, c->s_shop, 0.0f);
     void *M = ring(c, SH_E, d->radius + d->width + SH_E, black);
@@ -834,15 +834,15 @@ static void shadow_make(struct ctx *c, struct ch_win *w, void *root, void *shado
     ((msg0_t)c->msg)(S, c->s_retain);
     ((msgi_t)c->msg)(root, c->s_insert, S, 0);
     w->bl_sh = (u64)S; w->sop = -1;
-    if (d->sys_off && shadow_sys) {                  // системная тень и контур окна Tahoe (borderWidth 1 у Shadow [V])
+    if (d->sys_off && shadow_sys) {                  // system shadow and Tahoe window outline (Shadow borderWidth 1 [V])
         ((msgf_t)c->msg)(shadow_sys, c->s_shop, 0.0f);
         ((msgd_t)c->msg)(shadow_sys, c->s_bwidth, 0.0);
     }
 }
 
 typedef float (*msgfr_t)(void *, void *);
-// Свойство-float слоя → to: CABasicAnimation от текущего видимого значения (presentationLayer — ретаргет посреди
-// хода без скачка) по cubic-bezier из конфига; модельное значение = to. Внутри открытой транзакции WS.
+// Animate layer float property to target using CABasicAnimation from current presentationLayer value (smooth
+// mid-motion retarget), with configured cubic-bezier; model value = to. Inside an open WS transaction.
 static void fade_to(struct ctx *c, void *L, void *key, void *getsel, void *setsel, double to, double dur, const double *bz) {
     if (!L) return;
     void *P = c->s_pres ? ((msg0_t)c->msg)(L, c->s_pres) : 0;
@@ -921,10 +921,10 @@ static double ring_scale(struct ch_win *w) {
     return sx > 0.02 && sy > 0.02 && dabs(sx - sy) < 1e-4 * sx ? sx : 1.0;
 }
 
-// Уборка следов прошлых установок движка (их слоты потеряны при переустановке, слои остались в дереве окна:
-// «лишнее кольцо старой геометрии», «два активных кольца», чужая маска на Hosting). В Server root от WS — только
-// Shadow; снимаем только слои с нашим именем. Тип/ширина обводки не доказывают владение:
-// приложения тоже используют CAGradientLayer/CAShapeLayer и свои маски.
+// Clean traces of earlier engine installs (slots lost on reinstall, layers left in window tree:
+// extra ring with old geometry, two active rings, foreign Hosting mask). WS only adds Shadow to Server root;
+// remove only layers bearing our name. Type/stroke width do not prove ownership:
+// applications also use CAGradientLayer/CAShapeLayer and their own masks.
 typedef unsigned long (*msgul_t)(void *, void *);
 static void sweep_old(struct ctx *c, struct ch_win *w, void *root, void *shadow_sys, void *H) {
     if (!c->s_subl || !c->s_count || !c->s_objat || !c->s_iskind) return;
@@ -962,7 +962,7 @@ static unsigned live_resize_projection(struct ctx *c,struct ch_win *w,double bw,
     return axes;
 }
 
-// Рамка одного окна на кадр te. 1 — кроссфейд ещё идёт.
+// One window's border for frame te. 1 = crossfade still running.
 static int border_win(struct ctx *c, struct ch_win *w, double te) {
     struct ch *ch = c->ch;
     struct ch_deco *d = &ch->deco;
@@ -983,16 +983,16 @@ static int border_win(struct ctx *c, struct ch_win *w, double te) {
         if(!effects_owns_corner(c,w))radius_restore(c, w, win);
         return 0;
     }
-    // радиус угла как в Hyprland (decoration.rounding) — отладочный радиус WS главнее радиуса приложения [V листинг
-    // resolved_corner_radius 187063110: бит 6 win+0x928 → win+0x858]; Telegram/Tahoe иначе 26, Ghostty 16
+    // Corner radius matches Hyprland (decoration.rounding): WS debug radius overrides application radius [V listing
+    // resolved_corner_radius 187063110: bit 6 win+0x928 -> win+0x858]; otherwise Telegram/Tahoe 26, Ghostty 16
     double configured_radius=effects_owns_corner(c,w)?0:d->radius;
     if (configured_radius >= 0 && c->dbg_radius && c->corner && dabs(c->corner(win) - configured_radius) > 0.01) {
         c->dbg_radius(win, configured_radius);
         w->rset |= 1;
     }
-    // системная тень и контур Tahoe — тегом DisableShadow (бит 3 `win+0x80`): WS сам держит их выключенными при
-    // любой смене активности (гашение свойств слоя Shadow он перезаписывал → контур появлялся/исчезал рывком)
-    if (d->sys_off != 1 && c->tags && (w->rset & 2)) {   // режим не «тег» — вернуть окну тень (и расширенный клип)
+    // Suppress system shadow and Tahoe outline through DisableShadow tag (bit 3 win+0x80): WS keeps them off across
+    // activity changes (it overwrote cleared Shadow properties, making the outline appear/disappear abruptly).
+    if (d->sys_off != 1 && c->tags && (w->rset & 2)) {   // mode is not "tag": restore window shadow (and expanded clip)
         void *a[1] = {win};
         c->tags(0, a, 8, 1);
         w->rset &= ~2u;
@@ -1002,8 +1002,8 @@ static int border_win(struct ctx *c, struct ch_win *w, double te) {
         c->tags(0, a, 8, 0);
         w->rset |= 2;
     }
-    // режим 3: override тени — один раз на окно; повторно, только если кто-то перезаписал итог (density active
-    // win+0x35c ≠ 0.001, практически не бывает при маске 0xfff)
+    // Mode 3: shadow override once per window; repeat only if someone overwrote the result (active density
+    // win+0x35c != 0.001, practically never with mask 0xfff).
     int ovr = d->sys_off == 3 && c->wm_shadow;
     if (ovr && (!(w->rset & 4) || dabs(*(float *)((char *)win + 0x35c) - 0.001f) > 0.0005)) {
         shadow_override(c, w, win, 1);
@@ -1016,14 +1016,14 @@ static int border_win(struct ctx *c, struct ch_win *w, double te) {
     double rin = c->corner ? c->corner(win) : d->radius;
     int rchg = dabs(rin - w->radius) > 0.01;
     if (rchg) w->radius = rin;
-    // Кроссфейд рамки/тени ведёт сам CA (fade_to): нам — только смена цели и заявки на перерисовку, пока он идёт
+    // CA runs border/shadow crossfade (fade_to); we only change targets and request redraw while running.
     double gt = focus_wid == d->focus ? 1.0 : 0.0;
     int tchg = !w->bl_in || w->act.g[0] != gt || style_changed;
     double op = gt;
     double sop = d->sh_on ? d->sop_in + (d->sop_act - d->sop_in) * gt : 0.0;
     double fend = w->act.t0 + (d->dur > d->sdur ? d->dur : d->sdur) + 2 * ch->h.period;
-    int an = te < fend;                              // CA-анимация идёт: каждый кадр — заявка на перерисовку
-    // бокс рамки в координатах окна: видимая рамка B от левого верхнего угла буфера (popin тянет A на B — тогда A)
+    int an = te < fend;                              // CA animation running: request redraw every frame
+    // Border box in window coordinates: visible B from buffer top-left (popin stretches A to B, so use A then)
     double bw = w->stretch || w->geo == 2 ? w->aw : w->size.v[0];
     double bh = w->stretch || w->geo == 2 ? w->ah : w->size.v[1];
     if (!(bw >= 1) || !(bh >= 1) || !finite(bw) || !finite(bh)) return an;
@@ -1038,8 +1038,8 @@ static int border_win(struct ctx *c, struct ch_win *w, double te) {
         if (hb.w >= 1 && finite(hb.w) && hb.w < bw) bw = hb.w;
         if (hb.h < bh) bh = hb.h;
     }
-    // кольцо: наружу на ow (= ширина рамки, как Hyprland; 0 — если клип окна узкий, режим «тег»), внутрь на ins
-    // (закрыть обводку, которую рисует само приложение); ширина полосы кольца = ow + ins
+    // Ring extends outward by ow (= border width like Hyprland; 0 with narrow window clip in tag mode), inward by ins
+    // (covering the application's own outline); ring band width = ow + ins
     double wd = d->width, ins = d->inset10 / 10.0;
     double ow = d->sys_off == 1 ? 0.0 : wd;
     if (d->sys_off == 1 && ins > wd) ins = wd;
@@ -1061,14 +1061,14 @@ static int border_win(struct ctx *c, struct ch_win *w, double te) {
                 dabs(actual.w-fr.w) > 0.01 || dabs(actual.h-fr.h) > 0.01;
     int moved = !w->bl_in || detached || drift || rchg || style_changed || dabs(fr.x - w->bframe[0]) > 0.01 || dabs(fr.y - w->bframe[1]) > 0.01 ||
                 dabs(fr.w - w->bframe[2]) > 0.01 || dabs(fr.h - w->bframe[3]) > 0.01;
-    // пустая полоса: видимая рамка B больше слоя с буфером (приложение ещё не перерисовалось в новый размер)
+    // Empty band: visible B exceeds buffer layer (application has not yet redrawn at new size)
     int strip = w->geo != 2 && w->fill && c->c_shape && c->path_mut && !w->stretch && (bw > hb.w + 0.5 || bh > hb.h + 0.5);
     double fk[5] = {strip ? bw : 0, strip ? bh : 0, strip ? hb.w : 0, strip ? hb.h : 0, (double)w->fill};
     int fchg = 0;
     for (int i = 0; i < 5; i++) fchg |= dabs(fk[i] - w->fkey[i]) > 0.01;
     if (!strip && !w->bl_fill) fchg = 0;
-    // режим 2: окно остаётся «теневым» (клип отрисовки расширен на радиус тени — beyond_bounds.md §1), а саму тень
-    // и контур Tahoe гасим на слое Shadow, как только WS их вернёт (переприменяет при смене активности)
+    // Mode 2: window retains shadow status (drawing clip expanded by shadow radius, beyond_bounds.md section 1),
+    // but suppress shadow and Tahoe outline on Shadow layer whenever WS restores them (on activity changes).
     void *shs = *(void **)((char *)cwc + 0x88);
     int fixsh = (d->sys_off == 2 || (d->sys_off == 3 && !c->wm_shadow)) && shs && c->s_shopget &&
                 (((msgfr_t)c->msg)(shs, c->s_shopget) > 0.001f || ((msgdr_t)c->msg)(shs, c->sel("borderWidth")) > 0.001);
@@ -1080,10 +1080,10 @@ static int border_win(struct ctx *c, struct ch_win *w, double te) {
     c->tx_ctor(tx, 1);
     c->tx_add(tx, cactx);
     if (!w->bl_in) {
-        // круговые углы и у окна (Hosting), и у колец: у continuous внешняя и внутренняя кривые кольца не
-        // концентричны — на углах кольцо «жирнее» прямых участков [жалоба 13:15]
-        // форма угла кольца — как у самого окна (Hosting): WS держит свою форму угла окна, а содержимое лежит
-        // поверх кольца — видна полоса между краем окна и внешним краем кольца; при разной форме угол «жирнее» [V 13:55]
+        // Circular corners on both window (Hosting) and rings: continuous inner/outer ring curves are not
+        // concentric, making corners thicker than straight sections [report 13:15].
+        // Ring corner shape matches the window (Hosting): WS maintains window corner shape; content is above the ring,
+        // exposing a band between window and outer ring edge; mismatched shapes thicken corners [V 13:55].
         c->cur_curve = c->s_curveget ? ((msg0_t)c->msg)(H, c->s_curveget) : 0;
         sweep_old(c, w, root, *(void **)((char *)cwc + 0x88), H);
         border_make(c, w, root);
@@ -1111,7 +1111,7 @@ static int border_win(struct ctx *c, struct ch_win *w, double te) {
             double band = ow + ins; if (band < 0.5 * scale) band = wd * scale;
             ((msgd_t)c->msg)((void *)w->bl_in, c->s_bwidth, band);
             if (M) ((msgd_t)c->msg)(M, c->s_bwidth, band);
-            double ro = w->radius + ow;                              // внешний = радиус окна + выступ рамки (spec §5.1)
+            double ro = w->radius + ow;                              // outer = window radius + border protrusion (spec section 5.1)
             ((msgd_t)c->msg)((void *)w->bl_in, c->s_radius, ro);
             if (M) ((msgd_t)c->msg)(M, c->s_radius, ro);
             w->bframe[0] = fr.x; w->bframe[1] = fr.y; w->bframe[2] = fr.w; w->bframe[3] = fr.h;
@@ -1132,7 +1132,7 @@ static int border_win(struct ctx *c, struct ch_win *w, double te) {
                 ((msg0_t)c->msg)(F, c->s_retain);
                 keep_top(c, F);
                 if (c->str_eo) ((msgp_t)c->msg)(F, c->s_fillrule, c->str_eo);
-                ((msgi_t)c->msg)(root, c->s_insert, F, w->bl_sh ? 1 : 0);     // над своей тенью, под окном
+                ((msgi_t)c->msg)(root, c->s_insert, F, w->bl_sh ? 1 : 0);     // above our shadow, below window
                 w->bl_fill = (u64)F;
             }
         }
@@ -1151,10 +1151,10 @@ static int border_win(struct ctx *c, struct ch_win *w, double te) {
                 if (r > bh / 2) r = bh / 2;
                 struct rect4_ rb = {0, 0, bw, bh}, ra = {hb.x - bb.x, hb.y - bb.y, hb.w, hb.h};
                 c->path_addrr(path, 0, rb, r, r);
-                double ar = w->radius;                                // буфер скруглён WS (Hosting) — вырезать
-                if (ar > hb.w / 2) ar = hb.w / 2;                     // так же, иначе на стыке «зарубки»
+                double ar = w->radius;                                // WS rounds buffer (Hosting); cut it out
+                if (ar > hb.w / 2) ar = hb.w / 2;                     // use same rounding to avoid notches at the join
                 if (ar > hb.h / 2) ar = hb.h / 2;
-                c->path_addrr(path, 0, ra, ar, ar);                   // even-odd: буфер вырезан
+                c->path_addrr(path, 0, ra, ar, ar);                   // even-odd: buffer cut out
                 ((msgp_t)c->msg)(F, c->s_path, path);
                 c->path_rel(path);
             }
@@ -1191,8 +1191,8 @@ static int border_win(struct ctx *c, struct ch_win *w, double te) {
     return an;
 }
 
-// Подложка: окно-фон под окном приложения (deco/hyprdeco). Видна только пока окно анимируется:
-// ставится ровно на видимую рамку B (сплошной цвет — масштаб без потерь), альфа = альфа окна.
+// Backdrop: background window below application window (deco/hyprdeco). Visible only during animation:
+// placed exactly at visible B (solid color scales without loss), with the same alpha as the window.
 static int effects_render_win(struct ctx *c,struct ch_win *w,double now) {
     if(!effects_ready(c))return 0;
     const struct hy_effects_api *a=c->effects_api;unsigned i=(unsigned)(w-c->ch->win);
@@ -1258,15 +1258,15 @@ static void put_under(struct ctx *c, struct ch_win *w, int on, double bx, double
     if (!w->under) return;
     void *uw = c->by_id(w->under);
     if (!uw) { w->under = 0; return; }
-    if (!on) w->ub[2] = -1;                              // следующий показ — пересчитать обрезку
-    // видна только пустая полоса: рамка B минус видимая часть буфера (bx,by,cw,chh) — под
-    // полупрозрачным окном подложки нет, она не затемняет его
+    if (!on) w->ub[2] = -1;                              // recompute clip on next show
+    // Only the empty band is visible: B minus visible buffer (bx,by,cw,chh); no backdrop under
+    // a translucent window, so it does not darken it.
     if (on && cw >= bw - 0.5 && chh >= bh - 0.5) on = 0;
     double na = on ? a : 0.0;
-    // регионы — только когда полоса изменилась (P13: раньше 3 CGRegion + серверная обрезка каждый кадр)
+    // Regions only when the band changes (P13: previously 3 CGRegions + server clip each frame)
     if (on && dabs(bx - w->ub[0]) < 0.25 && dabs(by - w->ub[1]) < 0.25 && dabs(bw - w->ub[2]) < 0.25 &&
         dabs(bh - w->ub[3]) < 0.25 && dabs(cw - w->ub[4]) < 0.25 && dabs(chh - w->ub[5]) < 0.25) {
-        /* обрезка подложки та же */
+        /* backdrop clip unchanged */
     } else if (on) {
         w->ub[0] = bx; w->ub[1] = by; w->ub[2] = bw; w->ub[3] = bh; w->ub[4] = cw; w->ub[5] = chh;
         rect rb = {bx, by, bw, bh}, ra = {bx, by, cw, chh};
@@ -1317,14 +1317,14 @@ static struct ch_win *slot(struct ch *ch, u32 wid, int alloc) {
     volatile char *p = (volatile char *)free_;
     for (unsigned i = 0; i < sizeof *free_; i++) p[i] = 0;
     free_->wid = wid; free_->used = 1;
-    free_->m[0] = free_->m[1] = 1.0;           // считаем, что трансформа нет (identity)
+    free_->m[0] = free_->m[1] = 1.0;           // assume no transform (identity)
     free_->alpha.v[0] = free_->alpha.g[0] = free_->alpha.b[0] = 1.0;
     free_->cur_alpha = 1.0;
     return free_;
 }
 
-// Окно — на рабочий стол sid. Последовательность серверного обработчика __XMoveWindowsToManagedSpace [V листинг
-// 18719d3c8]: PKGSpaceForID(sid)->+0x18 (managed space) → список окон → PKGWindowsMoveToManagedSpace → free узлов {item, next}.
+// Move window to desktop sid. Follow server handler __XMoveWindowsToManagedSpace [V listing
+// 18719d3c8]: PKGSpaceForID(sid)->+0x18 (managed space) -> window list -> PKGWindowsMoveToManagedSpace -> free {item, next} nodes.
 static void space_move(struct ctx *c, unsigned wid, u64 sid) {
     struct ch *ch = c->ch;
     if (!c->space_for_id || !c->wlist || !c->wmove || !c->xfree) { record_error(ch,OP_SPACE,wid,ERR_SPACE_ABI); return; }
@@ -1450,7 +1450,7 @@ static void apply_cmd(struct ctx *c, struct ch_cmd *k, double now) {
         space_move(c, k->wid, (u64)k->x);
         return;
     }
-    if (k->op == OP_CFG) {                           // владелец окна = как WS сам шлёт 0x542 (@186d441ac)
+    if (k->op == OP_CFG) {                           // window owner: same as WS sending 0x542 (@186d441ac)
         void *win = c->by_id(k->wid);
         struct ch_win *nw = slot(ch, k->wid, 0);
         if (nw && nw->geo == 2) {
@@ -1489,19 +1489,19 @@ static void apply_cmd(struct ctx *c, struct ch_cmd *k, double now) {
         }
         return;
     }
-    if (k->op == OP_SNAP) {                          // подкладка-снимок на время хода (только для сжатия)
+    if (k->op == OP_SNAP) {                          // snapshot backdrop during motion (shrinking only)
         char *win = c->by_id(k->wid);
         struct ch_win *sw = slot(c->ch, k->wid, 0);
         int have = 0;
         for (int i = 0; i < P8_N; i++) have |= P8_TAB(c)[i].live && P8_TAB(c)[i].pending == 2 && P8_TAB(c)[i].src == k->wid;
         if (win && sw && !have && c->ch->h.reserved[0] & 1 && ((*(u64 *)(win + 0x928) >> 44) & 1)) {
-            u32 was = c->in_cb; c->in_cb = 1;        // свой order не должен будить колбэк закрытия
+            u32 was = c->in_cb; c->in_cb = 1;        // our order must not wake close callback
             p8_make(c, win, 2, now);
             c->in_cb = was;
         }
         return;
     }
-    if (k->op == OP_RAISE) {                         // серверный порядок без проверки прав и без активации [V 18705d11c]
+    if (k->op == OP_RAISE) {                         // server ordering without permission checks or activation [V 18705d11c]
         void *win = c->by_id(k->wid);
         void *cn = win ? *(void **)((char *)win + 0x30) : 0;
         if (cn && c->order && (!k->flags || c->by_id(k->flags))) {
@@ -1571,8 +1571,8 @@ static void apply_cmd(struct ctx *c, struct ch_cmd *k, double now) {
             if (w->wait == 1) w->wait = 0;
             put_plain(c, w, win); // discard only our previous visual transform/crop, never another app's state
         }
-        // покоящееся окно без трансформа синхронизируется с фактической рамкой (его могли
-        // подвинуть); если окно держит видимую рамку (settling), видимое положение — переменные
+        // An idle window without transform syncs to its actual frame (it may have moved);
+        // if holding its visible frame (settling), variables define the visible position.
         double a_pos[2] = {w->ax, w->ay}, a_size[2] = {w->aw, w->ah};
         int moving = (w->pos.active | w->size.active) && !w->held;
         if (!w->settling && (!native || w->geo != 2)) {
@@ -1603,16 +1603,16 @@ static void apply_cmd(struct ctx *c, struct ch_cmd *k, double now) {
             }
         }
         w->radius = c->corner ? c->corner(win) : 0;
-        w->a0[0] = w->aw; w->a0[1] = w->ah;           // кадр приложения на старте: до configure
+        w->a0[0] = w->aw; w->a0[1] = w->ah;           // application frame at start: before configure
         // Live 1:1 content already covers a shrinking target: no new
         // application buffer is needed before that motion can start.
         int missing_buffer = (k->flags & F_STRETCH) ?
             (dabs(w->aw-k->w)>2 || dabs(w->ah-k->h)>2) :
             (w->aw+2<k->w || w->ah+2<k->h);
         if (!native && k->op == OP_GEOM && !moving && ch->h.hold_max >= 0 && missing_buffer) {
-            // Как Wayland: движение из покоя стартует, когда приложение уже прислало кадр нового размера —
-            // тогда с первого кадра анимации видно новое содержимое, старое не растягивается. Уже едущее
-            // окно не держим: ретаргет без остановки (S6 — иначе «ступеньки» на автоповторе биндов).
+            // Like Wayland: motion from rest starts after the application supplies a frame at the new size,
+            // so new content is visible from animation frame one, without stretching old content. Do not hold
+            // an already moving window: retarget without stopping (S6: otherwise key autorepeat causes steps).
             w->held = 1;
             w->needs = missing_buffer;
             ch->h.holding = 1;
@@ -1630,16 +1630,16 @@ static void apply_cmd(struct ctx *c, struct ch_cmd *k, double now) {
         if(!native && !(k->flags & F_STRETCH))
             w->geo=(k->flags & F_EDGE) && live_edge_granted(c,w) ? 3 : 1;
         if(terminal){w->geo=4;w->moved=0;}
-        // warp или цель не сдвинулась (анимация не стартовала): сразу сверка рамки — буфер в боксе
-        // (обрезка/край), без ложного EV_MOVED у окна, стоящего на своём минимуме
+        // warp or unchanged target (animation did not start): reconcile frame immediately, buffer in box
+        // (clip/edge), avoiding false EV_MOVED for a window at minimum size.
         w->settling = k->op == OP_WARP || !(w->pos.active | w->size.active);
-        // ретаргет посреди popin (следующее окно поделило плитку) не переключает показ «растянуто → 1:1»
-        // посреди хода — иначе прыжок масштаба [daily_bugs F3]
+        // Retargeting during popin (another window split the tile) must not switch stretched -> 1:1
+        // mid-motion, which would cause a scale jump [daily_bugs F3].
         if (k->flags & F_STRETCH) w->stretch = 1;
         else if (!(w->stretch && w->size.active)) w->stretch = 0;
         if (!native && k->op == OP_GEOM && (k->flags & F_WAIT)) { w->wait = 1; w->wait_t = now; }
-        // сосед открывающегося окна: стоит на старте, пока новое окно не пришлёт кадр размера плитки (≤150 мс),
-        // и стартует с его popin в одном кадре — одна волна (как Hyprland: configure до показа)
+        // Neighbor of an opening window waits at start until new window supplies a tile-sized frame (<=150 ms),
+        // then starts in the same frame as its popin: one wave (like Hyprland: configure before showing).
         if (k->op == OP_GEOM && (k->flags & F_HOLD) && !moving) {
             // A new opening batch must not stop an already visible moving neighbor.
             // Its current spring retargets continuously; only resting neighbors join the hold.
@@ -1657,7 +1657,7 @@ static void apply_cmd(struct ctx *c, struct ch_cmd *k, double now) {
     }
 }
 
-// Один кадр окна. 1 — окну ещё нужны тики.
+// One window frame. 1 = window still needs ticks.
 static int frame_win(struct ctx *c, struct ch_win *w, double now) {
     struct ch *ch = c->ch;
     struct edge_lease *lease=live_edge_lease(c,w);
@@ -1678,8 +1678,8 @@ static int frame_win(struct ctx *c, struct ch_win *w, double now) {
         return 0;
     }
     if (w->wait == 1 && !w->held) {
-        // Открытие как в Hyprland: окно показывается, когда приложение уже нарисовало кадр размера плитки
-        // (там размер известен клиенту до первого кадра). До того — невидимо, рамка и альфа стоят на старте.
+        // Opening like Hyprland: show window after application draws a tile-sized frame
+        // (there the client knows size before first frame). Until then invisible, frame and alpha at start.
         void *win;
         if (!actual(c, w, &win)) { post_evt(ch, EV_GONE, w->wid, now, 0, 0, 0, 0); slot_free(c, w, 0); return 0; }
         int ok = dabs(w->aw - w->size.g[0]) <= ch->h.settle_px && dabs(w->ah - w->size.g[1]) <= ch->h.settle_px;
@@ -1694,7 +1694,7 @@ static int frame_win(struct ctx *c, struct ch_win *w, double now) {
     }
     int was = w->pos.active | w->size.active | w->alpha.active;
     int an;
-    if (w->held) {                                  // пачка ждёт кадров приложений: рамка стоит на старте,
+    if (w->held) {                                  // batch awaiting application frames: frame stays at start,
         an = 1;                                     // geometry and fade begin in the same frame
     } else {
         an = step(c, &w->pos, 2, now);
@@ -1749,7 +1749,7 @@ static int frame_win(struct ctx *c, struct ch_win *w, double now) {
         return an || pending;
     }
 
-    // стабильность буфера: A не менялась N тиков подряд — приложение закончило перерисовку
+    // Buffer stability: A unchanged for N consecutive ticks means application finished redrawing.
     if (dabs(w->ax - w->pa[0]) < 0.5 && dabs(w->ay - w->pa[1]) < 0.5 && dabs(w->aw - w->pa[2]) < 0.5 && dabs(w->ah - w->pa[3]) < 0.5)
         w->stable++;
     else { w->stable = 0; w->pa[0] = w->ax; w->pa[1] = w->ay; w->pa[2] = w->aw; w->pa[3] = w->ah; }
@@ -1791,19 +1791,19 @@ static int frame_win(struct ctx *c, struct ch_win *w, double now) {
         // continues to own B; identity is installed only when sampled A matches.
     }
     if (!an) {
-        // конец popin, а буфер ещё не размера плитки: держать растяжение, пока приложение рисует (буфер меняется),
-        // но не дольше ~150 мс стабильного буфера — иначе «растянуто → 1:1» за кадр [F3]
+        // Popin ended but buffer is not tile-sized: keep stretching while application draws (buffer changes),
+        // but for no more than ~150 ms with stable buffer; otherwise stretched -> 1:1 in one frame [F3].
         if (w->stretch && (dabs(w->aw - bw) > 1 || dabs(w->ah - bh) > 1) &&
             w->stable * ch->h.period < 0.15) {
             if (was) { w->done_t = now; post_evt(ch, EV_DONE, w->wid, now, w->ax, w->ay, w->aw, w->ah); }
-            w->settling = 1;                          // дальше — обычная сверка «буфер в боксе», без ложного EV_MOVED
+            w->settling = 1;                          // then normal buffer-in-box reconciliation, without false EV_MOVED
             an = 1;
             goto show;
         }
         w->stretch = 0;
         if (was) { w->done_t = now; w->settling = 1; post_evt(ch, EV_DONE, w->wid, now, w->ax, w->ay, w->aw, w->ah); }
         if (!w->settling) {
-            // покой: окно ушло с цели (приложение/система сами двинули) — сообщить демону один раз (S4)
+            // idle: window left target (application/system moved it); notify daemon once (S4)
             if (w->geo && !w->moved && (dabs(w->ax - w->pos.g[0]) > 1.5 || dabs(w->ay - w->pos.g[1]) > 1.5 ||
                                         dabs(w->aw - w->size.g[0]) > ch->h.settle_px || dabs(w->ah - w->size.g[1]) > ch->h.settle_px)) {
                 w->moved = 1;
@@ -1811,8 +1811,8 @@ static int frame_win(struct ctx *c, struct ch_win *w, double now) {
             }
             return 0;
         }
-        // Конец без ожидания (как Hyprland: после анимации — реальный буфер в боксе плитки):
-        // рамка дошла и совпадает с буфером — окно как есть, обрезка и подложка сняты.
+        // End without waiting (like Hyprland: actual buffer in tile box after animation):
+        // frame arrived and matches buffer; display window as is, removing clip and backdrop.
         int fits = dabs(w->aw - bw) <= 1.0 && dabs(w->ah - bh) <= 1.0 && dabs(w->ax - bx) <= 1.0 && dabs(w->ay - by) <= 1.0;
         if (fits) {
             put_plain(c, w, win);
@@ -1820,9 +1820,9 @@ static int frame_win(struct ctx *c, struct ch_win *w, double now) {
             post_evt(ch, EV_SETTLED, w->wid, now, w->ax, w->ay, w->aw, w->ah);
             return 0;
         }
-        // не совпадает: приложение не встало ровно в плитку (минимум, сетка символов) — как Hyprland,
-        // буфер остаётся в боксе плитки: больше — обрезан по B, меньше — край закрыт цветом края окна.
-        // Соседи не двигаются. Обрезка держится, пока буфер не совпадёт с B (простой тик проверяет).
+        // Mismatch: application did not exactly fit tile (minimum size, character grid); like Hyprland,
+        // buffer stays in tile box: larger is clipped to B; smaller has band filled with window edge color.
+        // Neighbors do not move. Keep clip until buffer matches B (checked by idle tick).
         an = w->stable < 2;
     }
 show:
@@ -1872,13 +1872,13 @@ show:
             }
         } else live_edge_drop(c,w);
     }
-    return an;          // покой (в т.ч. «окно не ровно в плитке» со стабильным буфером) — без покадровых тиков
+    return an;          // idle (including stable buffer not exactly fitting tile): no per-frame ticks
 }
 
-// Сетка кадров: из кэша развёртки WS (он может быть старым — фаза при этом верна) берём
-// период T и момент развёртки; te — ближайшая развёртка не раньше now+margin. Все значения
-// кадра считаются на te (момент показа), а не на время срабатывания таймера: опоздание
-// таймера на несколько мс не сдвигает выборку, шаг по времени ровно T.
+// Frame grid: obtain period T and vblank time from WS vblank cache (possibly stale, but phase remains correct);
+// te is the nearest vblank at or after now+margin. All frame values
+// are computed for te (presentation time), rather than timer firing time: a timer delay
+// of a few milliseconds does not shift sampling; time step is exactly T.
 static double frame_grid(struct ctx *c, double now, double *T_out) {
     // WindowServer's getter chooses the dominant display, including the main display
     // when there is just one. Display ids are not guaranteed to start at 1.
@@ -1915,19 +1915,19 @@ static double frame_grid(struct ctx *c, double now, double *T_out) {
     return te;
 }
 
-// ── П8: снимок закрытия (close_clone.md) ───────────────────────────────────────────────────────────────
-// Настройки от демона: reserved[0] бит0 — колбэк, бит1 — клон (иначе только журнал), биты 8–15 кривая размера,
-// 16–23 кривая альфы; reserved[1]/[2] — длительности (double), reserved[3] — k popin (double).
-#define P8_ON(c) ((unsigned char *)(c) + 0xc00)      // бит «на экране» ведомых окон на прошлой проверке (по слоту)
+// P8: close snapshot (close_clone.md)
+// Daemon settings: reserved[0] bit0 = callback, bit1 = clone (otherwise log only), bits 8-15 = size curve,
+// 16-23 = alpha curve; reserved[1]/[2] = durations (double), reserved[3] = popin k (double).
+#define P8_ON(c) ((unsigned char *)(c) + 0xc00)      // previous on-screen bit of tracked windows, by slot
 static double hd(struct ch *ch, int i) { double v; __builtin_memcpy(&v, &ch->h.reserved[i], 8); return v; }
 
 static void p8_free_win(struct ctx *c, char *cl) {
-    *(u64 *)(cl + 0x928) &= ~(1ull << 54);           // иначе release_window только обнулит владельца [V]
-    c->rel_win(*(void **)(cl + 0x30), cl);           // владелец NULL; наш колбэк отсечёт по владельцу
+    *(u64 *)(cl + 0x928) &= ~(1ull << 54);           // otherwise release_window only clears owner [V]
+    c->rel_win(*(void **)(cl + 0x30), cl);           // owner NULL; our callback rejects it by owner
 }
 
-// Клон окна src: на место видимой рамки, уровень источника, поверх; слот движка (stretch) без анимации. → индекс или -1
-static int p8_make(struct ctx *c, char *src, int pending, double now) {   // pending: 0 уход, 1 ждёт 0x3e9, 2 подкладка
+// Clone src at visible frame, source level, above; engine slot (stretch) without animation. Returns index or -1.
+static int p8_make(struct ctx *c, char *src, int pending, double now) {   // pending: 0 closing, 1 awaiting 0x3e9, 2 backdrop
     struct ch *ch = c->ch;
     if (!c->clone || !c->srr || !c->set_level || !c->order || !c->get_id) return -1;
     int k = -1;
@@ -1940,8 +1940,8 @@ static int p8_make(struct ctx *c, char *src, int pending, double now) {   // pen
     void *disp = c->win_disp ? c->win_disp(src) : 0;
     if (!disp && c->main_disp) disp = c->main_disp();
     if (!disp || !finite(fr.w) || !(fr.w >= 1) || !(fr.h >= 1)) return -1;
-    // защита от повторного входа охватывает И клон, И order: order сам шлёт 0x3ea → наш колбэк. Раньше флаг
-    // сбрасывался до order → рекурсия клонов → переполнение стека WS [V крэш 12:33:20]
+    // Reentrancy guard covers BOTH clone and order: order itself sends 0x3ea to our callback. Previously clearing
+    // the flag before order caused recursive cloning and WS stack overflow [V crash 12:33:20].
     u32 was = c->in_cb;
     c->in_cb = 1;
     struct ch_win *source=slot(ch,*(unsigned *)src,0);
@@ -1954,7 +1954,7 @@ static int p8_make(struct ctx *c, char *src, int pending, double now) {   // pen
     c->set_level(cl, 0, *(int *)(src + 0x20), *(short *)(src + 0x28));
     unsigned cwid = c->get_id(cl);
     if(pending==3)c->set_alpha(0,cl,(float)logical_alpha,0);
-    if (pending == 2) c->order(0, cwid, -1, *(unsigned *)src);   // подкладка — под окном
+    if (pending == 2) c->order(0, cwid, -1, *(unsigned *)src);   // backdrop below window
     else if (pending == 1) c->order(0, cwid, 0, 0); // orderOut can be native tab selection; retain pixels invisibly
     else c->order(0, cwid, 1, *(unsigned *)src); // confirmed close — visible above source
     c->in_cb = was;
@@ -2002,7 +2002,7 @@ static void cover_retire(struct ctx *c,int index,int result,double now) {
     if(clone && !*(void **)((char *)clone+0x30))p8_free_win(c,clone);
 }
 
-// Запуск ухода клона: popin k% + fadeOut по кривым конфига; соседям — EV_GONE в этом же цикле демона.
+// Start clone exit: popin k% + fadeOut using configured curves; neighbors receive EV_GONE in same daemon cycle.
 static void p8_go(struct ctx *c, int k, double now) {
     struct ch *ch = c->ch;
     struct p8c *e = &P8_TAB(c)[k];
@@ -2036,11 +2036,11 @@ static void p8_go(struct ctx *c, int k, double now) {
     if (!c->running) c->resched(c->queue, c->self, c, c->session, 1, 1, now);
 }
 
-// 0x3ea (конец операции упорядочивания): какое ведомое тайловое окно ушло с экрана (бит 44: 1→0) — снять его
-// содержимое сейчас, до кадра (AppKit при закрытии сначала убирает окно, release — через ~70 мс [V 12:30]).
+// 0x3ea (ordering finished): if a tracked tiled window left screen (bit 44: 1->0), snapshot its content
+// now before the frame (AppKit first removes a closing window, then releases ~70 ms later [V 12:30]).
 static void p8_order_done(struct ctx *c) {
     struct ch *ch = c->ch;
-    // вкладки: в той же операции окно того же приложения вышло на экран (0→1) — это смена вкладки, не закрытие
+    // tabs: another window of same application appeared (0->1) in this operation; tab switch, not close
     u64 came[8]; int nc = 0;
     for (int i = 0; i < CH_NW && nc < 8; i++) {
         struct ch_win *w = &ch->win[i];
@@ -2056,20 +2056,20 @@ static void p8_order_done(struct ctx *c) {
         int tab = 0;
         if (win) for (int j = 0; j < nc; j++) tab |= came[j] == (u64)*(void **)(win + 0x30);
         int was = P8_ON(c)[i];
-        P8_ON(c)[i] = (unsigned char)on;              // до клона: вложенный вызов не увидит тот же переход 1→0
+        P8_ON(c)[i] = (unsigned char)on;              // before cloning: nested call cannot see same 1->0 transition
         if(was && !on) { live_edge_drop(c,w); live_edge_client(c,w,0); }
         if (was && !on && !tab && win && *(void **)(win + 0x30) && *(int *)(win + 0x20) == 0 &&
             w->cur_alpha > 0.05 && w->alpha.g[0] > 0.05 && (ch->h.reserved[0] & 2))
             p8_make(c, win, 1, ch->h.now);
     }
-    for (int i = 0; i < CH_NW; i++) {                 // запомнить «на экране» всех слотов после операции
+    for (int i = 0; i < CH_NW; i++) {                 // remember on-screen state of all slots after operation
         struct ch_win *w = &ch->win[i];
         char *win = w->used ? c->by_id(w->wid) : 0;
         P8_ON(c)[i] = (unsigned char)(win && ((*(u64 *)(win + 0x928) >> 44) & 1));
     }
 }
 
-// Колбэк 0x3e9 (release_window) и 0x3ea (finish_order_windows): синхронно, главный поток WS. Подпись IA/0 (blraaz).
+// 0x3e9 (release_window) / 0x3ea (finish_order_windows) callback: synchronous on WS main thread; IA/0 signature (blraaz).
 void anim_will_release(u32 type, void *data, unsigned long len, struct ctx *c) {
     if (c->dead || c->in_cb) return;
     struct ch *ch = c->ch;
@@ -2077,24 +2077,24 @@ void anim_will_release(u32 type, void *data, unsigned long len, struct ctx *c) {
     if (type == 0x3ea) { c->in_cb = 1; p8_order_done(c); c->in_cb = 0; return; }
     if (type != 0x3e9 || !data || len != 8) return;
     char *src = data;
-    if (!*(void **)(src + 0x30)) return;                       // серверное окно / наш клон
+    if (!*(void **)(src + 0x30)) return;                       // server window / our clone
     unsigned swid = *(unsigned *)src;
     int on = (int)((*(u64 *)(src + 0x928) >> 44) & 1), lvl = *(int *)(src + 0x20);
     struct ch_win *sw = slot(ch, swid, 0);
     if(sw) { live_edge_drop(c,sw); live_edge_client(c,sw,0); }
     post_evt(ch, EV_REL, swid, ch->h.now, on, 1, lvl, (sw ? 1 : 0) + (sw && sw->geo ? 2 : 0));
     if (!(ch->h.reserved[0] & 2) || lvl != 0) return;
-    for (int i = 0; i < P8_N; i++) {                           // снят при order-out — это закрытие: в путь
+    for (int i = 0; i < P8_N; i++) {                           // captured on order-out: this is a close, start exit
         struct p8c *e = &P8_TAB(c)[i];
         if (e->live && e->pending && e->src == swid) { p8_go(c, i, ch->h.now); return; }
     }
     if (!on || !sw || !sw->geo) { if (!on) c->nskip++; return; }
-    if (sw->alpha.g[0] < 0.05 || sw->cur_alpha < 0.05) return; // close_anim демона уже погасил
-    int k = p8_make(c, src, 0, ch->h.now);                     // ещё на экране (путь А)
+    if (sw->alpha.g[0] < 0.05 || sw->cur_alpha < 0.05) return; // daemon close_anim already faded it out
+    int k = p8_make(c, src, 0, ch->h.now);                     // still on screen (path A)
     if (k >= 0) p8_go(c, k, ch->h.now);
 }
 
-// Тик: регистрация колбэка и освобождение клонов, чья анимация кончилась (или всех — при остановке).
+// Tick: register callback and free clones whose animation ended (or all clones on stop).
 static void p8_tick(struct ctx *c, int stopping, double now) {
     struct ch *ch = c->ch;
     int want = !stopping && (ch->h.reserved[0] & 1) && c->add_cb && c->rm_cb && c->cb;
@@ -2121,7 +2121,7 @@ static void p8_tick(struct ctx *c, int stopping, double now) {
                 saved_window(c,sw)->cfg_sent==6;
             if(ready)cover_retire(c,i,SNAP_REVEALED,now);
             continue;
-        } else if (e->pending == 2) {                       // подкладка: пока окно едет (и пока не встало в бокс)
+        } else if (e->pending == 2) {                       // backdrop: while window moves (and until it fits the box)
             struct ch_win *sw = slot(ch, e->src, 0);
             double cap=30.0;
             if(sw && finite(sw->pos.dur) && sw->pos.dur+1>cap) cap=sw->pos.dur+1;
@@ -2129,8 +2129,8 @@ static void p8_tick(struct ctx *c, int stopping, double now) {
             void *source=c->by_id(e->src);
             done = stopping || !sw || !source || (P8_SOURCE(c)[i] && P8_SOURCE(c)[i]!=(u64)source) || now - e->t0 > cap ||
                    (!(sw->pos.active | sw->size.active) && (!sw->settling || sw->stable >= 3));
-        } else if (e->pending) {                     // не закрытие (Cmd+H, свёртывание, вкладка) — снять:
-            void *sw = c->by_id(e->src);             // 0x3e9 не пришёл за 120 мс, или окно снова на экране
+        } else if (e->pending) {                     // not closing (Cmd+H, minimize, tab switch): remove
+            void *sw = c->by_id(e->src);             // no 0x3e9 within 120 ms, or window back on screen
             done = stopping || now - e->t0 > 0.12 || (sw && ((*(u64 *)((char *)sw + 0x928) >> 44) & 1));
         } else {
             double cap = 30.0, geometry_duration = hd(ch, 1), fade_duration = hd(ch, 2);
@@ -2152,9 +2152,9 @@ static void p8_tick(struct ctx *c, int stopping, double now) {
     }
 }
 
-// Подкладка-снимок (OP_SNAP) под окном: как Hyprland при боксе больше буфера — крайние пиксели тянутся на полосу.
-// Одна ось: последняя строка/столбец снимка растянута на ширину полосы, обрезка — полоса. Обе оси: снимок целиком
-// на B, обрезка по B (окно поверх закрывает свою часть). Слот клона сам не анимируется (trans/clip/альфа — здесь).
+// Snapshot backdrop (OP_SNAP) below window: like Hyprland, extend edge pixels into band when box exceeds buffer.
+// One axis: stretch last snapshot row/column across band width, clipping to band. Both axes: stretch whole snapshot
+// to B, clip to B (window above covers its own area). Clone slot does not animate itself (trans/clip/alpha handled here).
 static void snap_frame(struct ctx *c, struct ch_win *cw, struct ch_win *sw) {
     void *cl;
     if (!actual(c, cw, &cl)) return;
@@ -2165,14 +2165,14 @@ static void snap_frame(struct ctx *c, struct ch_win *cw, struct ch_win *sw) {
     double gw = bw - aw, gh = bh - ah, ux = cw->ax, uy = cw->ay, uw = cw->aw, uh = cw->ah;
     double tx0, ty0, tw, th, kx, ky, kw, kh;
     int show = 1;
-    // тянется строка/столбец в 8 pt от края: у самого края — стекло и контур окна Tahoe («небесная» полоса)
+    // stretch row/column 8 pt from edge: edge itself has Tahoe glass and window outline (sky-colored band)
     double ry = uh > 16 ? uh - 8 : uh - 1, rx = uw > 16 ? uw - 8 : uw - 1;
     if (gh > 0.5 && gw <= 0.5) { tx0 = bx; tw = bw; th = uh * gh; ty0 = by + ah - ry * gh; kx = bx; ky = by + ah; kw = bw; kh = gh; }
     else if (gw > 0.5 && gh <= 0.5) { ty0 = by; th = bh; tw = uw * gw; tx0 = bx + aw - rx * gw; kx = bx + aw; ky = by; kw = gw; kh = bh; }
     else if (gw > 0.5 && gh > 0.5) { tx0 = bx; ty0 = by; tw = bw; th = bh; kx = bx; ky = by; kw = bw; kh = bh; }
     else { show = 0; tx0 = ux; ty0 = uy; tw = uw; th = uh; kx = ky = kw = kh = 0; }
     double a = show ? sw->cur_alpha : 0.0, av[1] = {a};
-    warp(&cw->alpha, 1, av);                      // frame_win клона иначе вернул бы альфу переменной слота
+    warp(&cw->alpha, 1, av);                      // otherwise clone frame_win would restore slot variable alpha
     if (a != cw->cur_alpha) { c->set_alpha(0, cl, (float)(a < 0 ? 0 : a > 1 ? 1 : a), 0.0f); cw->cur_alpha = a; }
     if (!show || !(tw >= 0.01) || !(th >= 0.01) || !finite(tx0) || !finite(ty0)) return;
     double sx = uw / tw, sy = uh / th;
@@ -2213,11 +2213,11 @@ void anim_tick(struct ctx *c, double now) {
     }
     if((h->stop || c->dead) && c->edge_api && c->edges)
         for(int i=0;i<CH_NW;i++) edge_remove(c->edge_api,&c->edges[i]);
-    // канал не тот (другая версия структуры) — остановиться, ничего не читая дальше
+    // wrong channel (different structure version): stop without reading further
     if ((h->stop || c->dead) && h->magic == CH_MAGIC && h->size == (u32)sizeof(struct ch))
         p8_tick(c, 1, now); // free clones even when the close callback was disabled mid-animation
     if (h->stop && !c->dead && !c->cleaned && h->magic == CH_MAGIC) {
-        // остановка (переустановка/стоп демона): снять с окон всё своё — трансформ, маску, рамку, тень, радиус
+        // stop (reinstall/daemon stop): remove our transforms, masks, borders, shadows, and radii from windows
         c->cleaned = 1;
         h->now = now;
         for (int i = 0; i < CH_NW; i++) {
@@ -2252,8 +2252,8 @@ void anim_tick(struct ctx *c, double now) {
 
     u32 head = __atomic_load_n(&h->cmd_head, __ATOMIC_ACQUIRE), tail = h->cmd_tail;
     if (head - tail > CH_NCMD) { tail = head - CH_NCMD; record_error(ch,0,0,ERR_CMD_RING); }
-    // t0 пачки = момент показа прошлого кадра (te − T): первый показанный кадр анимации — ровно
-    // через один период после старта, без скачка на 1–2 кадра (Hyprland стартует в кадре события)
+    // Batch t0 = previous presentation time (te - T): first presented animation frame is exactly
+    // one period after start, avoiding a 1-2 frame jump (Hyprland starts in event frame).
     double t0 = te - T;
     if (t0 > now) t0 = now;
     if(effects_ready(c))for(int i=0;i<CH_NW;i++)if(ch->win[i].used) {
@@ -2282,8 +2282,8 @@ void anim_tick(struct ctx *c, double now) {
         }
     }
 
-    // Новые окна: номера окон на сервере только растут — проверить следующие за наибольшим виденным.
-    // Окно видно с момента создания, раньше, чем приложение его покажет: демон успевает его спрятать.
+    // New windows: server ids only increase; check ids following the largest seen.
+    // Window exists visibly before application shows it, allowing daemon to hide it in time.
     if (h->wid_max && (now - c->scan_t >= 0.016 - 1e-6 || now < c->scan_t)) {
         c->scan_t = now;
         u32 m = h->wid_max, miss = 0;
@@ -2291,10 +2291,10 @@ void anim_tick(struct ctx *c, double now) {
             void *nw = c->by_id(id);
             if (!nw) { miss++; continue; }
             miss = 0; m = id;
-            if (!*(void **)((char *)nw + 0x30)) continue;   // серверное окно (наш клон закрытия и т.п.) — не новое
-            // окно уровня 0 (обычное: *(int*)(win+0x20) — так читает __XGetWindowLevel) от тайлового
-            // приложения — невидимо до первого показа: иначе приложение успевает показать его на «своём»
-            // месте раньше, чем демон (16+ мс) решит, куда его ставить
+            if (!*(void **)((char *)nw + 0x30)) continue;   // server window (our close clone etc.), not new
+            // Level-0 window (normal: *(int*)(win+0x20), as read by __XGetWindowLevel) from a tiled
+            // application stays invisible until first show; otherwise application could display it in its own
+            // position before daemon decides placement (16+ ms).
             double pre = 0;
             u64 cn = (u64)*(void **)((char *)nw + 0x30);
             if (ch->prehide && *(int *)((char *)nw + 0x20) == 0 && cn) {
@@ -2315,8 +2315,8 @@ void anim_tick(struct ctx *c, double now) {
         h->wid_max = m;
     }
 
-    // Старт пачки: все окна ждут, пока каждое, которому сменили размер, пришлёт кадр нового размера
-    // (или hold_max); потом все стартуют в одном кадре с t0 = прошлый показанный кадр.
+    // Batch start: all windows wait until every resized window supplies a frame at new size
+    // (or hold_max), then all start in one frame with t0 = previous presentation time.
     if (h->holding) {
         if (!h->hold_t) h->hold_t = now;
         int wait = 0;
@@ -2328,7 +2328,7 @@ void anim_tick(struct ctx *c, double now) {
             actual(c, w, &win);
             if (dabs(w->aw - w->a0[0]) < 0.5 && dabs(w->ah - w->a0[1]) < 0.5) wait = 1;
         }
-        int opening = 0;                             // в пачке открытие (F_WAIT): ждём его кадр — не дольше 150 мс
+        int opening = 0;                             // opening window in batch (F_WAIT): wait for its frame, no longer than 150 ms
         for (int i = 0; i < CH_NW; i++) {
             struct ch_win *w = &ch->win[i];
             if (!w->used || w->wait != 1) continue;
@@ -2399,7 +2399,7 @@ void anim_tick(struct ctx *c, double now) {
             border_presented[i] = 1;
             layers_commit(c,presentation_tx);
         }
-        if (a && w->used) {                          // журнал траектории (П0): видимая рамка и альфа на te
+        if (a && w->used) {                          // trajectory log (P0): visible frame and alpha at te
             struct ch_traj *r = &ch->traj[h->traj_head % CH_NTRAJ];
             r->te = te; r->wid = w->wid; r->bx = w->pos.v[0]; r->by = w->pos.v[1];
             r->bw = w->size.v[0]; r->bh = w->size.v[1]; r->alpha = w->cur_alpha;
@@ -2414,7 +2414,7 @@ void anim_tick(struct ctx *c, double now) {
         struct ch_win *sw = slot(ch, e->src, 0), *cw = slot(ch, e->wid, 0);
         if (sw && cw){if(e->pending==3)cover_frame(c,cw,sw);else snap_frame(c, cw, sw);}
     }
-    {                                                // рамки: и в покое (фокус), CA — только при изменении
+    {                                                // borders: also while idle (focus); CA only on change
         int ok = decoration_ready;
         for (int i = 0; ok && i < CH_NW; i++) {
             struct ch_win *w = &ch->win[i];
@@ -2433,10 +2433,10 @@ void anim_tick(struct ctx *c, double now) {
     p8_tick(c, 0, te);
     for (int i = 0; i < P8_N; i++) n += P8_TAB(c)[i].live;
     h->nactive = n;
-    if (n) {                                         // ровность сетки кадров: шаг te должен быть ровно T
+    if (n) {                                         // frame grid regularity: te step must equal T
         if (h->te_prev > 0 && dabs(te - h->te_prev - T) > 0.25 * T) h->te_skips++;
         h->te_prev = te;
-        if (now - (te - T) > 0.6 * T) h->ticks_late++;   // тик опоздал в своём кадре (только при анимации)
+        if (now - (te - T) > 0.6 * T) h->ticks_late++;   // tick late within its frame (only during animation)
     } else h->te_prev = 0;
     if (c->mabs) {
         double us = (double)(c->mabs() - t_in) * c->mabs_us;
@@ -2445,7 +2445,7 @@ void anim_tick(struct ctx *c, double now) {
     }
     c->running = n != 0;
     double at;
-    if (n) at = te + T * h->phase;      // следующий кадр: через phase периода после развёртки te
+    if (n) at = te + T * h->phase;      // next frame: phase fraction of period after vblank te
     else at = now + (h->idle_poll > 0.002 ? h->idle_poll : 0.008);
     c->resched(c->queue, c->self, c, c->session, 1, 1, at);
 }

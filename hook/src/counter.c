@@ -1,8 +1,8 @@
-// counter.dylib — веха 1, этап 1: безопасная проверка хука metalCallbacks.
-// Колбэк НИЧЕГО не рисует — только инкрементит счётчик в ctx. Так проверяем:
-//   (1) вставка узла в список, (2) корректность PAC-подписи (blraaz не фатал),
-//   (3) что composite() реально зовёт нас каждый кадр.
-// Загружается разово в живой WindowServer; откат = killall WindowServer.
+// counter.dylib: milestone 1, stage 1: safe verification of the metalCallbacks hook.
+// The callback draws NOTHING; it only increments the counter in ctx. This checks:
+// (1) insertion into the list, (2) correct PAC signing (blraaz does not crash),
+// (3) that composite() actually calls us every frame.
+// Loaded once into a live WindowServer; rollback = killall WindowServer.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,13 +12,13 @@
 #include <dlfcn.h>
 #include <os/log.h>
 
-// Узел списка metalCallbacks (из CGXInvokeTransition): {next, fn, ctx}
+// metalCallbacks list node (from CGXInvokeTransition): {next, fn, ctx}
 struct cb_node { struct cb_node *next; void *fn; void *ctx; };
 
-// Наш счётчик, на который будет смотреть ctx.
-volatile uint64_t re_hook_frames = 0;  // экспортируем для чтения из lldb
+// Our counter, referenced by ctx.
+volatile uint64_t re_hook_frames = 0;  // exported for reading from lldb
 
-// Сигнатура колбэка (из composite@186f40968):
+// Callback signature (from composite@186f40968):
 //   x0 = MetalContext*, x1 = &shared_ptr<Display>, x2 = 0, x3 = node->ctx
 static void my_callback(void *mctx, void *display_sp, void *zero, void *ctx) {
     (void)mctx; (void)display_sp; (void)zero;
@@ -28,7 +28,7 @@ static void my_callback(void *mctx, void *display_sp, void *zero, void *ctx) {
 __attribute__((constructor))
 static void install(void) {
     os_log_t lg = os_log_create("re.hook", "counter");
-    // 1. Найти slide SkyLight по загруженному образу.
+    // 1. Find the SkyLight slide from the loaded image.
     const char *needle = "SkyLight.framework";
     intptr_t slide = 0; int found = 0;
     uint32_t n = _dyld_image_count();
@@ -38,22 +38,22 @@ static void install(void) {
     }
     if (!found) { os_log_error(lg, "SkyLight image not found"); return; }
 
-    // 2. Адрес глобала metalCallbacks = статический 0x1ea5fb3b8 + slide.
-    //    (статику брали из nm; проверим живой slide в рантайме логом.)
+    // 2. metalCallbacks global address = static 0x1ea5fb3b8 + slide.
+    // (Static address obtained from nm; log the live slide at runtime to verify.)
     struct cb_node **head = (struct cb_node **)(0x1ea5fb3b8 + slide);
     os_log(lg, "SkyLight slide=%p  metalCallbacks head @ %p", (void*)slide, (void*)head);
 
-    // 3. Собрать узел. fn ОБЯЗАН быть подписан paciza (ключ IA, модификатор 0),
-    //    т.к. composite() зовёт его через blraaz.
+    // 3. Build the node. fn MUST be signed with paciza (IA key, modifier 0),
+    // because composite() calls it through blraaz.
     struct cb_node *node = (struct cb_node*)calloc(1, sizeof(*node));
-    // &my_callback в arm64e уже IA-подписан; снимаем подпись до сырого адреса,
-    // затем подписываем IA/модификатор 0 — ровно то, что аутентифицирует blraaz.
+    // &my_callback is already IA-signed on arm64e; strip to the raw address,
+    // then sign with IA/modifier 0, exactly what blraaz authenticates.
     void *raw = ptrauth_strip((void*)&my_callback, ptrauth_key_asia);
     void *signed_fn = ptrauth_sign_unauthenticated(raw, ptrauth_key_asia, 0);
     node->fn  = signed_fn;
     node->ctx = (void*)&re_hook_frames;
 
-    // 4. Вставить в голову списка (как CGXInvokeTransition).
+    // 4. Insert at the head of the list (like CGXInvokeTransition).
     node->next = *head;
     *head = node;
     os_log(lg, "installed node=%p fn(signed)=%p ctx=%p &re_hook_frames=%p",
