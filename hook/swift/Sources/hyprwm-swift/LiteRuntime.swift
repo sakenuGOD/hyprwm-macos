@@ -68,6 +68,7 @@ final class LiteRuntime {
         let words = try CommandArguments.parse(command)
         guard let first = words.first else { return nil }
         if ["workspace", "ws", "wsstep"].contains(first) {
+            guard wm.enabled, !recovering else { throw CmdError("workspace: tiling paused; resume first") }
             guard words.count == 2, !sys.mouseDown(), !sys.sessionLocked() else { throw CmdError("workspace: expected 1..10, previous, or wsstep -1/1") }
             let target: Int
             if first == "wsstep" {
@@ -78,13 +79,33 @@ final class LiteRuntime {
             switchWorkspace(target); return "workspace \(sys.workspace) (Lite virtual)"
         }
         if ["sendws", "moveworkspace"].contains(first) {
-            guard words.count >= 2, let target = Int(words[1]), (1...10).contains(target),
-                  let wid = wm.sp(sys.workspace).focus, sys.membership[wid] == sys.workspace else { throw CmdError("moveworkspace: focused tile and workspace 1..10 required") }
+            guard wm.enabled, !recovering, !sys.mouseDown(), !sys.sessionLocked() else { throw CmdError("moveworkspace: tiling paused or interaction active") }
+            guard (2...3).contains(words.count), let target = Int(words[1]), (1...10).contains(target) else { throw CmdError("moveworkspace: expected workspace 1..10 and follow/silent; sendws: workspace 1..10 [wid]") }
+            let requested: Int?, silent: Bool
+            if first == "sendws" {
+                if words.count == 3 {
+                    guard let number = UInt32(words[2]), number > 0 else { throw CmdError("sendws: window ID must be 1..4294967295") }
+                    requested = Int(number)
+                } else { requested = nil }
+                silent = true
+            } else {
+                guard words.count == 2 || ["follow", "silent"].contains(words[2]) else { throw CmdError("moveworkspace: expected follow or silent") }
+                requested = nil; silent = words.last == "silent"
+            }
             let source = sys.workspace
-            wm.sp(source).tree = Dwindle.remove(wm.sp(source).tree, wid)
+            guard target != source else { return "window already on virtual workspace \(source)" }
+            let focused = sys.frontPid().flatMap { sys.focusContext($0).wid }
+            guard let wid = requested ?? focused, sys.membership[wid] == source,
+                  wm.sp(source).tree?.contains(wid) == true, let window = sys.window(wid), window.on, window.space == source,
+                  wm.tileable(window), sys.focusContext(window.pid).flags & (NativeFocusFlags.positive|NativeFocusFlags.unknown) == 0 else { throw CmdError("moveworkspace: exact visible managed window required") }
+            sys.cancelFocus(); configure?.cancel(wid); wm.target[wid] = nil
+            wm.newbies[wid] = nil; wm.optimistic[wid] = nil; wm.restoring.remove(wid)
+            let state = wm.sp(source); state.tree = wm.tile.removeReorientingPromoted(state.tree, wid, in: sys.area)
+            if state.focus == wid { state.focus = nil }; if state.full == wid { state.full = nil }
             sys.membership[wid] = target
             engine.channel.alpha(wid, 0, 16, 0); engine.channel.commit(); wm.save()
-            if words.last != "silent" { switchWorkspace(target) }
+            if silent { applyWorkspace(source, focus: focused == wid) }
+            else { switchWorkspace(target) }
             return "window moved to virtual workspace \(target)"
         }
         return nil
@@ -96,16 +117,28 @@ final class LiteRuntime {
         configure?.cancelAll(); wm.target.removeAll()
         for (wid, sid) in sys.membership where sid == source { engine.channel.alpha(wid, 0, 16, 0) }
         sys.previousWorkspace = source; sys.workspace = target
-        for (wid, sid) in sys.membership where sid == target {
+        let hidden = Set(wm.hidden.map(\.wid))
+        for (wid, sid) in sys.membership where sid == target && !hidden.contains(wid) {
             engine.channel.alpha(wid, 1, 16, 0)
             if let frame = engine.channel.destination(wid) {
                 engine.channel.geom(wid, frame, 16, 16, move: true, warp: true)
             }
         }
         engine.channel.commit()
-        wm.tick(socketReady: false)
-        if let wid = wm.sp(target).focus, let window = sys.window(wid), window.space == target {
-            _ = sys.axFocus(window.pid, wid, raise: false)
+        applyWorkspace(target, focus: true)
+    }
+    private func applyWorkspace(_ workspace: Int, focus: Bool) {
+        guard let snapshot = try? sys.snapshot(), snapshot.space == workspace else { return }
+        wm.last = (snapshot.area, snapshot.space, snapshot.windows)
+        let (_, opening) = wm.sync(snapshot.area, workspace, snapshot.windows)
+        wm.apply(snapshot.area, workspace, snapshot.windows, opening: opening)
+        guard focus, let wid = wm.sp(workspace).focus, let window = sys.window(wid), window.on,
+              let birth = sys.processBirth(window.pid) else { return }
+        let request = FocusRequest(pid: window.pid, wid: wid, space: workspace, birth: birth, sourcePID: sys.frontPid(), reason: .space, deadline: sys.now()+1, pointer: nil)
+        sys.requestFocus(request) { [weak self] accepted in
+            guard let self, accepted, self.wm.enabled, self.sys.workspace == workspace else { return }
+            self.wm.sp(workspace).focus = wid
+            self.engine.channel.decorationFocus(wid, fullscreen: self.wm.sp(workspace).fullmode == "fullscreen" ? self.wm.sp(workspace).full ?? 0 : 0)
         }
     }
     private func reload() throws {
