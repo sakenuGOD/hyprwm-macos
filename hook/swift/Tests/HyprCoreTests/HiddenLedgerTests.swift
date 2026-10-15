@@ -4,7 +4,7 @@ import XCTest
 
 final class HiddenLedgerTests:XCTestCase {
     func testIntentMatchesSortedCompactFullLedgerAndUnicodeEscaping() throws {
-        let row=Hidden(wid:1,pid:101,owner:"Window 🚀",space:1,rect:[0,2,400,500],extra:.object([
+        let row=Hidden(wid:1,pid:101,owner:"Окно 🚀",space:1,rect:[0,2,400,500],extra:.object([
             ("tiled",.bool(true)),("swift_birth",.string("101:40:50")),("hidden_at",.double(1000.5)),
             ("generation",.array([.int(101),.int(501),.int(40),.int(50)]))]))
         let canonical=#"{"generation":[101,501,40,50],"hidden_at":1000.5,"owner":"\u041e\u043a\u043d\u043e \ud83d\ude80","pid":101,"rect":[0.0,2.0,400.0,500.0],"space":1,"swift_birth":"101:40:50","tiled":true,"wid":1}"#
