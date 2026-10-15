@@ -58,6 +58,28 @@ final class LiteAX {
               let values = result as? [Any], values.count == keys.count else { return nil }
         return Dictionary(uniqueKeysWithValues: zip(keys, values))
     }
+    /// Query fresh modal/sheet state on the app's AX worker before mutating
+    /// focus or repairing a raise. Cached census flags cannot cover new sheets.
+    static func modalBarrier(_ application: AXUIElement, _ target: AXUIElement) -> Bool {
+        func blocked(_ element: AXUIElement) -> Bool {
+            guard let values = attributes(element), let role = values[kAXRoleAttribute] as? String else { return true }
+            let subrole = values[kAXSubroleAttribute] as? String ?? ""
+            if values[kAXModalAttribute] as? Bool == true || values["AXFullScreen"] as? Bool == true ||
+                role == kAXSheetRole || subrole == kAXDialogSubrole || subrole == kAXSystemDialogSubrole { return true }
+            return (attribute(element, kAXChildrenAttribute) as? [AXUIElement])?.prefix(32).contains {
+                string($0, kAXRoleAttribute) == kAXSheetRole
+            } == true
+        }
+        if blocked(target) { return true }
+        if let ui = attribute(application, kAXFocusedUIElementAttribute), CFGetTypeID(ui) == AXUIElementGetTypeID() {
+            let role = string(unsafeBitCast(ui, to: AXUIElement.self), kAXRoleAttribute)
+            if [kAXMenuRole, kAXMenuItemRole, kAXMenuBarRole, kAXMenuBarItemRole].contains(role) { return true }
+        }
+        if let focused = attribute(application, kAXFocusedWindowAttribute), CFGetTypeID(focused) == AXUIElementGetTypeID() {
+            return blocked(unsafeBitCast(focused, to: AXUIElement.self))
+        }
+        return false
+    }
     static func frame(_ attributes: [String: Any]) -> Rect? {
         guard let rawPosition = attributes[kAXPositionAttribute], let rawSize = attributes[kAXSizeAttribute] else { return nil }
         let position = rawPosition as CFTypeRef, size = rawSize as CFTypeRef

@@ -87,9 +87,10 @@ final class LiteSys: SysAPI {
     private(set) var rawWindows: [WinInfo] = []
     private var physicalWindows: [WinInfo] = []
     private var locked = false
-    private let sessionLock = NSLock(), focusLock = NSLock()
+    private let sessionLock = NSLock(), focusLock = NSLock(), censusLock = NSLock()
     private var focusEpoch = 0, focusing = 0, closing = 0
     private var restackPending = false, restackedAt = 0.0
+    private var unsafeRestackBirths = Set<String>()
     private var observers: [NSObjectProtocol] = []
     var beforeClose: ((Int, @escaping (Bool) -> Void) -> Void)?
     var onFrame: ((Int, Rect) -> Void)?
@@ -154,7 +155,7 @@ final class LiteSys: SysAPI {
             }
             windows.append(window)
         }
-        rawWindows = windows
+        censusLock.lock(); rawWindows = windows; censusLock.unlock()
         physicalWindows = physical
         for pid in Set(physical.filter { $0.layer == 0 && !protectedProcess($0.pid) }.map(\.pid)) {
             ax.refresh(pid, rows: physical.filter { $0.pid == pid })
@@ -164,7 +165,7 @@ final class LiteSys: SysAPI {
         result.nativeMetadata = .object([("workspace_kind", .string("virtual")), ("space", .int(workspace)), ("space_type", .int(0)), ("stable", .bool(true))])
         return result
     }
-    func window(_ wid: Int) -> WinInfo? { rawWindows.first { $0.wid == wid } }
+    func window(_ wid: Int) -> WinInfo? { censusLock.lock(); defer { censusLock.unlock() }; return rawWindows.first { $0.wid == wid } }
     func track(_ wid: Int) -> Bool {
         guard let window = window(wid), !protectedProcess(window.pid), recovery.remember(window) else { return false }
         if membership[wid] == nil { membership[wid] = workspace }
@@ -196,6 +197,7 @@ final class LiteSys: SysAPI {
         // input receiver; menus and floating windows below that level remain
         // positive barriers to tiled pointer focus.
         let cursorLevel = Int(CGWindowLevelForKey(.cursorWindow))
+        censusLock.lock(); defer { censusLock.unlock() }
         guard let window = rawWindows.first(where: { $0.on && $0.layer < cursorLevel && $0.alpha > 0.01 && $0.rect.contains(point.0, point.1) }) else { return nil }
         return (window.wid, window.pid)
     }
@@ -242,6 +244,7 @@ final class LiteSys: SysAPI {
         guard now() < request.deadline, !mouseDown(), !sessionLocked(), processBirth(request.pid) == request.birth,
               membership[request.wid].map({ $0 == workspace }) ?? true, !concealed.contains(request.wid),
               let target = ax.window(request.pid, request.wid), !target.modal,
+              request.targetAllows(focusContext(request.pid)),
               let app = NSRunningApplication(processIdentifier: pid_t(request.pid)) else { completion(false); return }
         if let source = frontPid(), focusContext(source).flags & (NativeFocusFlags.positive|NativeFocusFlags.unknown) != 0 { completion(false); return }
         if request.reason == .pointer {
@@ -252,6 +255,8 @@ final class LiteSys: SysAPI {
             guard let self, self.focusCurrent(epoch), self.now() < request.deadline, !self.mouseDown(), !self.sessionLocked(),
                   self.processBirth(request.pid) == request.birth else { return -1 }
             if let source = request.sourcePID, NSRunningApplication(processIdentifier: pid_t(source))?.isActive != true { return -1 }
+            if request.reason == .pointer, self.pointerHit()?.wid != request.wid { return -1 }
+            guard !LiteAX.modalBarrier(application, window) else { return -1 }
             return Self.setFocus(application, window, app)
         }) { [weak self] code in
             guard let self else { completion(false); return }; self.focusing -= 1
@@ -267,11 +272,14 @@ final class LiteSys: SysAPI {
     func preserveAppFloats(_ tile: WinInfo, space: Int, windows: [WinInfo], explicitFloats: Set<Int>) {
         guard space == workspace, !restackPending, now()-restackedAt >= 0.1,
               !mouseDown(), !sessionLocked(), frontPid() == tile.pid,
-              let birth = processBirth(tile.pid), !protectedProcess(tile.pid),
+              let birth = processBirth(tile.pid), !unsafeRestackBirths.contains(birth), !protectedProcess(tile.pid),
               let parent = ax.window(tile.pid, tile.wid) else { return }
         let context = focusContext(tile.pid)
-        guard context.wid == tile.wid, context.flags & (NativeFocusFlags.menu|NativeFocusFlags.unknown|NativeFocusFlags.fullscreen) == 0 else { return }
+        guard context.wid == tile.wid, context.flags & (NativeFocusFlags.positive|NativeFocusFlags.unknown) == 0 else { return }
+        guard let parentOrder = windows.firstIndex(where: { $0.wid == tile.wid }) else { return }
+        let belowParent = Set(windows.dropFirst(parentOrder+1).map(\.wid))
         let candidates = windows.reversed().filter {
+            belowParent.contains($0.wid) &&
             $0.pid == tile.pid && $0.wid != tile.wid && $0.on && $0.space == space && $0.layer == 0 &&
             $0.alpha >= 0.05 && !$0.nativeFullscreen && !concealed.contains($0.wid) &&
             (explicitFloats.contains($0.wid) || axTileable($0.pid, $0.wid) == 0)
@@ -288,14 +296,36 @@ final class LiteSys: SysAPI {
                 guard self.focusCurrent(epoch), self.now() < deadline, !self.mouseDown(), !self.sessionLocked(),
                       self.processBirth(tile.pid) == birth,
                       NSRunningApplication(processIdentifier: pid_t(tile.pid))?.isActive == true,
+                      !LiteAX.modalBarrier(application, parent.element),
                       let focused = LiteAX.attribute(application, kAXFocusedWindowAttribute), CFEqual(focused, parent.element),
                       let rows = CGWindowListCopyWindowInfo(.optionIncludingWindow, CGWindowID(candidate.wid)) as? [[String: Any]],
                       rows.first?[kCGWindowOwnerPID as String] as? Int == tile.pid,
                       let window = self.ax.window(candidate.pid, candidate.wid) else { return -1 }
                 _ = AXUIElementPerformAction(window.element, kAXRaiseAction as CFString)
+                // AXRaise can make a sibling key in some clients. Repair that
+                // immediately without raising the parent if its public setter
+                // supports it; otherwise restore parent input and stop trying.
+                let after = LiteAX.attribute(application, kAXFocusedWindowAttribute)
+                if after.map({ CFEqual($0, parent.element) }) != true {
+                    guard after.map({ CFEqual($0, window.element) }) == true,
+                          self.focusCurrent(epoch), !self.mouseDown(), !self.sessionLocked(),
+                          !LiteAX.modalBarrier(application, parent.element), self.processBirth(tile.pid) == birth,
+                          NSRunningApplication(processIdentifier: pid_t(tile.pid))?.isActive == true else { return -2 }
+                    _ = AXUIElementSetAttributeValue(application, kAXFocusedWindowAttribute as CFString, parent.element)
+                    let repaired = LiteAX.attribute(application, kAXFocusedWindowAttribute)
+                    guard repaired.map({ CFEqual($0, parent.element) }) == true else {
+                        guard !LiteAX.modalBarrier(application, parent.element),
+                              repaired.map({ CFEqual($0, window.element) }) == true else { return -2 }
+                        _ = AXUIElementPerformAction(parent.element, kAXRaiseAction as CFString)
+                        return -2
+                    }
+                }
             }
             return 0
-        }) { [weak self] _ in self?.restackPending = false }
+        }) { [weak self] code in
+            self?.restackPending = false
+            if code == -2 { self?.unsafeRestackBirths.insert(birth) }
+        }
     }
     func axMenuPress(_ pid: Int, _ title: String) -> Int { -1 }
     func wsClose(_ pid: Int, _ wid: Int) -> Int {
