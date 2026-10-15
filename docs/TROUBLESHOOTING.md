@@ -10,7 +10,7 @@ Keep its output local until you have removed personal paths and private applicat
 
 ## Nothing tiles / permission is missing
 
-In **System Settings → Privacy & Security → Accessibility**, enable the process that actually controls windows. For an installed app that is HyprWM; for a command-line development launch, macOS may attribute access to your terminal host or the executable shown in the permission prompt. Follow the process identity reported by doctor and the OS prompt. Relaunch HyprWM after changing permissions.
+In **System Settings → Privacy & Security → Accessibility**, enable the process that actually controls windows. For an installed app that is HyprWM; for a command-line development launch, macOS may attribute access to your terminal host or the executable shown in the permission prompt. Use doctor for permission state and the OS prompt to identify the responsible process. Relaunch HyprWM after changing permissions.
 
 Screen capture animation needs **Screen & System Audio Recording** permission (called **Screen Recording** on some macOS versions). A denied capture permission should reduce Lite to live AX placement rather than make windows disappear. Carbon runtime shortcuts do not need Input Monitoring. The settings shortcut recorder uses an event tap and can request **Input Monitoring**. **Automation → System Events** is for GUI scripting used in testing, not an instruction to grant blanket Automation access to every process.
 
