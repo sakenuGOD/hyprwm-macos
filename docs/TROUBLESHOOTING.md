@@ -61,7 +61,7 @@ One invalid assignment should not discard an independent valid gap edit. Save on
 
 ## A shortcut does nothing
 
-Settings → Hotkeys is the effective binding list. Check Input Monitoring/event access, duplicate chords, imported modifier translation and whether the watcher is running. Readable text bindings map `SUPER` to Command, `ALT` to Option and `CTRL` to Control. The legacy Lua defaults use a separate translation; the README lists the actual macOS keys.
+Settings → Hotkeys is the effective binding list. Check duplicate chords, imported modifier translation and whether the watcher is running. Carbon runtime bindings do not require Input Monitoring; check that permission if the settings shortcut recorder cannot observe keys. Readable text bindings map `SUPER` to Command, `ALT` to Option and `CTRL` to Control. The legacy Lua defaults use a separate translation; the README lists the actual macOS keys.
 
 A shortcut contains a HyprWM command argument array, not arbitrary shell syntax. Imported shell commands and unsupported actions produce warnings. See [MIGRATING.md](MIGRATING.md) for the supported subset.
 
@@ -80,6 +80,8 @@ A focus request can be queued before macOS accepts it. Ownership, session lock, 
 Record which mode is running and whether capture permission is granted. Lite and Engine have different rendering paths. Do not infer SIP-on compatibility from a run made with SIP off. Disable optional capture animation or use ordinary AX placement if the current build reports the capability unavailable. User transparency and the hidden-window Mission Control pool remain unfinished; keep opacity at `1` and hidden-window overview off for a conservative reproduction.
 
 For a motion bug, provide a short real recording with the first frame, retarget and landing visible. Check whether body/border diverge, content resizes late or the final frame snaps. A settings screenshot cannot prove runtime motion.
+
+Lite discovers application windows after they are displayed. Public Accessibility APIs cannot prevent the initial default-position frame; a brief TextEdit entrance flash has been observed. Captured proxies also contain a static image during motion. Distinguish these limits from a client that remains parked after landing, which needs recovery.
 
 ## Installation or removal fails
 

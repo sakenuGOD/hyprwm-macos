@@ -63,6 +63,8 @@ Workspace bindings in the baseline do not establish native Space creation or swi
 
 **Lite integration and its live acceptance gate are pending in this branch.** See [Lite research](docs/LITE_RESEARCH.md) for capability probes, fallbacks and the distinction between source evidence and local verification. Mode selection uses `HYPRWM_MODE=auto` by default and chooses Lite if verified Engine attachment fails. `HYPRWM_MODE=lite` skips Engine channel attachment entirely; `HYPRWM_MODE=engine` fails with the actual attachment error instead of falling back. The installer does not alter security settings.
 
+Lite cannot intercept an application's first displayed frame through public Accessibility APIs. A newly opened window can appear briefly at its default position before discovery and tiling; this was observed with TextEdit during development. Proxy animation uses a captured image while the real window changes frame, so its content is static during that transition. Do not expect a universal flash-free entrance or live video inside a moving proxy.
+
 After quitting an existing instance, a foreground installed Lite launch is:
 
 ```sh
