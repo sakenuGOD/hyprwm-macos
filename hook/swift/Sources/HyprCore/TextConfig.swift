@@ -96,7 +96,7 @@ public enum TextConfig {
                 }
                 continue
             }
-            if let children = value.object, name != "curves" {
+            if let children = value.object {
                 for (key,child) in children {
                     let current = accepted[name] ?? .object([])
                     let candidate = accepted.setting(name,current.setting(key,child))

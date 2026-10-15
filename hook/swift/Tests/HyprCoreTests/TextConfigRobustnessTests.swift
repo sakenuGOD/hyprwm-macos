@@ -19,6 +19,19 @@ final class TextConfigRobustnessTests: XCTestCase {
         XCTAssertEqual(parsed.document["appearance"]?["border"]?["size"],.int(3))
         XCTAssertEqual(parsed.document["focus"]?["follow_mouse"],.int(0))
     }
+    func testInvalidCurveDoesNotDiscardValidSiblingCurveAndItsAnimation() throws {
+        let directory=try directory();defer{try? FileManager.default.removeItem(at:directory)}
+        let text = """
+        curves._bad = {"type":"bezier","points":[[0.2,0.4],[0.5,1]]}
+        curves.custom = {"type":"bezier","points":[[0.2,0.4],[0.5,1]]}
+        animations.windowsMove.curve = "custom"
+        """
+        let parsed=try TextConfig.parse(text,configDir:directory.path)
+        XCTAssertEqual(parsed.issues.map(\.line),[1])
+        XCTAssertNil(parsed.document["curves"]?["_bad"])
+        XCTAssertEqual(parsed.document["curves"]?["custom"]?["type"],.string("bezier"))
+        XCTAssertEqual(parsed.document["animations"]?["windowsMove"]?["curve"],.string("custom"))
+    }
     func testWatcherSurvivesRepeatedAtomicInodeReplacement() throws {
         let directory=try directory();defer{try? FileManager.default.removeItem(at:directory)}
         let file=directory.appendingPathComponent("hyprwm.conf")
