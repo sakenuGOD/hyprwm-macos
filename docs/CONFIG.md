@@ -44,7 +44,7 @@ All numeric distances are macOS points unless the name says milliseconds.
 | `runtime.hold_max_ms` | `200` | `runtime.hold_max_ms = 200` (`0…2000`) | `LiveEngine` publishes the native first-frame hold bound. `HYPRWM_HOLD` overrides it in seconds. |
 | `runtime.capture_sampling` | `false` | `runtime.capture_sampling = false` | `WM` gates window-edge color image sampling. It does not enable Lite proxy animation capture. |
 | `runtime.pointer_focus_pause_ms` | `100` | `runtime.pointer_focus_pause_ms = 100` (`0…2000`) | `WM.pointerFocus` delay after relevant native focus activity. |
-| `layout.gaps_in` | `5` | `layout.gaps_in = 8` (`0…100`) | `HyprConfig.gaps` → `Dwindle.withGaps`. One inner gap for both axes. |
+| `layout.gaps_in` | `5` | `layout.gaps_in = 8` (`0…100`) | `HyprConfig.gaps` → `Dwindle.withGaps`. Applied to each interior tile edge on both axes: adjacent margins combine, so `5` normally leaves `10 pt` between clients. |
 | `layout.gaps_out` | top `8`, right/bottom/left `12` | `layout.gaps_out = 12` or `layout.gaps_out.top = 16` (`0…200`) | `HyprConfig.gaps` → layout inset. A scalar applies to every side; side fields are `top`, `right`, `bottom`, `left`. Consumer fallback is `20` on an absent side. |
 | `layout.default_split_ratio` | `1` | `layout.default_split_ratio = 1.2` (`0.1…1.9`) | `HyprConfig.makeDwindle` divides by two for new splits: `1` gives a 50/50 split. Existing ratios are not balanced by this setting. |
 | `layout.split_width_multiplier` | `1` | `layout.split_width_multiplier = 1` (`0.1…10`) | `Dwindle` chooses split orientation using aspect ratio. |
