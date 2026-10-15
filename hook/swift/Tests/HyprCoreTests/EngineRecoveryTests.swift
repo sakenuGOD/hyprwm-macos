@@ -153,11 +153,11 @@ final class EngineRecoveryTests:XCTestCase {
     }
 
     final class PauseRecorder:ConfigureSink {
-        var jobs:[CfgJob]=[],pending=Set<Int>(),globalCancels=0,cancelled:[Int]=[]
+        var jobs:[CfgJob]=[],pending=Set<Int>(),inFlight=Set<Int>(),globalCancels=0,cancelled:[Int]=[]
         func submit(_ batch:[CfgJob]){jobs+=batch;pending.formUnion(batch.map(\.wid))}
         func cancelAll(){globalCancels+=1;pending.removeAll()}
         func cancel(_ wid:Int){cancelled.append(wid);pending.remove(wid)}
-        var idle:Bool{pending.isEmpty};func busy(_ wid:Int)->Bool{pending.contains(wid)}
+        var idle:Bool{pending.isEmpty && inFlight.isEmpty};func busy(_ wid:Int)->Bool{pending.contains(wid) || inFlight.contains(wid)}
     }
     func visiblePauseFixture()throws->(WM,FakeWorld,FakeEngine,PauseRecorder,Rect){
         let (wm,sys,eng,_,row)=try fixture(),sink=PauseRecorder(),actual=Rect(row.rect)!
@@ -204,6 +204,121 @@ final class EngineRecoveryTests:XCTestCase {
         let before=eng.ch.ops;wm.tick(socketReady:false)
         XCTAssertTrue(wm.pauseLandingWitnesses.isEmpty);XCTAssertEqual(eng.ch.ops,before);XCTAssertEqual(sys.bounds[1],manual)
         XCTAssertTrue(wm.shutdownDrained)
+    }
+
+    func testOrdinaryPauseDoesNotTimeoutForgetUnacceptedFrozenFrame()throws {
+        let(wm,sys,eng,sink,presented)=try visiblePauseFixture()
+        wm.setEnabled(false)
+        let accepted=Rect(presented.x,presented.y,presented.w+2.9513,presented.h-6.2010)
+        sink.pending.remove(1);sys.bounds[1]=accepted
+        ack(wm,sink.jobs[0],frame:accepted);step(wm,sys)
+        XCTAssertTrue(wm.cfgQ.isEmpty);XCTAssertEqual(wm.pauseLandingWitnesses[1]?.acceptedA,accepted)
+        sys.t+=1.1
+        let done=expectation(description:"ordinary pause deadline callback")
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.05){done.fulfill()};wait(for:[done],timeout:0.3)
+        XCTAssertFalse(eng.ch.ops.contains{$0["op"] == .string("forget")},"A is not at frozen B: elapsed time cannot authorize forget")
+        XCTAssertFalse(wm.enabled)
+        XCTAssertNotNil(wm.pauseLandingWitnesses[1])
+    }
+
+    func testOrdinaryPauseAcceptedPhysicalAnchorYieldsToManualMoveWithoutGeometry()throws {
+        let(wm,sys,eng,sink,presented)=try visiblePauseFixture();wm.setEnabled(false)
+        let accepted=Rect(presented.x,presented.y,presented.w+3,presented.h-6.201)
+        sink.pending.remove(1);sys.bounds[1]=accepted;ack(wm,sink.jobs[0],frame:accepted);step(wm,sys)
+        let hidden=wm.hidden,manual=Rect(accepted.x+20,accepted.y+15,accepted.w,accepted.h)
+        eng.ch.ops=[];sys.bounds[1]=manual;step(wm,sys)
+        XCTAssertEqual(eng.ch.ops.filter{$0["op"] == .string("forget")}.count,1)
+        XCTAssertFalse(eng.ch.ops.contains{$0["op"] == .string("geom")})
+        XCTAssertNil(wm.pauseLandingWitnesses[1]);XCTAssertEqual(sys.bounds[1],manual);XCTAssertEqual(wm.hidden,hidden)
+    }
+    func testOrdinaryPauseIgnoresObsoleteACKBeforeManualAuthority()throws {
+        let(wm,sys,eng,sink,presented)=try visiblePauseFixture();wm.setEnabled(false)
+        let accepted=Rect(presented.x,presented.y,presented.w,presented.h-7)
+        sink.pending.remove(1);sys.bounds[1]=accepted;ack(wm,sink.jobs[0],frame:accepted,current:false)
+        eng.ch.ops=[];step(wm,sys)
+        XCTAssertNil(wm.pauseLandingWitnesses[1]?.acceptedA);XCTAssertTrue(wm.cfgQ.isEmpty)
+        sys.bounds[1]=Rect(accepted.x+30,accepted.y,accepted.w,accepted.h);step(wm,sys)
+        XCTAssertTrue(eng.ch.ops.isEmpty,"An obsolete ACK cannot establish manual-move authority")
+    }
+    func testOrdinaryPauseBirthReuseHasNoNativeAuthorityAndKeepsHiddenRows()throws {
+        let(wm,sys,eng,sink,presented)=try visiblePauseFixture();wm.setEnabled(false)
+        let hiddenRow=Hidden(wid:2,pid:202,owner:"Other",space:1,rect:[30,30,200,200],extra:.object([("swift_birth",.string("202:5:5"))]))
+        wm.hidden=[hiddenRow];sink.pending.remove(1);sys.bounds[1]=presented
+        ack(wm,sink.jobs[0]);sys.births[101]="101:41:50";eng.ch.ops=[];step(wm,sys)
+        XCTAssertTrue(eng.ch.ops.isEmpty);XCTAssertNil(wm.pauseLandingWitnesses[1]);XCTAssertEqual(wm.hidden,[hiddenRow])
+    }
+    func testOrdinaryPauseResumeCancelsOldLandingAndCallbacks()throws {
+        let(wm,sys,eng,sink,_)=try visiblePauseFixture();wm.setEnabled(false)
+        let old=sink.jobs[0];wm.setEnabled(true);ack(wm,old);eng.ch.ops=[];sys.t+=2
+        let done=expectation(description:"old ordinary callback invalidated")
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.05){done.fulfill()};wait(for:[done],timeout:0.3)
+        step(wm,sys)
+        XCTAssertTrue(wm.enabled);XCTAssertTrue(wm.pauseLandingWitnesses.isEmpty);XCTAssertTrue(eng.ch.ops.isEmpty)
+        XCTAssertEqual(sink.globalCancels,2)
+    }
+    func testOrdinaryPauseExactNewNativeGestureCancelsAXAndReleasesWithoutGeometry()throws {
+        let(wm,sys,eng,sink,presented)=try visiblePauseFixture()
+        func context(_ wid:Int,_ birth:String,_ epoch:UInt64)->NativeResizeContext {
+            NativeResizeContext(pid:101,birth:birth,wid:wid,epoch:epoch,sequence:epoch,phase:1,frame:presented,point:(0,0))
+        }
+        sys.resizeContexts[101]=context(1,"101:40:50",5);wm.setEnabled(false);eng.ch.ops=[]
+        step(wm,sys);XCTAssertTrue(eng.ch.ops.isEmpty,"The pre-pause gesture cannot authorize release")
+        sys.resizeContexts[101]=context(2,"101:40:50",6);step(wm,sys);XCTAssertTrue(eng.ch.ops.isEmpty)
+        sys.resizeContexts[101]=context(1,"101:99:50",6);step(wm,sys);XCTAssertTrue(eng.ch.ops.isEmpty)
+        sys.resizeContexts[101]=context(1,"101:40:50",6);step(wm,sys)
+        XCTAssertEqual(sink.cancelled,[1]);XCTAssertEqual(eng.ch.ops.filter{$0["op"] == .string("forget")}.count,1)
+        XCTAssertFalse(eng.ch.ops.contains{$0["op"] == .string("geom")});XCTAssertNil(wm.pauseLandingWitnesses[1])
+    }
+
+    func testOrdinaryPauseManualTakeoverWaitsForCancelledInflightAXBeforeForget()throws {
+        let(wm,sys,eng,sink,presented)=try visiblePauseFixture();wm.setEnabled(false)
+        sink.inFlight.insert(1)
+        sys.resizeContexts[101]=NativeResizeContext(pid:101,birth:"101:40:50",wid:1,epoch:7,sequence:7,phase:1,frame:presented,point:(0,0))
+        eng.ch.ops=[];step(wm,sys)
+        XCTAssertEqual(sink.cancelled,[1]);XCTAssertTrue(wm.pauseLandingWitnesses[1]?.manualAuthority == true)
+        XCTAssertTrue(eng.ch.ops.isEmpty,"No forget before the cancelled AX worker exits")
+        step(wm,sys);XCTAssertEqual(sink.cancelled,[1]);XCTAssertTrue(eng.ch.ops.isEmpty)
+        sink.inFlight.remove(1);step(wm,sys)
+        XCTAssertEqual(eng.ch.ops.filter{$0["op"] == .string("forget")}.count,1)
+        XCTAssertFalse(eng.ch.ops.contains{$0["op"] == .string("geom")});XCTAssertNil(wm.pauseLandingWitnesses[1])
+    }
+
+    func testOrdinaryManualTakeoverSurvivesRecoveryStartingBeforeAXWorkerExits()throws {
+        let(wm,sys,eng,sink,presented)=try visiblePauseFixture();wm.setEnabled(false);sink.inFlight.insert(1)
+        sys.resizeContexts[101]=NativeResizeContext(pid:101,birth:"101:40:50",wid:1,epoch:8,sequence:8,phase:1,frame:presented,point:(0,0))
+        eng.ch.ops=[];step(wm,sys);XCTAssertTrue(wm.pauseLandingWitnesses[1]?.manualAuthority == true)
+        XCTAssertThrowsError(try wm.engineRestoreAll());sink.inFlight.remove(1)
+        for _ in 0..<4{step(wm,sys)}
+        XCTAssertFalse(wm.engineRecoveryActive);XCTAssertTrue(wm.pauseLandingWitnesses.isEmpty)
+        XCTAssertEqual(eng.ch.ops.filter{$0["op"] == .string("forget")}.count,1)
+        XCTAssertFalse(eng.ch.ops.contains{$0["op"] == .string("geom")});XCTAssertFalse(wm.enabled)
+    }
+
+    func testOrdinaryManualMovementBeforeRestoreAllIsConsumedBeforeRecoveryActivates()throws {
+        let(wm,sys,eng,sink,presented)=try visiblePauseFixture();wm.setEnabled(false)
+        let accepted=Rect(presented.x,presented.y,presented.w,presented.h-7)
+        sink.pending.remove(1);sys.bounds[1]=accepted;ack(wm,sink.jobs[0],frame:accepted);step(wm,sys)
+        let manual=Rect(accepted.x+20,accepted.y,accepted.w,accepted.h);sys.bounds[1]=manual;eng.ch.ops=[]
+        XCTAssertEqual(try wm.engineRestoreAll(),"restored all windows")
+        XCTAssertFalse(wm.engineRecoveryActive);XCTAssertEqual(sys.bounds[1],manual)
+        XCTAssertEqual(eng.ch.ops.filter{$0["op"] == .string("forget")}.count,1)
+        XCTAssertFalse(eng.ch.ops.contains{$0["op"] == .string("geom")});XCTAssertFalse(wm.enabled)
+    }
+
+    func testOrdinaryPauseAXReceiptCannotMistakeNativeLagForManualMovement()throws {
+        let(wm,sys,eng,sink,presented)=try visiblePauseFixture();wm.setEnabled(false)
+        let accepted=Rect(presented.x,presented.y,presented.w,presented.h-6.201)
+        let lagged=Rect(accepted.x+30,accepted.y,accepted.w,accepted.h)
+        sink.pending.remove(1);sys.bounds[1]=lagged;ack(wm,sink.jobs[0],frame:accepted);eng.ch.ops=[]
+        step(wm,sys)
+        XCTAssertTrue(eng.ch.ops.isEmpty,"ACK/native disagreement alone is not manual authority")
+        XCTAssertNil(wm.pauseLandingWitnesses[1]?.acceptedA)
+        XCTAssertFalse(wm.pauseLandingWitnesses[1]?.manualAuthority == true)
+        sys.bounds[1]=accepted;step(wm,sys)
+        XCTAssertEqual(wm.pauseLandingWitnesses[1]?.acceptedA,accepted)
+        XCTAssertTrue(eng.ch.ops.isEmpty)
+        sys.bounds[1]=Rect(accepted.x+20,accepted.y,accepted.w,accepted.h);step(wm,sys)
+        XCTAssertEqual(eng.ch.ops.filter{$0["op"] == .string("forget")}.count,1)
     }
 
 }

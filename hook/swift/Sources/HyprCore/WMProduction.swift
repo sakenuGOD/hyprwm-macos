@@ -93,7 +93,9 @@ extension WM {
                     c.alpha(wid,1,0,0);c.forget(wid);continue
                 }
                 let frame=slot.visible
-                pauseLandingWitnesses[wid] = PauseLandingWitness(pid:pid,birth:birth,frame:frame)
+                let native=sys.nativeResize(pid)
+                let nativeEpoch=native.flatMap{$0.wid==wid && $0.birth==birth ? $0.epoch:nil}
+                pauseLandingWitnesses[wid] = PauseLandingWitness(pid:pid,birth:birth,frame:frame,nativeEpoch:nativeEpoch)
                 c.geom(wid,frame,16,16,dpos:0,dsize:0,frm:frame,move:true,warp:true,stretch:false)
                 c.alpha(wid,1,16,0)
                 if slot.real.maxDiff(frame)<=1 {c.forget(wid);continue}
@@ -117,6 +119,7 @@ extension WM {
         DispatchQueue.main.asyncAfter(deadline:.now()+0.016) { [weak self] in
             guard let self,!self.enabled,self.pauseEpoch==epoch,!self.sys.sessionLocked(),
                   self.sys.processBirth(pid)==birth,self.sys.winPidLevel(wid).pid==pid else{return}
+            guard self.engineRecoveryActive else{return} // Ordinary pause is polled with current ACK/manual authority.
             let actual=self.sys.winBounds(wid)
             if self.engineRecoveryActive && actual.map({$0.maxDiff(frame)<=TOL}) != true && self.sys.now()>=deadline {
                 return // Recovery retains B until physical A ACK; never timeout-forget.

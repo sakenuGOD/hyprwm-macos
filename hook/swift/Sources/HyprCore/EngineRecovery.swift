@@ -3,6 +3,10 @@ import Foundation
 struct PauseLandingWitness {
     let pid:Int, birth:String, frame:Rect
     var released = false
+    var acknowledgedA:Rect?
+    var acceptedA:Rect?
+    var nativeEpoch:UInt64?
+    var manualAuthority = false
 }
 
 struct EngineRecoveryWork {
@@ -64,6 +68,7 @@ extension WM {
             return
         }
         if !engineRecoveryActive {
+            pollOrdinaryPauseLandings() // Preserve a paused user's takeover before recovery owns the pump.
             setEnabled(false)
             engineRecoveryActive = true
             engineRecoveryResume = resumeAfter
@@ -105,6 +110,7 @@ extension WM {
             if !startupKeepHidden { requestEngineRecovery(resumeAfter: enabled) }
         }
         if !enabled {
+            if !engineRecoveryActive {pollOrdinaryPauseLandings()}
             let hiddenIDs=Set(hidden.map(\.wid))
             cfgQ.removeAll { !hiddenIDs.contains($0.wid) } // late visible pause ACKs also drain after completion
             pruneCompletedPauseWitnesses()
@@ -163,6 +169,48 @@ extension WM {
         engineRecoveryCursor = (start + min(8, count)) % count
     }
 
+    /// Ordinary pause retains the frozen B until A accepts it or the user takes over.
+    /// Consume exact current ACKs before paused visible-result pruning.
+    private func pollOrdinaryPauseLandings() {
+        guard !enabled,!engineRecoveryActive,!sys.sessionLocked(),!sys.interactionOverlay(),overviewFrozen?() != true else{return}
+        for result in cfgQ {
+            guard var witness=pauseLandingWitnesses[result.wid],!witness.manualAuthority,
+                  result.pid==witness.pid,result.birth==witness.birth,result.to==witness.frame,
+                  result.isCurrent?()==true,result.e==0,let accepted=result.got,Self.recoveryFrame(accepted),
+                  sys.processBirth(witness.pid)==witness.birth,sys.winPidLevel(result.wid).pid==witness.pid else{continue}
+            witness.acknowledgedA=accepted
+            pauseLandingWitnesses[result.wid]=witness
+        }
+        for (wid,var witness) in pauseLandingWitnesses {
+            guard !witness.released,sys.processBirth(witness.pid)==witness.birth,sys.winPidLevel(wid).pid==witness.pid,
+                  !sys.protectedProcess(witness.pid),let actual=sys.winBounds(wid),Self.recoveryFrame(actual),
+                  let alpha=sys.winAlpha(wid),alpha>=0.999 else{continue}
+            // An AX receipt alone cannot distinguish stale native census from user movement.
+            // Establish a physical baseline only after both read paths agree and writers drain.
+            if witness.acceptedA==nil,cfgSink?.busy(wid) != true,!eng.c.pending,
+               let acknowledged=witness.acknowledgedA,actual.maxDiff(acknowledged)<=TOL {
+                witness.acceptedA=actual;pauseLandingWitnesses[wid]=witness
+            }
+            let native=sys.nativeResize(witness.pid)
+            let gesture=native.map{$0.pid==witness.pid && $0.birth==witness.birth && $0.wid==wid &&
+                $0.epoch != witness.nativeEpoch && (1...3).contains($0.phase)} == true
+            let moved=witness.acceptedA.map{cfgSink?.busy(wid) != true && actual.maxDiff($0)>1} == true
+            if !witness.manualAuthority && (gesture || moved) {
+                witness.manualAuthority=true;cfgSink?.cancel(wid)
+                pauseLandingWitnesses[wid]=witness
+            }
+            guard cfgSink?.busy(wid) != true,!eng.c.pending else{continue}
+            if witness.manualAuthority {
+                // Cancel/settle any in-flight AX write before releasing native ownership.
+                // No geometry command can replay the frozen frame after user takeover.
+                eng.c.forget(wid);eng.c.commit();pauseLandingWitnesses[wid]=nil
+            } else if actual.maxDiff(witness.frame)<=TOL {
+                cfgSink?.cancel(wid);eng.c.forget(wid);eng.c.commit();witness.released=true
+                pauseLandingWitnesses[wid]=witness
+            }
+        }
+    }
+
     private func pruneCompletedPauseWitnesses() {
         guard !enabled,!engineRecoveryActive,!eng.c.pending else{return}
         for (wid,witness) in pauseLandingWitnesses {
@@ -185,8 +233,13 @@ extension WM {
                 pauseLandingWitnesses[wid]=nil;continue // positive departure grants no native authority
             }
             guard current==witness.birth,owner==witness.pid,!sys.protectedProcess(witness.pid),!eng.c.pending,cfgSink?.busy(wid) != true,
-                  let actual=sys.winBounds(wid),actual.maxDiff(witness.frame)<=TOL,
+                  let actual=sys.winBounds(wid),Self.recoveryFrame(actual),
                   let alpha=sys.winAlpha(wid),alpha>=0.999 else{continue}
+            if witness.manualAuthority {
+                // This exact takeover was recorded while ordinarily paused, before recovery started.
+                eng.c.forget(wid);eng.c.commit();pauseLandingWitnesses[wid]=nil;continue
+            }
+            guard actual.maxDiff(witness.frame)<=TOL else{continue}
             let slot=eng.c.wins().first{$0.wid==wid}
             guard slot.map({!$0.held && !$0.moving}) ?? true else{continue}
             if witness.released || slot==nil {pauseLandingWitnesses[wid]=nil;continue}
