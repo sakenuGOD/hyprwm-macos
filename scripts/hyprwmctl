@@ -38,8 +38,18 @@ case "$operation" in
     *) fail "unknown command: $operation (use --help)" ;;
 esac
 [ -S "$socket" ] || fail "daemon socket is unavailable: $socket"
-response=$(printf '%s\n' "$command" | /usr/bin/nc -U -w 5 "$socket") || fail "daemon connection failed"
-[ -n "$response" ] || fail "daemon returned no response"
+restore_deadline=0
+if [ "$operation" = restore-all ]; then restore_deadline=$(($(date +%s) + 4)); fi
+while :; do
+    response=$(printf '%s\n' "$command" | /usr/bin/nc -U -w 5 "$socket") || fail "daemon connection failed"
+    [ -n "$response" ] || fail "daemon returned no response"
+    case "$operation:$response" in
+        restore-all:'error: Lite restoration pending:'*)
+            [ "$(date +%s)" -lt "$restore_deadline" ] || break
+            sleep 0.1 ;;
+        *) break ;;
+    esac
+done
 printf '%s\n' "$response"
 # The existing wire protocol returns plain text, so accept only known successes.
 case "$operation:$response" in
