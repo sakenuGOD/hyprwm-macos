@@ -145,6 +145,25 @@ final class MigrationProtocolTests:XCTestCase {
         XCTAssertFalse(wm.configured(),"An ignored resize must not convert the previous full-screen width into a minimum")
         XCTAssertNil(wm.mins[window.owner])
     }
+    func testPartiallyUnchangedConfigureOnlyLearnsTheAxisThatResponded() throws {
+        for (got,expected) in [(Rect(0,0,1446,450),[0.0,450.0]),
+                               (Rect(0,0,650,903),[650.0,0.0]),
+                               (Rect(0,0,1442,450),[0.0,450.0]),
+                               (Rect(0,0,650,899),[650.0,0.0]),
+                               (Rect(0,0,1446,400),[0.0,0.0]),
+                               (Rect(0,0,600,903),[0.0,0.0]),
+                               (Rect(0,0,650,400),[650.0,0.0]),
+                               (Rect(0,0,650,450),[650.0,450.0])] {
+            let fixture=ProductionPolicyTests(),(wm,sys,_,windows)=try fixture.world(fixture.pair()),window=windows[0]
+            let goal=Rect(0,0,600,400);wm.target[1]=goal
+            var result=CfgResult(wid:1,owner:window.owner,to:goal,got:got,e:0,pre:Rect(0,0,1446,903))
+            result.pid=101;result.birth="birth-1";result.isCurrent={true};sys.births[101]="birth-1"
+            wm.cfgQ=[result]
+            XCTAssertEqual(wm.configured(),expected.contains{$0>0})
+            XCTAssertEqual(wm.mins[window.owner]?.map{$0.double ?? 0} ?? [0,0],expected,
+                           "A changed height is not evidence that an unchanged width is a minimum, or vice versa")
+        }
+    }
     func testQueuedConfigureResultMustStillBelongToCurrentRequestAndProcess() throws {
         let fixture=ProductionPolicyTests(),(wm,sys,_,windows)=try fixture.world(fixture.pair()),window=windows[0]
         let target=wm.target[1]!

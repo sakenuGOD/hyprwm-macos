@@ -549,14 +549,15 @@ public final class WM {
             // A successful AX call can leave the previous frame untouched.
             // That is no evidence of a minimum; caching it can turn a former
             // full-width browser into a permanent constraint on every split.
-            if options.production,let previous=r.pre,
-               abs(previous.w-got.w)<=TOL,abs(previous.h-got.h)<=TOL {continue}
+            let unchangedWidth=options.production && r.pre.map{abs($0.w-got.w)<=TOL} == true
+            let unchangedHeight=options.production && r.pre.map{abs($0.h-got.h)<=TOL} == true
+            if unchangedWidth && unchangedHeight {continue}
             // Minimum: window settled (worker waited for quiet), but remains larger than target on an axis (S2).
             let m = mins[r.owner] ?? [.int(0), .int(0)]
             let (mw, mh) = (m[0], m[1])
             // Python max(mw, got): ties retain mw and its int/float type
-            let nw: JSON = got.w > r.to.w + TOL && got.w > (mw.double ?? 0) ? .double(got.w) : mw
-            let nh: JSON = got.h > r.to.h + TOL && got.h > (mh.double ?? 0) ? .double(got.h) : mh
+            let nw: JSON = !unchangedWidth && got.w > r.to.w + TOL && got.w > (mw.double ?? 0) ? .double(got.w) : mw
+            let nh: JSON = !unchangedHeight && got.h > r.to.h + TOL && got.h > (mh.double ?? 0) ? .double(got.h) : mh
             if nw.double != mw.double || nh.double != mh.double {
                 mins[r.owner] = [nw, nh]
                 log("minimum \(r.owner): [\(pyNum(nw)), \(pyNum(nh))] (window \(r.wid): \(r.pre.map { pyIntTuple([$0.w, $0.h]) } ?? "None") -> \(pyIntTuple([got.w, got.h])), target \(pyFloatTuple([r.to.w, r.to.h])))")
