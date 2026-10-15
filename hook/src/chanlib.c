@@ -179,7 +179,10 @@ int ch_snap(unsigned wid) {
 }
 
 // Publish all queued commands: the engine applies them in one tick.
-void ch_commit(void) { __atomic_store_n(&ch->h.cmd_head, pend, __ATOMIC_RELEASE); pub = pend; }
+void ch_commit(void) {
+    if (pend == pub) return; // An empty batch must not rewind another sequential writer's head.
+    __atomic_store_n(&ch->h.cmd_head, pend, __ATOMIC_RELEASE); pub = pend;
+}
 
 // Next engine event: 1 = available (written to *out), 0 = none.
 int ch_event(struct ch_evt *out) {
