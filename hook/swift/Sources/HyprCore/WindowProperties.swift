@@ -89,7 +89,7 @@ enum WindowProperties {
 }
 
 extension WM {
-    func ignored(_ window: WinInfo) -> Bool {
+    public func ignored(_ window: WinInfo) -> Bool {
         var ignored=false
         for rule in cfg.raw["window_rules"]?.array ?? [] where WindowProperties.matches(rule,window) {
             if let value=rule["ignore"] { ignored=value.truthy }
