@@ -104,7 +104,7 @@ if args == ["restore-all"] {
         let deadline = ProcessInfo.processInfo.systemUptime+4
         while true {
             do { print(try ControlClient(path: path).request("restore-all")); exit(0) }
-            catch let error as CmdError where error.description.hasPrefix("Lite restoration pending:") && ProcessInfo.processInfo.systemUptime < deadline {
+            catch let error as CmdError where (error.description.hasPrefix("Lite restoration pending:") || error.description.hasPrefix("Engine restoration pending:")) && ProcessInfo.processInfo.systemUptime < deadline {
                 Thread.sleep(forTimeInterval: 0.1)
             } catch { die("restore-all: \(error)") }
         }
