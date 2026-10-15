@@ -6,6 +6,8 @@
 
 int ax_trusted(void);
 int ax_tileable(int pid, unsigned wid);
+int ax_window_flags(int pid, unsigned wid);
+int ax_raise(int pid, unsigned wid);
 int ax_focus_context(int pid, unsigned *focused_wid, unsigned *context);
 int ax_frame(int pid, unsigned wid, double x, double y, double w, double h);
 int ax_size(int pid, unsigned wid, double w, double h);

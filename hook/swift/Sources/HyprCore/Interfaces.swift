@@ -194,6 +194,7 @@ public protocol SysAPI: AnyObject {
     func axGetFrame(_ pid: Int, _ wid: Int) -> Rect?
     func axForget(_ wid: Int)
     func axFocus(_ pid: Int, _ wid: Int, raise: Bool) -> Int
+    func preserveAppFloats(_ tile:WinInfo,space:Int,windows:[WinInfo])
     func axMenuPress(_ pid: Int, _ title: String) -> Int
     // winsnap.m
     func wsClose(_ pid: Int, _ wid: Int) -> Int
@@ -234,6 +235,7 @@ public protocol SysAPI: AnyObject {
 }
 
 public extension SysAPI {
+    func preserveAppFloats(_ tile:WinInfo,space:Int,windows:[WinInfo]) {}
     func windowPresence(_ pid:Int,_ wid:Int) -> Int {-1}
     func invalidateWindowPresence(_ wid:Int) {}
     func axSize(_ pid:Int,_ wid:Int,_ width:Double,_ height:Double) -> Int {-1}
