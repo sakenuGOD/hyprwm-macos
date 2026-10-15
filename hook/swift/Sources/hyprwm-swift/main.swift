@@ -15,6 +15,10 @@ let env = ProcessInfo.processInfo.environment
 
 func findHook() -> String {
     if let h = env["HYPRWM_HOOK"] { return h }
+    if let resources = Bundle.main.resourceURL?.appendingPathComponent("hook"),
+       FileManager.default.fileExists(atPath: resources.appendingPathComponent("config/hypr_cfg.json").path) {
+        return resources.path
+    }
     if Bundle.main.bundleIdentifier == "dev.hyprwm.HyprWM",
        let root=Bundle.main.object(forInfoDictionaryKey:"HyprWMSourceRoot") as? String,
        FileManager.default.fileExists(atPath:root+"/hook/config/hypr_shim.lua") {
@@ -29,6 +33,9 @@ func findHook() -> String {
 }
 
 let hook = findHook()
+// An installed, signed bundle carries its generated portable baseline. Loading
+// it must never require Lua or write back into the application bundle.
+let bundledHook = Bundle.main.resourceURL.map { hook.hasPrefix($0.path + "/") } ?? false
 let timeScale = Double(env["HYPRWM_TIME_SCALE"] ?? "1") ?? 1
 let args: [String] = {
     let supplied=Array(CommandLine.arguments.dropFirst())
@@ -81,6 +88,14 @@ if args.first == "--ui-preview" {
 
 if args == ["--diagnose"] {
     print(diagnose(hook: hook, controlPath: env["HYPRWM_CTL"] ?? "/tmp/hyprwm.ctl").dumps(ensureASCII: false))
+    exit(0)
+}
+if args == ["doctor"] {
+    print(doctor(hook: hook, controlPath: env["HYPRWM_CTL"] ?? "/tmp/hyprwm.ctl"))
+    exit(0)
+}
+if args == ["--init-config"] {
+    do { try initDefaultConfig(hook: hook) } catch { die("configuration: \(error)") }
     exit(0)
 }
 if args.first == "import" {
@@ -180,7 +195,7 @@ if CommandServer.isAlive(ctl) || (ctl != "/tmp/hyprwm.ctl" && CommandServer.isAl
 
 let cfg: HyprConfig
 do {
-    let base = try HyprConfig.load(configDir: hook + "/config", rebuild: env["HYPRWM_ADOPT_ENGINE"] != "1", timeScale: timeScale)
+    let base = try HyprConfig.load(configDir: hook + "/config", rebuild: !bundledHook && env["HYPRWM_ADOPT_ENGINE"] != "1", timeScale: timeScale)
     cfg = try NativeRuntimeConfig.load(base: base, configDir: hook + "/config", environment: env)
 } catch { die("configuration: \(error)") }
 let sys = LiveSys()
