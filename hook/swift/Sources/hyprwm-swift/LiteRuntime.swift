@@ -31,6 +31,7 @@ final class LiteRuntime {
     private var workspaceReceiver: LiteWorkspaceReceiver?
     private var pendingReload: DispatchWorkItem?
     private var censusAt = 0.0
+    private var createdRuntimeStages: [String: Int] = [:]
     private var observer: NSObjectProtocol?
     init(hook: String, config: HyprConfig, controlPath: String, stateDir: String, environment: [String: String]) throws {
         self.hook = hook; self.controlPath = controlPath; self.stateDir = stateDir; self.environment = environment
@@ -50,11 +51,16 @@ final class LiteRuntime {
         sys.ax.onCreated = { [weak self] created in self?.created(created) }
     }
     private func created(_ created: LiteAX.Created) {
-        guard !stopping, !recovering, wm.enabled, !sys.sessionLocked(), !sys.mouseDown(),
-              !sys.interactionOverlay(), sys.frontPid() == created.window.pid,
-              !sys.applicationHidden(created.window.pid), sys.now()-censusAt < 0.1,
-              let last = wm.last, last.space == sys.workspace,
-              let windows = sys.admitCreated(created) else { return }
+        func note(_ stage: String) { createdRuntimeStages[stage, default: 0] += 1 }
+        note("received")
+        guard !stopping, !recovering, wm.enabled else { note("paused"); return }
+        guard !sys.sessionLocked(), !sys.mouseDown(), !sys.interactionOverlay() else { note("interaction"); return }
+        guard sys.frontPid() == created.window.pid else { note("foreground"); return }
+        guard !sys.applicationHidden(created.window.pid) else { note("hidden"); return }
+        guard sys.now()-censusAt < 0.1 else { note("old_census"); return }
+        guard let last = wm.last, last.space == sys.workspace else { note("workspace"); return }
+        guard let windows = sys.admitCreated(created) else { note("sys_"+sys.createdRefusal); return }
+        note("admitted")
         // Reuse Core admission, classification, ignore/float/no-animation policy.
         // Metadata alone never authorizes a write or persisted ownership.
         let (changed, opened) = wm.sync(last.area, last.space, windows)
@@ -74,7 +80,7 @@ final class LiteRuntime {
             let pointer = sys.pointerHit()
             return try RuntimeMode.decorate(original, mode: .lite)
                 .setting("hotkey_bindings", hotkeys?.metadata ?? .array([]))
-                .setting("lite", engine.channel.capabilityStatus.setting("focus_context", focus).setting("pointer_hit", pointer.map { .int($0.wid) } ?? .null).setting("ignored_release_count", .int(ignoredReleases.count)).setting("recovery_count", .int(sys.recovery.records.count)).setting("recovery_error", (engineRecoveryIssue ?? sys.recovery.loadError).map(JSON.string) ?? .null).setting("hotkey_conflicts", .int(hotkeys?.conflicts ?? 0)))
+                .setting("lite", engine.channel.capabilityStatus.setting("focus_context", focus).setting("pointer_hit", pointer.map { .int($0.wid) } ?? .null).setting("ignored_release_count", .int(ignoredReleases.count)).setting("created_runtime", .object(createdRuntimeStages.sorted { $0.key < $1.key }.map { ($0.key, .int($0.value)) })).setting("recovery_count", .int(sys.recovery.records.count)).setting("recovery_error", (engineRecoveryIssue ?? sys.recovery.loadError).map(JSON.string) ?? .null).setting("hotkey_conflicts", .int(hotkeys?.conflicts ?? 0)))
                 .setting("workspace_public", workspaceStatus).dumps(ensureASCII: false)
         }
         if command == "reload" { try reload(); return "configuration reloaded" }

@@ -113,12 +113,20 @@ final class LiteSys: SysAPI {
     private var observers: [NSObjectProtocol] = []
     private var createdWindows: [Int: LiteAX.Created] = [:]
     private(set) var createdAdmissions = 0
+    private(set) var createdRefusal = "none"
     func admitCreated(_ created: LiteAX.Created) -> [WinInfo]? {
         let window = created.window
-        guard now()-created.received < 0.25, membership[window.wid] == nil,
-              !rawWindows.contains(where: { $0.wid == window.wid }),
-              processBirth(window.pid) == created.birth, Self.publicOwner(window.wid) == window.pid,
-              ax.window(window.pid, window.wid).map({ CFEqual($0.element, created.element) }) == true else { return nil }
+        createdRefusal = "expired"
+        guard now()-created.received < 0.25 else { return nil }
+        createdRefusal = "membership"
+        guard membership[window.wid] == nil else { return nil }
+        createdRefusal = "raw_census"
+        guard !rawWindows.contains(where: { $0.wid == window.wid }) else { return nil }
+        createdRefusal = "lifetime_or_owner"
+        guard processBirth(window.pid) == created.birth, Self.publicOwner(window.wid) == window.pid else { return nil }
+        createdRefusal = "element"
+        guard ax.window(window.pid, window.wid).map({ CFEqual($0.element, created.element) }) == true else { return nil }
+        createdRefusal = "none"
         var admitted = window; admitted.space = workspace
         createdWindows[window.wid] = created
         createdAdmissions += 1
