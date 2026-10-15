@@ -6,6 +6,8 @@ HyprWM is an independent, experimental tiling window manager for macOS, inspired
 
 ## Install
 
+The current [0.1.1 development preview](https://github.com/sakenuGOD/hyprwm-macos/releases/tag/v0.1.1-preview) includes a DMG.
+
 Visit the [latest release](https://github.com/sakenuGOD/hyprwm-macos/releases/latest), download the `.dmg` asset when available, mount it, and drag **HyprWM.app** into **Applications**. Build details are on the [releases page](https://github.com/sakenuGOD/hyprwm-macos/releases).
 
 **The current app package is a menu companion. It requires an already installed native engine, a running compatible daemon, and the source checkout used to build it. It is not a standalone window manager installer.** The package stores a source path and does not bundle or install the native engine. Moving or deleting that checkout can break settings and runtime discovery. A fresh Mac installation is not yet a supported end-to-end flow.
