@@ -1,6 +1,6 @@
 # HyprWM contributor map
 
-HyprWM is an independent experimental macOS tiling window manager. Read this file in two minutes, then inspect the code for the behavior you are changing. Distinguish implementation, automated checks and live evidence in every claim. A task-specific runbook takes precedence over this reference.
+HyprWM is an experimental macOS tiling WM. Distinguish implementation, automated checks and live evidence. The active task runbook takes precedence.
 
 ## Map and commands
 
@@ -26,21 +26,21 @@ swift test --package-path hook/swift
 git diff --check
 ```
 
-The release binary is `hook/swift/.build/release/hyprwm-swift`. `scripts/hyprwm` locates the checkout's binary; `scripts/hyprwmctl status` queries a running daemon. `./install.sh` installs the standalone app without launching; `zsh hook/swift/build_app.sh` builds the separate development menu companion. Configuration: `~/.config/hyprwm/hyprwm.conf`, overridden by `HYPRWM_CONFIG`. Control: `/tmp/hyprwm.ctl`, overridden by `HYPRWM_CTL`. `hook/start.sh`/`stop.sh` delegate to `hook/lifecycle.py`; inspect its current runtime selection before a live launch.
+Binary: `hook/swift/.build/release/hyprwm-swift`; wrapper: `scripts/hyprwm`; live status: `scripts/hyprwmctl status`. `./install.sh` installs without launching; `zsh hook/swift/build_app.sh` builds the separate menu companion. Config: `~/.config/hyprwm/hyprwm.conf` / `HYPRWM_CONFIG`. Control: `/tmp/hyprwm.ctl` / `HYPRWM_CTL`. `hook/start.sh`/`stop.sh` delegate to `hook/lifecycle.py`; inspect its runtime selection before launching.
 
 ## Work discipline
 
-1. Record git state and the affected behavior's baseline before editing. Preserve unrelated dirty/untracked work. Small diffs, one scenario per English commit; stage exact paths. Commit or explain the blocker every 60–90 minutes during a long run.
-2. Record each check with time, commit, result and evidence path. Do not rerun it without a relevant code change. A pre-existing failure is recorded once. For documentation, source/command/link verification is normally sufficient.
-3. Timebox a bug to 40 minutes or three failed hypotheses. Record the specific blocker and next new hypothesis, then take the next item. No refactors, renames or new frameworks during a stabilization run; new diagnostic tooling is capped at 20 minutes.
-4. A passing baseline scenario must stay passing. Revert a change that creates a regression immediately. Integration requires a rebuild and the affected baseline rows to pass; freeze means regression fixes only. Never mark a milestone done because time ran out.
-5. Save compact progress at phase boundaries. After compaction, reread the active runbook and check ledger. Never repeat an approach already recorded as failed.
+1. Record git state and affected baseline before editing; preserve unrelated work. Small diffs, one scenario per English commit; stage exact paths. Commit or record the blocker every 60–90 minutes.
+2. Log checks with time, commit, result and evidence. Rerun only after a relevant change. Record pre-existing failures once. Docs normally need source/command/link verification.
+3. Timebox bugs to 40 minutes or three failed hypotheses. Record blocker and next new hypothesis, then move on. During stabilization: no refactors, renames or new frameworks; diagnostic tooling gets 20 minutes maximum.
+4. Revert baseline regressions immediately. Integration requires a rebuild and affected baseline rows passing. Freeze permits regression fixes only; time running out never completes a milestone.
+5. Save progress at phase boundaries. After compaction, reread runbook and ledger; never repeat recorded failed approaches.
 
 ## Evidence and baseline matrix
 
-Keep one matrix with scenario ID, baseline, current status, build and evidence. Include focus (mouse/close/drag/Space), dialogs, hide/restore and transfer, insertion/removal/promotion, animation retarget/landing, first frame/tabs/bursts, resize/throw, config reload/appearance isolation, pause/resume, IPC/import, Lite, recovery and installation. Use the active runbook's complete matrix when provided.
+Keep scenario ID, baseline/current status, build and evidence in one matrix. Cover focus, dialogs, restore/transfer, layout, motion/first-frame/tabs/bursts, resize/throw, config, pause, IPC/import, Lite, recovery and installation. Use the active runbook's full matrix.
 
-A live pass needs **two of three** on the current build/session: (1) `hyprwmctl status` with expected tree/rects/focus/hidden list, (2) native truth such as the real key window or text landing correctly, (3) an inspected screenshot or sampled motion clip. Builds, unit tests and settings previews never prove desktop behavior. Motion review inspects first three, midpoint and final five frames: body/border divergence ≤2 px, no jump/flash, exact target landing. Use disposable test windows; record recovery and close only those windows afterwards. Only one operator holds the live desktop lease at a time.
+A live pass needs **two of three** on the current build/session: expected IPC state; native key/input truth; inspected screenshot/clip. Builds, tests and settings previews never prove desktop behavior. For motion inspect first three, midpoint and final five actual frames: body/border divergence ≤2 px, no jump/flash, exact landing. Use disposable windows, verify recovery, close only test windows. One desktop lease/operator at a time.
 
 ## Hard lines
 
