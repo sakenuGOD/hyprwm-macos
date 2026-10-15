@@ -140,6 +140,7 @@ public final class WM {
     var closeDepartures:[Int:CloseDeparture]=[:]
     var closePresenceTransitions=Set<Int>()
     var closeMetrics=JSON.object([])
+    var pauseEpoch=0
     /// Verified workspace provider: preflight must prove a bounded ordinary target.
     /// Returning true on commit queues a switch; only fresh native snapshots finish it.
     public var workspaceFocus:((Int,Bool)->Bool)?
@@ -407,7 +408,11 @@ public final class WM {
         }
         for (wid, to) in rects {
             guard let cw = cur[wid] else { continue }
-            if !force && target[wid] == to { continue }
+            // A forced reconciliation must not restart an unchanged motion.
+            if target[wid] == to && !opening.contains(wid) && !restoring.contains(wid) {
+                if !force || engW[wid]?.moving==true || cfgSink?.busy(wid)==true ||
+                    (real[wid] ?? cw.rect).maxDiff(to)<=1 {continue}
+            }
             if options.production,liveBufferShrinks.removeValue(forKey:wid) != nil {cfgSink?.cancel(wid)}
             let noAnimation = options.production && windowPolicy(cw).noAnimation
             let presentedOpening=presentedOpenings.contains(wid) && inOn && !noAnimation && !restoring.contains(wid)
@@ -649,6 +654,12 @@ public final class WM {
             log("окно \(wid) ушло из раскладки" + (g.map { String(format: " (через %.0f мс после движка)", (sys.now() - $0) * 1000) } ?? " (движок не сообщал)"))
             s.tree = options.production && closed.contains(wid)
                 ? tile.removeReorientingPromoted(s.tree,wid,in:area) : Dwindle.remove(s.tree,wid)
+            if options.production {
+                cfgSink?.cancel(wid)
+                liveBufferShrinks[wid]=nil
+                snapshotConfigures[wid]=nil
+                revokeSnapshotLease(wid)
+            }
             target[wid] = nil
             if options.production {finishCloseDeparture(wid)}
             if s.full == wid { s.full = nil }
@@ -1100,7 +1111,14 @@ public final class WM {
     /// Движок: покоящееся тайловое окно ушло с цели. Плитка главнее: вернуть тем же drift, но не больше
     /// 3 раз за 10 с на окно. Перетаскивание мышью — не сюда (realign после отпускания).
     public func onMoved(_ wid: Int, _ a: Rect) -> Bool {
-        if sys.mouseDown() || target[wid] == nil || closing.contains(wid) { return false }
+        guard !sys.mouseDown(),let destination=target[wid],!closing.contains(wid) else {return false}
+        if options.production {
+            // Events may describe the preceding destination while its replacement
+            // is queued or moving. They cannot invalidate the newer motion.
+            if a.maxDiff(destination)<=TOL || eng.c.pending || cfgSink?.busy(wid)==true ||
+                eng.c.wins().contains(where:{$0.wid==wid && ($0.moving || $0.held)}) {return false}
+            if let actual=sys.winBounds(wid),actual.maxDiff(destination)<=TOL {return false}
+        }
         let now = sys.now()
         let hist = (movedT[wid] ?? []).filter { now - $0 < 10 }
         if hist.count >= 3 { return false }

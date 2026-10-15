@@ -210,14 +210,16 @@ public final class Configurer: ConfigureSink {
         guard latest(wid,seq), owned() else { return }
         let pre = sys.axGetFrame(pid, wid)
         guard latest(wid, seq), owned() else { return }
-        let e = j.verifyOnly ? 0 : j.sizeOnly ? sys.axSize(pid,wid,to.w,to.h) : sys.axFrame(pid, wid, to)
-        var got: Rect?
+        let unchanged=pre.map { current in
+            j.sizeOnly ? abs(current.w-to.w)<=1 && abs(current.h-to.h)<=1 : current.maxDiff(to)<=1
+        } ?? false
+        let e = j.verifyOnly || unchanged ? 0 : j.sizeOnly ? sys.axSize(pid,wid,to.w,to.h) : sys.axFrame(pid, wid, to)
+        var got: Rect? = unchanged ? pre:nil
         var same = 0
         let t0 = sys.now()
-        while e == 0 && sys.now() - t0 < 0.6 {
-            sys.sleep(0.03)
+        while e == 0 && !unchanged && sys.now() - t0 < 0.6 {
             if !latest(wid, seq) || !owned() { return }                       // пришла новая цель — этот ответ не нужен
-            guard let cur = sys.axGetFrame(pid, wid) else { continue }
+            guard let cur = sys.axGetFrame(pid, wid) else {sys.sleep(0.03);continue}
             if abs(cur.w - to.w) <= TOL && abs(cur.h - to.h) <= TOL {
                 got = cur
                 break
@@ -229,6 +231,7 @@ public final class Configurer: ConfigureSink {
             if same >= 3 && (pre == nil || max(abs(cur.w - pre!.w), abs(cur.h - pre!.h)) > 1 || sys.now() - t0 > 0.35) {
                 break
             }
+            sys.sleep(0.03)
         }
         if latest(wid, seq) && owned() {
             var result=CfgResult(wid:wid,owner:j.owner,to:to,got:got,e:e,pre:pre)
