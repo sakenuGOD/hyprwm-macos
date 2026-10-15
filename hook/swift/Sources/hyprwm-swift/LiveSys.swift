@@ -7,6 +7,7 @@ import Foundation
 import HyprCore
 
 final class LiveSys: SysAPI {
+    private let ruleMetadata=AXWindowMetadata()
     private let applicationMetadata=ApplicationMetadataCache()
     private func metadata(_ pid:Int) -> ApplicationMetadata? {
         guard let birth=processBirth(pid) else {applicationMetadata.remove(pid);return nil}
@@ -74,7 +75,7 @@ final class LiveSys: SysAPI {
         var buffer=[CChar](repeating:0,count:1<<21)
         let size=ws_snapshot(&buffer,Int32(buffer.count))
         guard size>0,size<=buffer.count else{throw CmdError("bounded independent focus census unavailable")}
-        return try buffer.withUnsafeBufferPointer{pointer in Snapshot.parse(try JSON.parse(Array(UnsafeRawBufferPointer(start:pointer.baseAddress,count:Int(size))))) }
+        return ruleMetadata.enrich(try buffer.withUnsafeBufferPointer{pointer in Snapshot.parse(try JSON.parse(Array(UnsafeRawBufferPointer(start:pointer.baseAddress,count:Int(size))))) })
     }
     // AXRaise only restores stacking; it must never select the floating window as key.
     private func raiseAppFloats(_ tile:WinInfo,space:Int,windows:[WinInfo],birth:String,current:()->Bool) {
@@ -310,7 +311,7 @@ final class LiveSys: SysAPI {
         }
         var snapshot = Snapshot.parse(j)
         snapshot.locked = sessionLocked()
-        return snapshot
+        return ruleMetadata.enrich(snapshot)
     }
 
     func winPidLevel(_ wid: Int) -> (pid: Int?, level: Int?) {
