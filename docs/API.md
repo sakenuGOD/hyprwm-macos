@@ -93,6 +93,8 @@ Lite workspace IDs are `1…10`. These commands require enabled tiling, complete
 
 Use a fresh `status` before an explicit-ID mutation. Engine workspace commands use separate native capability checks; do not interpret a Lite ID as a native Space ID.
 
+Before leaving a managed key window for an empty Lite workspace, or sending its last tile silently, Lite reserves a visible **Workspace N / No windows** keyboard receiver. Failed focus or lifetime verification refuses the transition before parking the current window. The diagnostic `workspace_public.empty_receiver` reports `visible`, `key`, `window` and `key_events`; the last field counts key events without retaining typed content. It does not certify input delivery in another application.
+
 ## Event subscriptions
 
 The event socket defaults to `/tmp/hyprwm.ctl.events`; set `HYPRWM_EVENTS` in both

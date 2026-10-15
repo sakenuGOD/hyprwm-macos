@@ -53,6 +53,8 @@ Press **Control–Option–P**, choose the menu’s pause action, or use the cli
 
 `pause` stops automatic tiling for the session; it is not an uninstall or a promise to unhide every parked window. Use `restore-all` for visibility recovery. `runtime.enabled` controls the persistent setting. An unrelated config save preserves a manual pause. Resume explicitly, or change the persistent enable setting; incomplete Lite recovery must finish before resuming.
 
+An empty Lite workspace can show a **Workspace N / No windows** panel. This is HyprWM's visible keyboard receiver while clients are parked; it does not edit or retain typed text. Switch back to an occupied workspace to return to a client. If a workspace command refuses keyboard-receiver verification, read that error before retrying; the failed reservation preserves the current windows. `status` exposes the panel under `workspace_public.empty_receiver`.
+
 ## A dialog or sheet is buried
 
 Record whether the object is an AX dialog, sheet, modal panel or an ordinary floated window; include its parent relationship if available. Do not solve generic dialog policy with application-name exceptions. Pause the manager if necessary, dismiss the dialog normally, and check where input lands after dismissal. Remove experimental rules from the reproduction. Report separate cases for staying above tiles, preserving modal input and returning focus to the parent.
