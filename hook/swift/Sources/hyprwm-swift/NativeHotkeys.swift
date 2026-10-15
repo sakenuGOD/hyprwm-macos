@@ -71,8 +71,13 @@ enum NativeHotkeys {
                 guard let command = raw as? [String], !command.isEmpty, command.count <= 32,
                       command.allSatisfy({ !$0.contains("\0") && $0.utf8.count <= 512 }) else { throw fail("Invalid hotkey command identity") }
                 let matches = rows.indices.filter { rows[$0]["cmd"] as? [String] == command }
-                guard matches.count == 1 else { throw fail("Hotkey action missing or ambiguous in current baseline") }
-                index = matches[0]
+                if let exact=matches.first(where: { $0 == id && !edited.contains($0) }) ?? matches.first(where: { !edited.contains($0) }) {
+                    index=exact
+                } else {
+                    guard rows.count < 4096,integer(item["keycode"]) != nil,integer(item["modifiers"]) != nil else {throw fail("New binding requires keycode and modifiers")}
+                    index=rows.count
+                    rows.append(["cmd":command,"keycode":0,"mods":0x100,"enabled":true,"repeat":false,"desc":command.joined(separator:" ")])
+                }
             } else { index = id }
             guard rows.indices.contains(index), edited.insert(index).inserted,
                   rows[index]["event"] as? String != "wheel" else { throw fail("Stale, repeated or wheel hotkey override") }

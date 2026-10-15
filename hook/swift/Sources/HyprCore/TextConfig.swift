@@ -43,6 +43,7 @@ public enum TextConfig {
         let schema = try schemaDocument(configDir)
         var result = JSON.object([]), issues: [Issue] = [], sections: [String] = []
         var origins: [String:Int] = [:]
+        var rowOrigins: [String:[Int]] = [:]
         for (offset, raw) in text.components(separatedBy: .newlines).enumerated() {
             let line = offset + 1, source = stripComment(raw).trimmingCharacters(in: .whitespaces)
             if source.isEmpty { continue }
@@ -61,13 +62,13 @@ public enum TextConfig {
             let path = (sections + [key]).joined(separator: ".")
             do {
                 if sections.isEmpty && (key == "bind" || key == "windowrule") {
-                    let value = try parseValue(rawValue)
                     let target = key == "bind" ? "hotkeys" : "window_rules"
+                    let value = rawValue.hasPrefix("{") ? try parseValue(rawValue) : try readableRecord(key, rawValue, ordinal:result[target]?.array?.count ?? 0)
                     guard value.object != nil else { throw CmdError("\(key): ожидается объект {…}") }
                     let itemSchema = schema["properties"]?[target]?["items"] ?? .object([])
                     try validate(value, schema: itemSchema, root: schema, path: key)
                     let entries = (result[target]?.array ?? []) + [value]
-                    result = result.setting(target, .array(entries)); origins[target] = line; continue
+                    result = result.setting(target, .array(entries)); origins[target] = line; rowOrigins[target,default:[]].append(line); continue
                 }
                 let components = path.split(separator: ".").map(String.init)
                 guard let field = fieldSchema(components, schema: schema, root: schema) else { throw CmdError("неизвестный параметр \(path)") }
@@ -85,6 +86,14 @@ public enum TextConfig {
         let ordered = groups.sorted { a,b in (a.0 == "curves" ? 0 : a.0 == "animations" ? 2 : 1) < (b.0 == "curves" ? 0 : b.0 == "animations" ? 2 : 1) }
         for (name, value) in ordered {
             if name == "runtime" { accepted = accepted.setting(name,value); continue }
+            if (name == "hotkeys" || name == "window_rules"),let rows=value.array {
+                for (index,row) in rows.enumerated() {
+                    let candidate=accepted.setting(name,.array((accepted[name]?.array ?? [])+[row]))
+                    do { _ = try NativeRuntimeConfig.build(base:base,document:candidate,environment:[:]); accepted=candidate }
+                    catch { issues.append(.init(line:rowOrigins[name].flatMap { $0.indices.contains(index) ? $0[index] : nil } ?? origin(name,origins),message:String(describing:error))) }
+                }
+                continue
+            }
             if let children = value.object, name != "curves" {
                 for (key,child) in children {
                     let current = accepted[name] ?? .object([])
@@ -130,12 +139,12 @@ public enum TextConfig {
     }
     public static func render(_ document: JSON, configDir: String) -> String {
         let schema = (try? schemaDocument(configDir)) ?? .object([])
-        var lines = ["# HyprWM — единственный файл настроек. Изменения применяются после сохранения.","# Разделы: name { … }. Значения: true/false, числа, строки, массивы [ … ].", "# bind и windowrule повторяются; значение — объект с параметрами действия/правила.", ""]
+        var lines = ["# HyprWM configuration. This file is the source of truth; saving applies changes immediately.","# Sections: name { ... }. Values: true/false, numbers, strings, arrays [ ... ].", "# bind = SUPER, H, focus, left | windowrule = float, app:^Calculator$", ""]
         for (section,value) in document.object ?? [] {
             if section == "$schema" { continue }
             if section == "hotkeys" || section == "window_rules" {
                 let name = section == "hotkeys" ? "bind" : "windowrule"
-                lines.append("# \(section == "hotkeys" ? "Горячие клавиши: id, keycode 0…127, modifiers (Carbon), command [аргументы]." : "Правила: match.class/title — регулярное выражение; float/ignore/no_anim/no_follow_mouse — true/false.")")
+                lines.append("# \(section == "hotkeys" ? "Bindings: modifiers, key, command, arguments; legacy JSON objects are also accepted." : "Rules: float/tile/ignore, app:regex, title:regex, role:regex, subrole:regex.")")
                 for item in value.array ?? [] { lines.append(name+" = "+item.dumps(indent:nil)) }
                 lines.append(""); continue
             }
@@ -143,14 +152,14 @@ public enum TextConfig {
                 lines.append(section+" {")
                 for (key,child) in fields {
                     let path = [section,key]
-                    if section == "curves" { lines.append("    # Кривая: bezier с points [[x,y],[x,y]] или spring с mass/stiffness/damping."); lines.append("    "+key+" = "+child.dumps(indent:nil)); continue }
+                    if section == "curves" { lines.append("    # Curve: bezier points [[x,y],[x,y]], x 0...1/y -10...10; spring mass .001...100, stiffness .001...100000, damping .001...10000."); lines.append("    "+key+" = "+child.dumps(indent:nil)); continue }
                     renderField(child,path:path,prefix:"    ",schema:schema,lines:&lines)
                 }
                 lines.append("}"); lines.append("")
             } else { renderField(value,path:[section],prefix:"",schema:schema,lines:&lines); lines.append("") }
         }
-        if document["hotkeys"] == nil { lines += ["# bind = {\"id\":0,\"keycode\":12,\"modifiers\":2048,\"enabled\":true,\"command\":[\"close\"]}"] }
-        if document["window_rules"] == nil { lines += ["# windowrule = {\"match\":{\"class\":\"^Calculator$\"},\"float\":true}"] }
+        if document["hotkeys"] == nil { lines += ["# bind = ALT, Q, close"] }
+        if document["window_rules"] == nil { lines += ["# windowrule = float, app:^Calculator$"] }
         return lines.joined(separator:"\n")+"\n"
     }
     private static func renderField(_ value: JSON, path: [String], prefix: String, schema: JSON, lines: inout [String]) {
@@ -162,14 +171,14 @@ public enum TextConfig {
         if let choices = field?["enum"]?.array { bounds = choices.map { $0.dumps(indent:nil) }.joined(separator:" | ") }
         else if let lower = field?["minimum"]?.double, let upper = field?["maximum"]?.double { bounds = "\(format(lower))…\(format(upper))" }
         else if field?["type"]?.string == "boolean" { bounds = "true | false" }
-        else { bounds = field?["type"]?.string == "array" ? "массив значений" : "строка" }
+        else { bounds = field?["type"]?.string == "array" ? "array of values" : "string" }
         lines.append(prefix+"# "+description(path.joined(separator:"."))+"; "+bounds)
         let name = prefix.isEmpty ? path.joined(separator:".") : path.dropFirst().joined(separator:".")
         lines.append(prefix+name+" = "+value.dumps(indent:nil))
     }
     private static func format(_ number: Double) -> String { number == number.rounded() ? String(Int(number)) : String(number) }
     private static func description(_ path: String) -> String {
-        let names = ["runtime.enabled":"Автоматический тайлинг","time_scale":"Множитель длительности анимаций","layout.gaps_in":"Отступ между окнами, pt","layout.gaps_out":"Отступ от края экрана, pt","appearance.border.size":"Толщина рамки, pt","focus.follow_mouse":"Фокус за мышью: 0 выключен, 1 включён","runtime.window_resize_mode":"native — края без растяжения, buffer — масштабирование содержимого","runtime.overview_hidden_windows":"Mission Control: экспериментальная функция"]
+        let names = ["runtime.enabled":"Automatic tiling","time_scale":"Animation duration multiplier","layout.gaps_in":"Inner gap, pt","layout.gaps_out":"Outer gap, pt","appearance.border.size":"Border width, pt","focus.follow_mouse":"Focus follows mouse: 0 off, 1 on","runtime.window_resize_mode":"native preserves content scale; buffer scales the live surface","runtime.overview_hidden_windows":"Mission Control hidden windows, experimental"]
         return names[path] ?? path
     }
     public static func write(_ document: JSON, configDir: String, preserving text: String? = nil) throws {
@@ -192,6 +201,79 @@ public enum TextConfig {
             return line.hasPrefix("#") && !generated.contains(line) && seen.insert(line).inserted
         }
         return (comments.isEmpty ? "" : comments.joined(separator:"\n")+"\n\n")+render(document,configDir:configDir)
+    }
+    private static func readableRecord(_ kind:String,_ text:String,ordinal:Int) throws -> JSON {
+        let fields=csvFields(text)
+        if kind == "windowrule" {
+            guard let action=fields.first, !action.isEmpty else {throw CmdError("windowrule: expected action, app:regex")}
+            var rule=JSON.object([]),match=JSON.object([])
+            let actionParts=action.split(maxSplits:1,whereSeparator:\.isWhitespace).map(String.init)
+            let verb=actionParts[0].lowercased()
+            let on=actionParts.count<2 || !["0","false","off"].contains(actionParts[1].lowercased())
+            switch verb {
+            case "float":rule=rule.setting("float",.bool(on))
+            case "tile":rule=rule.setting("float",.bool(false))
+            case "ignore","no_anim","no_follow_mouse":rule=rule.setting(verb,.bool(on))
+            default:throw CmdError("windowrule: unsupported action \(verb)")
+            }
+            for field in fields.dropFirst() {
+                guard let colon=field.firstIndex(of:":") else {throw CmdError("windowrule: expected app:/title:/role:/subrole: pattern")}
+                let rawKey=String(field[..<colon]).trimmingCharacters(in:.whitespaces).lowercased()
+                let key=rawKey == "app" ? "class" : rawKey
+                guard ["class","title","role","subrole"].contains(key) else {throw CmdError("windowrule: unknown match \(rawKey)")}
+                let source=String(field[field.index(after:colon)...]).trimmingCharacters(in:.whitespaces)
+                let pattern=(try? JSON.parse(source))?.string ?? source
+                match=match.setting(key,.string(pattern))
+            }
+            guard match.object?.isEmpty == false else {throw CmdError("windowrule: at least one match is required")}
+            return rule.setting("match",match)
+        }
+        guard fields.count>=3 else {throw CmdError("bind: expected MODIFIERS, KEY, COMMAND[, ARGUMENTS]")}
+        var modifiers=0
+        for part in fields[0].uppercased().split(whereSeparator:{ $0.isWhitespace || $0 == "+" || $0 == "|" }) {
+            switch part {
+            case "SUPER","CMD","COMMAND":modifiers |= 0x100
+            case "ALT","OPTION":modifiers |= 0x800
+            case "CTRL","CONTROL":modifiers |= 0x1000
+            case "SHIFT":modifiers |= 0x200
+            default:throw CmdError("bind: unknown modifier \(part)")
+            }
+        }
+        guard modifiers & 0x1900 != 0 else {throw CmdError("bind: Command, Option or Control is required")}
+        let key=fields[1].lowercased()
+        let keycode:Int
+        if key.hasPrefix("code:"),let code=Int(key.dropFirst(5)),(0...127).contains(code) {keycode=code}
+        else if let code=keyCodes[key] {keycode=code}
+        else {throw CmdError("bind: unknown key \(key); use code:0...127")}
+        var command:[String]=[]
+        for field in fields.dropFirst(2) {command += try commandWords(field)}
+        guard !command.isEmpty else {throw CmdError("bind: command is required")}
+        return .object([("id",.int(2048+ordinal)),("keycode",.int(keycode)),("modifiers",.int(modifiers)),("enabled",.bool(true)),("command",.array(command.map(JSON.string)))])
+    }
+    private static let keyCodes:[String:Int] = ["a":0,"s":1,"d":2,"f":3,"h":4,"g":5,"z":6,"x":7,"c":8,"v":9,"b":11,"q":12,"w":13,"e":14,"r":15,"y":16,"t":17,"1":18,"2":19,"3":20,"4":21,"6":22,"5":23,"=":24,"9":25,"7":26,"-":27,"8":28,"0":29,"]":30,"o":31,"u":32,"[":33,"i":34,"p":35,"return":36,"enter":36,"l":37,"j":38,"'":39,"k":40,";":41,"\\":42,",":43,"/":44,"n":45,"m":46,".":47,"tab":48,"space":49,"`":50,"backspace":51,"escape":53,"esc":53,"left":123,"right":124,"down":125,"up":126,"f1":122,"f2":120,"f3":99,"f4":118,"f5":96,"f6":97,"f7":98,"f8":100,"f9":101,"f10":109,"f11":103,"f12":111]
+    private static func csvFields(_ text:String) -> [String] {
+        var result:[String]=[],current="",quoted=false,escaped=false
+        for char in text {
+            if escaped {current.append(char);escaped=false;continue}
+            if char == "\\" {current.append(char);escaped=true;continue}
+            if char == "\"" {quoted.toggle();current.append(char);continue}
+            if char == ",",!quoted {result.append(current.trimmingCharacters(in:.whitespaces));current=""}
+            else {current.append(char)}
+        }
+        result.append(current.trimmingCharacters(in:.whitespaces));return result
+    }
+    private static func commandWords(_ text:String) throws -> [String] {
+        var result:[String]=[],current="",quoted=false,escaped=false,started=false
+        for char in text {
+            if escaped {current.append(char);escaped=false;started=true;continue}
+            if char == "\\" {escaped=true;started=true;continue}
+            if char == "\"" {quoted.toggle();started=true;continue}
+            if char.isWhitespace,!quoted {if started {result.append(current);current="";started=false}}
+            else {current.append(char);started=true}
+        }
+        guard !quoted,!escaped else {throw CmdError("bind: unterminated quoted argument")}
+        if started {result.append(current)}
+        return result
     }
     private static func parseValue(_ source: String) throws -> JSON {
         guard !source.isEmpty else { throw CmdError("пустое значение") }
@@ -225,7 +307,13 @@ public enum TextConfig {
         let schema = try JSON.parse(Data(contentsOf:URL(fileURLWithPath:configDir+"/runtime.schema.json")))
         let runtime = schema["properties"]?["runtime"] ?? .object([])
         let props = (runtime["properties"] ?? .object([])).setting("enabled",.object([("type",.string("boolean"))])).setting("menu_bar",.object([("type",.string("boolean"))])).setting("startup_animation",.object([("type",.string("boolean"))]))
-        return schema.setting("properties",(schema["properties"] ?? .object([])).setting("runtime",runtime.setting("properties",props)))
+        var properties=(schema["properties"] ?? .object([])).setting("runtime",runtime.setting("properties",props))
+        if let rules=properties["window_rules"],let item=rules["items"],let match=item["properties"]?["match"] {
+            let patterns=(match["properties"] ?? .object([])).setting("role",.object([("type",.string("string")),("maxLength",.int(512))])).setting("subrole",.object([("type",.string("string")),("maxLength",.int(512))]))
+            let updated=item.setting("properties",(item["properties"] ?? .object([])).setting("match",match.setting("properties",patterns)))
+            properties=properties.setting("window_rules",rules.setting("items",updated))
+        }
+        return schema.setting("properties",properties)
     }
     private static func resolved(_ schema: JSON, root: JSON) -> JSON {
         guard let ref = schema["$ref"]?.string, ref.hasPrefix("#/") else { return schema }
