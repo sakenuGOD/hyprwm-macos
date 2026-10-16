@@ -2,6 +2,59 @@
 import XCTest
 
 final class RestorePlacementTests:XCTestCase {
+    func testConfigureReceiptSurvivesLauncherOverlayUntilSelectionCompletes() throws {
+        let f=ProductionPolicyTests(),(wm,sys,eng,windows)=try f.world(f.pair())
+        wm.cfgSink=SnapshotHandoffTests.Recorder();wm.sp(1).tree=Node(leaf:2)
+        sys.front=101;sys.contexts[101]=(1,0);sys.alphaM[1]=0
+        let record=Hidden(wid:1,pid:101,owner:"Fixture",space:1,rect:windows[0].rect.arr,
+            extra:.object([("swift_birth",.string("birth-1")),("tiled",.bool(true))]))
+        wm.hidden=[record];wm.launcherAreas[1]=f.area
+        wm.launcherIntent=LauncherIntent(sequence:7,space:1,frontPID:101,kind:1,started:sys.t)
+        wm.activateOnCurrentSpace(f.area,1,windows,101)
+        let plan=try XCTUnwrap(wm.restorePending[1]?.placement)
+        var reply=CfgResult(wid:1,owner:"Fixture",to:plan.rect,got:plan.rect,e:0,pre:windows[0].rect)
+        reply.pid=101;reply.birth="birth-1";reply.isCurrent={true};wm.cfgQ=[reply]
+        var slot=EngWin(wid:1,pos:(plan.rect.x,plan.rect.y),size:(plan.rect.w,plan.rect.h),curAlpha:0,a:plan.rect)
+        slot.geo=1;eng.ch.eng=[slot];sys.bounds[1]=plan.rect
+        // A configure completion can arrive while Spotlight still owns input.
+        sys.overlay=true;wm.completeRestores(f.area,1,windows);_=wm.configured()
+        XCTAssertEqual(wm.hidden,[record]);XCTAssertTrue(wm.cfgQ.isEmpty)
+        XCTAssertEqual(wm.restorePending[1]?.placement?.accepted,plan.rect)
+        sys.overlay=false;wm.completeRestores(f.area,1,windows)
+        XCTAssertTrue(wm.hidden.isEmpty);XCTAssertTrue(wm.restorePending.isEmpty)
+        XCTAssertEqual(wm.launcherDisposition,"restored-local-window")
+    }
+
+    func testDeferredHideReleaseCannotCancelAnInFlightRestore() throws {
+        final class Sink:ConfigureSink {
+            var jobs:[CfgJob]=[],cancelled=Set<Int>()
+            func submit(_ batch:[CfgJob]) {jobs+=batch}
+            func cancel(_ wid:Int) {cancelled.insert(wid)}
+        }
+        let f=ProductionPolicyTests(),(wm,sys,eng,windows)=try f.world(f.pair()),sink=Sink()
+        wm.cfgSink=sink;wm.sp(1).tree=Node(leaf:2)
+        let park=Rect(1430,41,720,495)
+        wm.hidden=[Hidden(wid:1,pid:101,owner:"Fixture",space:1,rect:windows[0].rect.arr,
+            extra:.object([("swift_birth",.string("birth-1")),("tiled",.bool(true))]))]
+        sys.bounds[1]=park;sys.alphaM[1]=0
+        eng.ch.eng=[EngWin(wid:1,pos:(park.x,park.y),size:(park.w,park.h),curAlpha:0,a:park)]
+        wm.parkHidden(1,park,deadline:sys.t+30)
+        XCTAssertEqual(wm.later.count,1)
+        _=wm.unhide(f.area,1,windows,which:.wids([1]))
+        let plan=try XCTUnwrap(wm.restorePending[1]?.placement)
+        sink.cancelled=[];eng.ch.ops=[]
+        sys.t+=0.02;wm.runDue()
+        XCTAssertTrue(sink.cancelled.isEmpty,"An older hide callback must not invalidate the restore configure ACK")
+        XCTAssertTrue(wm.later.isEmpty,"The superseded hide callback must stop retrying")
+        var result=CfgResult(wid:1,owner:"Fixture",to:plan.rect,got:plan.rect,e:0,pre:park)
+        result.pid=101;result.birth="birth-1";result.isCurrent={ !sink.cancelled.contains(1) };wm.cfgQ=[result]
+        var slot=EngWin(wid:1,pos:(plan.rect.x,plan.rect.y),size:(plan.rect.w,plan.rect.h),curAlpha:0,a:plan.rect)
+        slot.geo=1;eng.ch.eng=[slot];sys.bounds[1]=plan.rect
+        wm.completeRestores(f.area,1,windows)
+        XCTAssertTrue(wm.hidden.isEmpty);XCTAssertTrue(wm.restorePending.isEmpty)
+        XCTAssertTrue(wm.sp(1).tree?.contains(1)==true)
+    }
+
     func testUnhideSkipsUnverifiableTailAndPlacesMostRecentLiveWindow() throws {
         let f=ProductionPolicyTests(),(wm,sys,_,windows)=try f.world(f.pair())
         let sink=SnapshotHandoffTests.Recorder();wm.cfgSink=sink

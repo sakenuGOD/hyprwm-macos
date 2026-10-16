@@ -153,7 +153,8 @@ extension WM {
         hiddenParkSamples[record.wid]=(birth,intent,bounds,now,false);return false
     }
     func releaseHiddenGeometry(_ wid:Int,frame:Rect,deadline:Double) {
-        guard enabled,sys.now()<deadline,let record=hidden.first(where:{$0.wid==wid}),hiddenRecordLive(record) else{return}
+        guard enabled,sys.now()<deadline,restorePending[wid]==nil,
+              let record=hidden.first(where:{$0.wid==wid}),hiddenRecordLive(record) else{return}
         cfgSink?.cancel(wid)
         let slot=eng.c.wins().first{$0.wid==wid}
         if cfgSink?.busy(wid) == true || eng.c.pending || slot?.posActive == true || slot?.sizeActive == true || slot?.alphaActive == true || slot?.held == true ||
