@@ -6,12 +6,14 @@ public struct FirstMapLayout {
     public let cursor:(Double,Double), minima:[Int:(Double,Double)]
     public let gapsIn:Double, gapsOut:Gaps, splitWidthMult:Double, defaultRatio:Double, minimumPolicy:String
     public let rules:[JSON], owners:[Int:String],ownerMinima:[String:(Double,Double)]
+    public var detached:Set<Int>=[]
     var topology:JSON {
         .object([("area",.array(area.arr.map(JSON.double))),("space",.int(space)),("tree",tree),
                  ("presel",presel.map(JSON.string) ?? .null),("full",full.map(JSON.int) ?? .null),
                  ("fullmode",fullmode.map(JSON.string) ?? .null),("gaps_in",.double(gapsIn)),
                  ("gaps_out",.array(gapsOut.values.map(JSON.double))),("split",.double(splitWidthMult)),
                  ("ratio",.double(defaultRatio)),("minimum_policy",.string(minimumPolicy)),
+                 ("detached",.array(detached.sorted().map(JSON.int))),
                  ("rules",.array(rules)),("owner_minima",.array(ownerMinima.keys.sorted().map{.array([.string($0),.double(ownerMinima[$0]!.0),.double(ownerMinima[$0]!.1)])})),("minima",.array(minima.keys.sorted().map { .array([.int($0),.double(minima[$0]!.0),.double(minima[$0]!.1)]) }))])
     }
     func inserting(_ wid:Int,minimum:(Double,Double)) -> FirstMapPlan? {
@@ -32,7 +34,7 @@ public struct FirstMapLayout {
             if first {swap(&parent.a,&parent.b)}
         }
         var rects=[Int:Rect]()
-        for (id,box) in tile.boxes(inserted,area) {let r=tile.withGaps(box,area);rects[id]=Rect(pyRound(r.x),pyRound(r.y),pyRound(r.w),pyRound(r.h))}
+        for (id,box) in tile.boxes(tile.projecting(inserted,without:detached,in:area),area) {let r=tile.withGaps(box,area);rects[id]=Rect(pyRound(r.x),pyRound(r.y),pyRound(r.w),pyRound(r.h))}
         if let full,rects[full] != nil {
             if fullmode=="fullscreen" {rects[full]=area}
             else {rects[full]=Rect(area.x+gapsOut.left,area.y+gapsOut.top,area.w-gapsOut.left-gapsOut.right,area.h-gapsOut.top-gapsOut.bottom)}
@@ -43,7 +45,7 @@ public struct FirstMapLayout {
     func adopting(_ plan:FirstMapPlan) -> FirstMapLayout {
         FirstMapLayout(area:area,space:space,tree:plan.tree,focus:plan.focus,presel:plan.presel,full:full,fullmode:fullmode,
                        cursor:cursor,minima:plan.minima,gapsIn:gapsIn,gapsOut:gapsOut,splitWidthMult:splitWidthMult,
-                       defaultRatio:defaultRatio,minimumPolicy:minimumPolicy,rules:rules,owners:owners,ownerMinima:ownerMinima)
+                       defaultRatio:defaultRatio,minimumPolicy:minimumPolicy,rules:rules,owners:owners,ownerMinima:ownerMinima,detached:detached)
     }
 }
 public struct FirstMapPlan {public let tree:JSON,focus:Int,presel:String?,rect:Rect,minima:[Int:(Double,Double)]}
@@ -205,20 +207,21 @@ extension WM {
                               cursor:sys.mouse(),minima:minima,gapsIn:tile.gapsIn,gapsOut:tile.gapsOut,splitWidthMult:tile.splitWidthMult,
                               defaultRatio:tile.defaultRatio,minimumPolicy:tile.minimumPolicy,rules:cfg.raw["window_rules"]?.array ?? [],
                               owners:Dictionary(wins.map{($0.pid,$0.owner)},uniquingKeysWith:{$1}),
-                              ownerMinima:Dictionary(mins.map{($0.0,($0.1.first?.double ?? Dwindle.minW,$0.1.dropFirst().first?.double ?? Dwindle.minH))},uniquingKeysWith:{$1}))
+                              ownerMinima:Dictionary(mins.map{($0.0,($0.1.first?.double ?? Dwindle.minW,$0.1.dropFirst().first?.double ?? Dwindle.minH))},uniquingKeysWith:{$1}),
+                              detached:nativeFullscreenWindows.subtracting(nativeSuspendedWindows).intersection(Dwindle.leaves(state.tree).compactMap(\.wid)))
     }
     public func publishAdmission() {
         guard let admission else{return}
         guard options.production,enabled,let last,sys.now()-lastSnap<=0.3,sys.activeSpace()==UInt64(last.space),!sys.sessionLocked(),overviewFrozen?() != true,
               nativeSpaceType==0,dragSession==nil,
-              nativeFullscreenWindows.isDisjoint(with:Dwindle.leaves(sp(last.space).tree).compactMap(\.wid)) else{admission.suspend();return}
+              !nativeSuspendedSpaces.contains(String(last.space)) else{admission.suspend();return}
         admission.publish(admissionLayout(last.area,last.space,last.wins))
         claimAdmission([])
     }
     public func reconcileAdmission(_ area:Rect,_ space:Int,_ wins:[WinInfo])->(opened:[Int],reserved:Set<Int>) {
         guard options.production,let admission else{return([],[])}
         guard enabled,!sys.sessionLocked(),overviewFrozen?() != true,nativeSpaceType==0,dragSession==nil,
-              nativeFullscreenWindows.isDisjoint(with:Dwindle.leaves(sp(space).tree).compactMap(\.wid)) else{admission.suspend();return([],[])}
+              !nativeSuspendedSpaces.contains(String(space)) else{admission.suspend();return([],[])}
         let batch=admission.reconcile(admissionLayout(area,space,wins),windows:wins,now:sys.now()) {claim in
             !self.sys.protectedProcess(claim.key.pid) && self.sys.processBirth(claim.key.pid)==claim.birth &&
                 self.sys.winPidLevel(claim.key.wid).pid==claim.key.pid && self.sys.winPidLevel(claim.key.wid).level==0

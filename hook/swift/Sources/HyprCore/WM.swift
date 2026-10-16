@@ -359,14 +359,7 @@ public final class WM {
     // Layout
     public func layout(_ area: Rect, _ s: SpaceState) -> OrderedMap<Int, Rect> {
         tile.constrainFrames=options.production
-        var tree=s.tree
-        if options.production {
-            let detached=nativeFullscreenWindows.subtracting(nativeSuspendedWindows)
-            if Dwindle.leaves(tree).contains(where:{detached.contains($0.wid!)}) {
-                tree=Node.from(tree?.json)
-                for wid in detached.sorted() {tree=tile.removeReorientingPromoted(tree,wid,in:area)}
-            }
-        }
+        let tree=tile.projecting(s.tree,without:options.production ? nativeFullscreenWindows.subtracting(nativeSuspendedWindows):[],in:area)
         // Know per-app minima BEFORE layout, so each window immediately receives enough room.
         tile.mins = [:]
         for n in Dwindle.leaves(tree) {

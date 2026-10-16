@@ -87,6 +87,13 @@ public final class Dwindle {
         return n
     }
 
+    public func projecting(_ tree:Node?,without detached:Set<Int>,in area:Rect) -> Node? {
+        guard Dwindle.leaves(tree).contains(where:{detached.contains($0.wid!)}) else{return tree}
+        var result=Node.from(tree?.json)
+        for wid in detached.sorted() {result=removeReorientingPromoted(result,wid,in:area)}
+        return result
+    }
+
     /// Closing a sibling gives a promoted subtree a different aspect box.
     /// Re-evaluate its automatic splits there, keeping leaf order and ratios.
     /// Explicit directions and manually dragged dividers retain their axis.

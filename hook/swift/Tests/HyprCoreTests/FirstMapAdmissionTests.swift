@@ -105,13 +105,33 @@ final class FirstMapAdmissionTests:XCTestCase {
         XCTAssertEqual(plan.rect,wm.layout(f.area,state)[3],"The concealed first frame must use the same bounded slot as mapped tiling")
         XCTAssertEqual(wm.sp(1).tree?.json,tree.json,"Planning must not mutate the live tree")
     }
-    func testAdmissionWaitsWhileNativeFullscreenReturnSlotsAreRetained() throws {
+    func testFirstMapRemainsAvailableBesideRetainedFullscreenReturnSlot() throws {
+        let f=ProductionPolicyTests(),(wm,sys,_,original)=try f.world(f.pair()),gateway=gateway()
+        wm.admission=gateway;wm.nativeFullscreenWindows=[1];wm.nativeSuspendedWindows=[];wm.sp(1).focus=2
+        var windows=original;let owner=windows.firstIndex{$0.wid==1}!
+        windows[owner].nativeFullscreen=true;windows[owner].space=99;windows[owner].on=false
+        sys.activeSpaceID=1;sys.t=1;wm.lastSnap=1;wm.last=(f.area,1,windows)
+        wm.publishAdmission()
+        XCTAssertEqual(gateway.status["published"],.bool(true),"A settled fullscreen neighbour must not disable first-order placement")
+        let request=prepare(3,pid:103),offer=gateway.handle(request,now:1,pid:103,birth:"birth-3",owner:"Fixture")
+        XCTAssertEqual(offer["status"],.string("offer"))
+        guard let rect=Rect.j(offer["rect"]) else{return}
+        _=gateway.handle(confirm(request,offer),now:1.01,pid:103,birth:"birth-3",owner:"Fixture")
+        let new=WinInfo(wid:3,pid:103,owner:"Fixture",x:rect.x,y:rect.y,w:rect.w,h:rect.h,on:true,space:1)
+        sys.t=1.02;sys.pidlevel[3]=(103,0);sys.births[103]="birth-3";sys.bounds[3]=rect
+        let admitted=wm.reconcileAdmission(f.area,1,windows+[new])
+        XCTAssertEqual(admitted.opened,[3]);XCTAssertTrue(wm.sp(1).tree?.contains(1)==true)
+        XCTAssertEqual(wm.layout(f.area,wm.sp(1))[3],rect,"The pre-order offer must equal the actual projected tile")
+        XCTAssertFalse(wm.layout(f.area,wm.sp(1)).contains(1))
+    }
+    func testAdmissionWaitsWhileNativeFullscreenDepartureIsUnsettled() throws {
         let f=ProductionPolicyTests(),(wm,sys,_,windows)=try f.world(f.pair()),gateway=gateway()
         wm.admission=gateway;wm.last=(f.area,1,windows);wm.lastSnap=sys.now();sys.activeSpaceID=1
         wm.nativeFullscreenWindows=[1];wm.nativeSuspendedWindows=[]
+        wm.nativeSuspendedSpaces=["1"]
         wm.publishAdmission()
-        XCTAssertEqual(gateway.status["published"],.bool(false),"A retained fullscreen leaf is not a first-map allocation")
-        wm.nativeFullscreenWindows=[];wm.publishAdmission()
+        XCTAssertEqual(gateway.status["published"],.bool(false),"An unsettled fullscreen departure cannot authorize a first-map allocation")
+        wm.nativeSuspendedSpaces=[];wm.publishAdmission()
         XCTAssertEqual(gateway.status["published"],.bool(true))
     }
 }
