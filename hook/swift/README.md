@@ -50,7 +50,9 @@ The menu provides pause/resume, restoration, retile/balance, settings, configura
 file/folder access, copied diagnostics and restoration-aware shutdown. Companion
 commands go to the existing daemon through the control socket on a background
 queue with timeouts; settings remain accessible while the daemon is unavailable.
-The icon entrance respects Reduce Motion. Companion shutdown depends on the
+The current menu uses AppKit `NSMenu`. `runtime.startup_animation` is parsed and
+passed to its controller, but that parameter currently has no presentation
+consumer. Settings preview animations respect Reduce Motion. Companion shutdown depends on the
 matching development lifecycle helper and ownership records; it fails closed
 when those are unavailable. The installed daemon has its own shutdown coordinator.
 See [packaging](PACKAGING.md) for this distinction.
@@ -294,14 +296,20 @@ remain separate evidence. Build/test success does not prove physical smoothness.
 
 ## Menu panel and settings
 
-The native SwiftUI panel provides tiling, borders, animations, pointer focus,
-shadows/glow controls, window actions and help/diagnostic pages. Controls can
-exist before a renderer or live gate is complete; consult the configuration
-consumer table. The status dot distinguishes running, paused and unavailable
-access. macOS 26 uses Liquid Glass where available; macOS 14/15 use system
-material. Settings use `NavigationSplitView`, grouped forms, search, exact values,
-system color pickers, shortcut recording and a curve editor. Preview animation
-is finite and respects Reduce Motion.
+The current status menu is an AppKit `NSMenu` with tiling, borders, animations,
+pointer focus, window actions and diagnostic entries. Its colored status text
+and disabled icon indicate running, paused or unavailable state. The separate
+SwiftUI settings window includes shadows/glow controls, `NavigationSplitView`,
+grouped forms, search, exact values, system color pickers, shortcut recording and
+a curve editor. Controls can exist before a renderer or live gate is complete;
+consult the configuration consumer table. Preview animation is finite and
+respects Reduce Motion.
+
+The intended UI design also includes a custom SwiftUI menu panel, a colored
+status dot and Liquid Glass styling on supported macOS versions. These are not
+active rendering consumers in the current menu controller; the source uses
+ordinary AppKit/SwiftUI system appearance. They are design material, not shipped
+feature claims.
 
 Saves pass schema/shared runtime validation and an atomic text-file writer.
 Invalid or concurrently changed input is preserved instead of overwritten.
@@ -312,8 +320,10 @@ hotkey/rule conventions; use [CONFIG.md](../../docs/CONFIG.md) for current text
 syntax, effective settings and ignore behavior.
 
 For isolated UI screenshots/QA, build the debug executable with `swift build`
-first. These preview commands open HyprWM's own UI but do not start the WM/channel,
-execute management commands or save settings/onboarding completion:
+first. Section previews open HyprWM's own UI without starting the WM/channel or
+executing management commands. `--onboarding-step` is currently accepted by the
+CLI but ignored by `showPreview`, so that example opens the general settings
+instead of the requested onboarding step. It is not a working onboarding gate:
 
 ```sh
 .build/debug/hyprwm-swift --ui-preview --section menu
@@ -324,9 +334,13 @@ execute management commands or save settings/onboarding completion:
 
 `--settings-check` validates a JSON file without opening that UI. Sections are
 `general`, `layout`, `animations`, `appearance`, `focus`, `hotkeys`, `rules`,
-`advanced`, `about` and `menu`; onboarding steps are `0…3`. Normal first launch can
-show the intro, live Accessibility check, shortcuts and readiness screen; the
-menu can reopen onboarding.
+`advanced`, `about` and `menu`; the accepted onboarding-step range is `0…3`.
+`OnboardingView` and its presentation helper contain an intro, live Accessibility
+check, shortcuts and readiness steps with Reduce Motion handling. Automatic
+first-launch presentation and a replay action are not wired into the current
+menu/settings controller; passing the unused replay closure does not expose an
+action. Preserve these as intended onboarding material until those entry points
+are implemented and verified.
 
 ## App packaging
 
