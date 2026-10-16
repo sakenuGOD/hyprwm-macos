@@ -3,7 +3,11 @@
 HyprWM is an independent, experimental tiling window manager that brings Hyprland-inspired binary split layouts and motion to macOS. Open a window and the layout makes room; move focus or rearrange tiles from the keyboard, tune gaps and appearance in a native settings window, and keep the same configuration in a hot-reloaded text file. If you are new to tiling, start with two disposable windows; if you already use Hyprland or AeroSpace, start with the [migration guide](docs/MIGRATING.md). This launch branch runs the native Engine and requires an already configured development system. A no-injection Lite implementation is being tested separately; it has not passed its full live acceptance gate.
 
 <a id="showcase"></a>
-**Showcase pending:** the launch recording and hero GIF/WebP will be linked here after real desktop capture and frame review. Existing [settings screenshots](#settings) show the interface, not proof of runtime motion.
+![Pointer focus and typing in HyprWM Engine](docs/media/hero.gif)
+
+[Watch the 76-second Engine preview](docs/media/showcase.mp4) · [Native-resolution poster](docs/media/poster.png)
+
+Real pointer focus and typing, border-width hot reload, and a protected save dialog on a configured Engine development system. The recording uses whole-scene cuts at real speed. Lite remains a separate experiment; the motion and installation limits below still apply.
 
 ## 60-second quickstart
 
