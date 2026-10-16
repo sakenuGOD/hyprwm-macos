@@ -104,6 +104,7 @@ final class MigrationProtocolTests:XCTestCase {
         defer { try? FileManager.default.removeItem(at:path) }
         let targets=windows.map { window -> JSON in
             sys.births[window.pid]="\(window.pid):40:50";sys.capabilities[window.pid]=6;sys.applicationPaths[window.pid]="/Applications/Fixture.app"
+            sys.clientMinima[window.wid]=(200,150)
             return .object([("pid",.int(window.pid)),("birth",.array([.int(window.pid),.int(Int(getuid())),.int(40),.int(50)])),("app",.string("/Applications/Fixture.app"))])
         }
         try Data(JSON.object([("schema",.int(1)),("generation",.string("owned")),("targets",.array(targets))]).dumps().utf8).write(to:path)
@@ -117,6 +118,11 @@ final class MigrationProtocolTests:XCTestCase {
         wm.apply(fixture.area,1,changed,force:true);XCTAssertTrue(eng.ch.nativeRequests.isEmpty)
         XCTAssertEqual(recorder.jobs.map(\.wid),[2])
         XCTAssertTrue(recorder.jobs.allSatisfy(\.sizeOnly)) // One early logical size; rejected native policy never streams frames.
+        sys.births[101]="101:40:50";sys.capabilities[102]=6
+        sys.clientMinima[1]=(fixture.area.w,fixture.area.h);sys.clientMinima[2]=nil
+        wm.target.removeAll();eng.ch.nativeRequests=[]
+        wm.apply(fixture.area,1,windows,force:true)
+        XCTAssertTrue(eng.ch.nativeRequests.isEmpty,"A client that clamps above its slot would overlap its neighbor; absent minimum evidence must also keep viewport clipping")
     }
     func testCloseFocusPolicyWaitsForUnmapAndPreservesSheetOwnership() throws {
         let fixture=ProductionPolicyTests()

@@ -245,6 +245,15 @@ final class LiveSys: SysAPI {
         let result="hyprwm.cap.\(pid)".withCString { hs_notify_state($0,&value) }
         return result == 0 && value <= 64 && processBirth(pid) == birth ? Int(value) : 0
     }
+    func clientMinimum(_ pid:Int,_ wid:Int) -> (Double,Double)? {
+        guard wid>0,wid<=Int(UInt32.max),let birth=processBirth(pid),!protectedProcess(pid),
+              winPidLevel(wid).pid==pid else{return nil}
+        var value:UInt64=0
+        let result="hyprwm.min.\(wid)".withCString{hs_notify_state($0,&value)}
+        guard result==0,value>0,value<=UInt64(UInt32.max),processBirth(pid)==birth,
+              winPidLevel(wid).pid==pid else{return nil}
+        return(Double(value&0xffff)/2,Double((value>>16)&0xffff)/2)
+    }
     func nativeResize(_ pid: Int) -> NativeResizeContext? {
         guard let birth=processBirth(pid), !protectedProcess(pid) else { return nil }
         var value=hs_resize_context()

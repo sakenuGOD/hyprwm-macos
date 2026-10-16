@@ -446,6 +446,7 @@ public final class WM {
             let nativeFrames = options.production && options.nativeFrames && !noAnimation && mvOn &&
                 !snapshotFrames &&
                 (!opening.contains(wid) || restoring.contains(wid)) && clientPolicy?.admitted(cw,sys) == true && sys.clientCapability(cw.pid) >= 6 &&
+                sys.clientMinimum(cw.pid,wid).map{to.w+1 >= $0.0 && to.h+1 >= $0.1} == true &&
                 !(engW[wid].map { $0.geo != 2 && $0.moving } ?? false) && dragSession == nil
             if nativeFrames { cfgSink?.cancel(wid) }
             if opening.contains(wid) && inOn && !noAnimation && !restoring.contains(wid) && !presentedOpening {

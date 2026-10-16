@@ -29,6 +29,7 @@ final class FakeWorld: SysAPI {
     var overlay = false
     var launch:LauncherIntent?
     var capabilities:[Int:Int]=[:]
+    var clientMinima:[Int:(Double,Double)]=[:]
     var applicationPaths:[Int:String]=[:]
     var deferredClose=false
     var closeCallbacks:[(CloseResult)->Void]=[]
@@ -58,6 +59,7 @@ final class FakeWorld: SysAPI {
     func launcherIntent(after sequence:UInt64) -> LauncherIntent? { launch.flatMap { $0.sequence > sequence ? $0 : nil } }
     func consumeLauncher(_ sequence:UInt64) { if launch?.sequence == sequence { launch=nil } }
     func clientCapability(_ pid:Int) -> Int { capabilities[pid] ?? 0 }
+    func clientMinimum(_ pid:Int,_ wid:Int) -> (Double,Double)? {clientMinima[wid]}
     func appPath(_ pid:Int) -> String? { applicationPaths[pid] }
     func sessionLocked() -> Bool { locked }
     func interactionOverlay() -> Bool { overlay }

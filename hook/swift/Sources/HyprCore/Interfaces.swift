@@ -219,6 +219,7 @@ public protocol SysAPI: AnyObject {
     func protectedProcess(_ pid: Int) -> Bool
     func appPath(_ pid: Int) -> String?
     func clientCapability(_ pid: Int) -> Int
+    func clientMinimum(_ pid:Int,_ wid:Int) -> (Double,Double)?
     func nativeResize(_ pid: Int) -> NativeResizeContext?
     func interactionOverlay() -> Bool
     func sessionLocked() -> Bool
@@ -254,6 +255,7 @@ public extension SysAPI {
     func protectedProcess(_ pid: Int) -> Bool { false }
     func appPath(_ pid: Int) -> String? { nil }
     func clientCapability(_ pid: Int) -> Int { 0 }
+    func clientMinimum(_ pid:Int,_ wid:Int) -> (Double,Double)? { nil }
     func nativeResize(_ pid: Int) -> NativeResizeContext? { nil }
     func interactionOverlay() -> Bool { false }
     func sessionLocked() -> Bool { false }
