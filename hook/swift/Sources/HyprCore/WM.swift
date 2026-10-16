@@ -1620,7 +1620,7 @@ public final class WM {
                 if dragSession != nil { nativeResizeSeen[native.birth]=native.epoch }
             } else if md && !wasDown && dragSession == nil { beginInteraction(area,space,wins) }
             if let native=nativeResize, native.phase == 4, dragSession?.nativeEpoch == native.epoch { dragSession=nil }
-            else if let native=nativeResize, native.phase == 3, dragSession?.nativeEpoch == native.epoch { _=endInteraction(area,space,wins) }
+            else if let native=nativeResize, native.phase == 3, dragSession?.nativeEpoch == native.epoch { nativeLayoutChanged=endInteraction(area,space,wins) || nativeLayoutChanged }
             else if md { updateSharedResize(area,space,wins) }
         }
         var (changed, opened) = sync(area, space, wins)

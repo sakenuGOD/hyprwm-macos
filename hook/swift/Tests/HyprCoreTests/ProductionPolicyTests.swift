@@ -107,6 +107,27 @@ final class ProductionPolicyTests: XCTestCase {
             XCTAssertEqual(Dwindle.leaves(wm.sp(1).tree).compactMap(\.wid), [2, 1])
         }
     }
+    func testNativeDragEndPublishesSwappedLayoutBeforeMouseButtonPollReleases() throws {
+        let (wm,sys,eng,original)=try world(pair()),start=sys.bounds[1]!,oldPeer=sys.bounds[2]!
+        wm.cfgSink=SnapshotHandoffTests.Recorder();wm.rescued=true;wm.lastSpace=1;wm.frontPid=101
+        sys.front=101;sys.contexts[101]=(1,0);sys.activeSpaceID=1;sys.md=true
+        sys.m=(start.x+50,start.y+10)
+        sys.resizeContexts[101]=NativeResizeContext(pid:101,birth:"birth-1",wid:1,epoch:7,sequence:2,phase:1,frame:start,point:sys.m)
+        sys.nativeSnapshot=Snapshot(space:1,stable:true,area:area,windows:original)
+        wm.tick(socketReady:false);XCTAssertEqual(wm.dragSession?.wid,1)
+        let actual=Rect(start.x+38,start.y,start.w,start.h)
+        var windows=original;let i=windows.firstIndex{$0.wid==1}!;windows[i].x=actual.x
+        sys.bounds[1]=actual;sys.md=true;sys.t+=0.05
+        sys.resizeContexts[101]=NativeResizeContext(pid:101,birth:"birth-1",wid:1,epoch:7,sequence:4,phase:3,frame:start,point:sys.m,acceptedFrame:actual,acceptedTime:sys.t,sample:1)
+        sys.nativeSnapshot=Snapshot(space:1,stable:true,area:area,windows:windows)
+        eng.ch.eng=[EngWin(wid:1,pos:(start.x,start.y),size:(start.w,start.h),settling:true,a:actual)]
+        eng.ch.ops=[];wm.tick(socketReady:false)
+        XCTAssertEqual(Dwindle.leaves(wm.sp(1).tree).compactMap(\.wid),[2,1])
+        XCTAssertEqual(wm.target[1],oldPeer,"Native drag-end must apply its changed tree in the same tick")
+        XCTAssertEqual(wm.target[2],start)
+        XCTAssertTrue(eng.ch.ops.contains{$0["wid"] == .int(1) && $0["to"]==oldPeer.json})
+        XCTAssertTrue(eng.ch.ops.contains{$0["wid"] == .int(2) && $0["to"]==start.json})
+    }
     func testResizeUpdatesWholeSiblingSubtreeAndAcceptedActorIsNotConfigured() throws {
         let right = Node(split: "h", ratio: 0.5, a: Node(leaf: 2), b: Node(leaf: 3))
         let (wm, sys, eng, wins) = try world(Node(split: "v", ratio: 0.5, a: Node(leaf: 1), b: right))
