@@ -59,6 +59,7 @@ final class LiteChannel: ChannelAPI {
     private var shuttingDown = false
     private var releasing = Set<Int>()
     private(set) var proxyMotions = 0, directPlacements = 0, captureFailures = 0, earlyParks = 0, coverReuses = 0
+    private(set) var nativeBackingMotions = 0, nativeBackingFallbacks = 0
     var widMax = 1
     init(sys: LiteSys, config: HyprConfig) throws {
         self.sys = sys; self.config = config; borders = try LiteBorders(config: config)
@@ -234,7 +235,9 @@ final class LiteChannel: ChannelAPI {
                 self.place(slot, frame: geometry.to, logical: geometry.to); return
             }
             slot.cached = image; slot.capturedAt = self.sys.now()
-            let proxy = LiteProxy(image: image, from: start, to: geometry.to, motionFrames: frames, appearance: self.borders.appearance, focused: self.focused == slot.wid, relativeTo: slot.wid)
+            let proxy = LiteProxy(image: image, from: start, to: geometry.to, motionFrames: frames,
+                appearance: self.borders.appearance, focused: self.focused == slot.wid, relativeTo: slot.wid,
+                nativeContent: !opening, contentSize: oldProxy?.contentSize(at: start))
             if opening { proxy.window.orderOut(nil) }
             slot.proxy = proxy; oldProxy?.close()
             self.sys.presentation[slot.wid] = start
@@ -258,14 +261,49 @@ final class LiteChannel: ChannelAPI {
                 let acceptedFrames = LiteMotion.frames(from: start, to: slot.landingTarget, velocity: velocity,
                     duration: geometry.duration, curve: curve, timeScale: self.config.timeScale)
                 let landingProxy = proxy
-                landingProxy.prepareLanding(from: start, to: slot.landingTarget, frames: acceptedFrames)
-                self.coverReuses += 1
-                slot.capturing = false
-                slot.started = CACurrentMediaTime()+0.008; slot.duration = geometry.duration
-                landingProxy.animate(frames: acceptedFrames, duration: geometry.duration, started: slot.started, fromAlpha: opening ? 0 : 1)
-                landingProxy.window.order(.above, relativeTo: slot.wid)
-                slot.presented = start; self.sys.presentation[slot.wid] = start
-                self.proxyMotions += 1
+                func beginMotion() {
+                    guard self.current(slot, version), slot.proxy === landingProxy, slot.capturing else { return }
+                    landingProxy.prepareLanding(from: start, to: slot.landingTarget, frames: acceptedFrames)
+                    self.coverReuses += 1
+                    slot.capturing = false
+                    slot.started = CACurrentMediaTime()+0.008; slot.duration = geometry.duration
+                    landingProxy.animate(frames: acceptedFrames, duration: geometry.duration, started: slot.started, fromAlpha: opening ? 0 : 1)
+                    landingProxy.window.order(.above, relativeTo: slot.wid)
+                    slot.presented = start; self.sys.presentation[slot.wid] = start
+                    self.proxyMotions += 1
+                }
+                if landingProxy.nativeContent {
+                    // Admit the accepted backing before motion, keeping native
+                    // glyph size throughout the moving, clipped viewport.
+                    let deadline = CACurrentMediaTime()+0.25
+                    func fallback() {
+                        guard self.current(slot, version), slot.proxy === landingProxy, slot.capturing else { return }
+                        self.nativeBackingFallbacks += 1; self.directPlacements += 1
+                        self.place(slot, frame: geometry.to, logical: geometry.to)
+                    }
+                    func captureBacking() {
+                        guard self.current(slot, version), slot.proxy === landingProxy, slot.capturing else { return }
+                        guard CACurrentMediaTime() < deadline else { fallback(); return }
+                        guard self.capturePending.count < 2, self.capturePending.insert(slot.wid).inserted else {
+                            DispatchQueue.main.asyncAfter(deadline: .now()+0.008) { captureBacking() }; return
+                        }
+                        let capturedID = slot.wid
+                        self.captures.image(slot.wid, pid: slot.pid, frame: actual) { [weak self, weak slot, weak landingProxy] image in
+                            guard let self else { return }; self.capturePending.remove(capturedID)
+                            guard let slot, let landingProxy, self.current(slot, version), slot.proxy === landingProxy,
+                                  slot.capturing, !self.sys.applicationHidden(slot.pid) else { return }
+                            guard let image, CACurrentMediaTime() < deadline else { fallback(); return }
+                            landingProxy.setNativeBacking(image, size: CGSize(width: actual.w, height: actual.h))
+                            slot.cached = image; slot.capturedAt = self.sys.now()
+                            self.nativeBackingMotions += 1
+                            beginMotion()
+                        }
+                    }
+                    captureBacking()
+                    DispatchQueue.main.asyncAfter(deadline: .now()+0.25) { fallback() }
+                    return
+                }
+                beginMotion()
                 // Capture the resized backing surface while its real window is
                 // still parked. Blend it during geometry motion, so landing does
                 // not replace a stretched old title/content in a single frame.
@@ -485,6 +523,7 @@ final class LiteChannel: ChannelAPI {
                  ("private_ax_id_bridge", .bool(sys.ax.privateIDBridgeAvailable)), ("private_ax_id_sip", .string("documented SIP-on by AeroSpace; not locally verified")),
                  ("engine_channel_used", .bool(false)), ("virtual_workspaces", .bool(true)),
                  ("created_stages", sys.ax.createdStatus), ("created_admissions", .int(sys.createdAdmissions)), ("early_parks", .int(earlyParks)), ("cover_reuses", .int(coverReuses)),
+                 ("native_backing_motions", .int(nativeBackingMotions)), ("native_backing_fallbacks", .int(nativeBackingFallbacks)),
                  ("proxy_motions", .int(proxyMotions)), ("direct_placements", .int(directPlacements)),
                  ("capture_failures", .int(captureFailures)), ("client_opacity", .string("opaque; public API does not set foreign alpha"))])
     }

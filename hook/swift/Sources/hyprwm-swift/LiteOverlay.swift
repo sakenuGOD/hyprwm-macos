@@ -107,6 +107,12 @@ enum LiteMotion {
 /// No timer tries to chase a separately animated foreign window.
 final class LiteProxy {
     let window: LiteOverlayWindow, imageLayer = CALayer(), border = CAGradientLayer(), mask = CAShapeLayer()
+    private let backingLayer = CALayer()
+    let nativeContent: Bool
+    private(set) var backingPointSize: CGSize
+    func contentSize(at frame: Rect) -> CGSize {
+        nativeContent ? backingPointSize : CGSize(width: frame.w, height: frame.h)
+    }
     private var backingImage: CGImage
     private var contentFade: (from: CGImage, started: Double, duration: Double)?
     var image: CGImage {
@@ -125,7 +131,9 @@ final class LiteProxy {
     let width: Double, radius: Double
     private(set) var began = 0.0, duration = 0.0
     private var focusColors: [RGBA] = []
-    init(image: CGImage, from: Rect, to: Rect, motionFrames: [Rect], appearance: Appearance, focused: Bool, relativeTo wid: Int) {
+    init(image: CGImage, from: Rect, to: Rect, motionFrames: [Rect], appearance: Appearance, focused: Bool, relativeTo wid: Int,
+         nativeContent: Bool = false, contentSize: CGSize? = nil) {
+        self.nativeContent = nativeContent; backingPointSize = contentSize ?? CGSize(width: from.w, height: from.h)
         backingImage = image; target = to; width = appearance.width; radius = appearance.radius
         let padding = max(appearance.width + 4, 8)
         let frames = motionFrames + [from, to]
@@ -133,7 +141,12 @@ final class LiteProxy {
         canvas = Rect(x, y, frames.map { $0.x+$0.w }.max()!-x+padding, frames.map { $0.y+$0.h }.max()!-y+padding)
         window = LiteOverlayWindow(frame: LiteSys.cocoa(canvas))
         guard let root = window.contentView?.layer else { return }
-        imageLayer.contents = image; imageLayer.contentsGravity = .resize; imageLayer.masksToBounds = true
+        imageLayer.masksToBounds = true
+        if nativeContent {
+            backingLayer.anchorPoint = CGPoint(x: 0, y: 1)
+            imageLayer.addSublayer(backingLayer)
+            setNativeBacking(image, size: backingPointSize)
+        } else { imageLayer.contents = image; imageLayer.contentsGravity = .resize }
         imageLayer.cornerRadius = min(radius, min(from.w, from.h)/2)
         imageLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
         root.addSublayer(imageLayer); root.addSublayer(border)
@@ -177,6 +190,7 @@ final class LiteProxy {
     private func setModel(_ frame: Rect) {
         CATransaction.begin(); CATransaction.setDisableActions(true)
         imageLayer.bounds = CGRect(x: 0, y: 0, width: frame.w, height: frame.h); imageLayer.position = point(frame)
+        if nativeContent { backingLayer.position = CGPoint(x: 0, y: frame.h) }
         border.bounds = CGRect(x: 0, y: 0, width: frame.w+2*width, height: frame.h+2*width); border.position = point(frame)
         mask.frame = border.bounds; mask.path = path(frame)
         CATransaction.commit()
@@ -195,6 +209,9 @@ final class LiteProxy {
         }
         imageLayer.add(animation("position", positions), forKey: "position")
         imageLayer.add(animation("bounds", frames.map { NSValue(rect: NSRect(x: 0, y: 0, width: $0.w, height: $0.h)) }), forKey: "bounds")
+        if nativeContent {
+            backingLayer.add(animation("position", frames.map { NSValue(point: CGPoint(x: 0, y: $0.h)) }), forKey: "position")
+        }
         border.add(animation("position", positions), forKey: "position")
         border.add(animation("bounds", frames.map { NSValue(rect: NSRect(x: 0, y: 0, width: $0.w+2*width, height: $0.h+2*width)) }), forKey: "bounds")
         mask.add(animation("path", frames.map(path)), forKey: "path")
@@ -213,9 +230,41 @@ final class LiteProxy {
     func freeze() {
         let frame = presented
         let contents = image; backingImage = contents; contentFade = nil
-        imageLayer.removeAllAnimations(); border.removeAllAnimations(); mask.removeAllAnimations()
-        CATransaction.begin(); CATransaction.setDisableActions(true); imageLayer.contents = contents; CATransaction.commit()
+        imageLayer.removeAllAnimations(); backingLayer.removeAllAnimations(); border.removeAllAnimations(); mask.removeAllAnimations()
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        if nativeContent { backingLayer.contents = contents } else { imageLayer.contents = contents }
+        CATransaction.commit()
         setModel(frame)
+    }
+    /// The backing keeps its accepted point dimensions; only the viewport clips
+    /// and moves. Resizing a screenshot's layer bounds would scale every glyph.
+    func setNativeBacking(_ image: CGImage, size: CGSize) {
+        guard nativeContent, size.width > 0, size.height > 0 else { return }
+        backingImage = image; backingPointSize = size; contentFade = nil
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        backingLayer.contents = image
+        backingLayer.contentsScale = Double(image.width)/size.width
+        backingLayer.bounds = CGRect(origin: .zero, size: size)
+        backingLayer.position = CGPoint(x: 0, y: imageLayer.bounds.height)
+        // A shrinking viewport can initially exceed its new backing. Extend
+        // the captured body's background instead of exposing another app.
+        var pixel: [UInt8] = [0, 0, 0, 0]
+        let background: CGColor? = pixel.withUnsafeMutableBytes { bytes in
+            guard let context = CGContext(data: bytes.baseAddress, width: 1, height: 1, bitsPerComponent: 8,
+                bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+            context.setBlendMode(.copy)
+            // Rounded-window capture corners may be transparent. Sample an
+            // inset body pixel, keeping the extension local to that backing.
+            let inset = max(1, min(32, min(image.width, image.height)/4))
+            context.draw(image, in: CGRect(x: inset-image.width, y: inset-image.height, width: image.width, height: image.height))
+            let alpha = max(1, Double(bytes[3]))
+            return CGColor(red: Double(bytes[0])/alpha, green: Double(bytes[1])/alpha,
+                blue: Double(bytes[2])/alpha, alpha: 1)
+        }
+        // Even a transparent capture must not expose another client's pixels
+        // through the portion outside the admitted backing.
+        imageLayer.backgroundColor = background ?? CGColor(gray: 0, alpha: 1)
+        CATransaction.commit()
     }
     func replaceImage(_ image: CGImage, duration: Double) {
         let previous = self.image
