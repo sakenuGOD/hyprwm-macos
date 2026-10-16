@@ -79,7 +79,10 @@ final class OverviewBridge {
     func takeSelections() -> [OverviewSelection] { lock.lock();defer { lock.unlock() }; let value=selections;selections=[];return value }
     var status: JSON {
         lock.lock();defer { lock.unlock() }
+        let transition=sys.overviewTransitionActive()
         return statusValue.setting("ordinary_scene",ordinarySceneStatus())
+            .setting("public_transition",.bool(transition))
+            .setting("frozen",.bool(statusValue["frozen"]?.truthy == true || transition))
     }
     /// Releases the existing native overview authority before the daemon reveals
     /// hidden sources. Pending replies are recovered by sequence rather than replayed.

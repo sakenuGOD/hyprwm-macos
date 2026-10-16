@@ -1486,9 +1486,14 @@ public final class WM {
         }
         if enabled {overviewRefresh?()}
         let overviewActive=overviewFrozen?() == true
+        let publicOverviewActive=options.production && sys.overviewTransitionActive()
+        if options.production && (overviewActive || publicOverviewActive) {suspendLauncherForOverview()}
         if options.production {updateOverviewOwnership(active:overviewActive)}
         if options.production {overviewEntryAck?(overviewOwnershipConsumed)}
         if overviewActive {admission?.suspend();dragSession=nil;sys.cancelFocus();return}
+        if publicOverviewActive {
+            admission?.suspend();dragSession=nil;cancelFocusRecovery();return
+        }
         if !enabled { admission?.suspend(); return }
         if options.production && sys.sessionLocked() {
             admission?.suspend()

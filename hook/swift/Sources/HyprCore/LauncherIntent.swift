@@ -24,6 +24,20 @@ extension WM {
         if launcherIntent != nil {launcherDisposition=reason}
         if let value=launcherIntent { sys.consumeLauncher(value.sequence) };launcherIntent=nil
     }
+    func suspendLauncherForOverview() {
+        // Mission Control selects a view, not an app to bring back to the
+        // previous desktop. Drain even events not yet observed by the daemon.
+        if let value=sys.launcherIntent(after:launcherSequence) {
+            launcherSequence=value.sequence;launcherObserved=value
+            sys.consumeLauncher(value.sequence)
+            if value.kind>0 {launcherDisposition="mission-control"}
+        }
+        consumeLauncher("mission-control")
+        activationIntent=nil
+        // Dock also owns the overview surface. It cannot grant Dock-icon
+        // launch authority while the system is choosing another desktop.
+        sys.cacheLauncher(space:0,frontPID:0,windows:[])
+    }
     var launcherStatus:JSON {
         .object([("available",.int(sys.launcherAvailable())),
             ("pending_origin",launcherIntent.map{.int($0.space)} ?? .null),

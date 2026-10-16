@@ -27,6 +27,7 @@ final class FakeWorld: SysAPI {
     var propertyRead: (() -> Void)?
     var locked = false
     var overlay = false
+    var publicOverview = false
     var launch:LauncherIntent?
     var capabilities:[Int:Int]=[:]
     var clientMinima:[Int:(Double,Double)]=[:]
@@ -63,6 +64,7 @@ final class FakeWorld: SysAPI {
     func appPath(_ pid:Int) -> String? { applicationPaths[pid] }
     func sessionLocked() -> Bool { locked }
     func interactionOverlay() -> Bool { overlay }
+    func overviewTransitionActive() -> Bool {publicOverview}
     func tabProperty(_ wid: Int, _ pid: Int) -> TabProperty? { propertyRead?(); return tabProperties[pid] }
     func focusContext(_ pid: Int) -> (wid: Int?, flags: Int) { contexts[pid] ?? (nil, 4) }
     func processBirth(_ pid: Int) -> String? { births[pid] }

@@ -2,6 +2,19 @@
 import XCTest
 
 final class OpeningPresentationTests:XCTestCase {
+    func testPublicOverviewBlocksFocusAndLayoutWhenPrivateOverviewIsUnavailable() throws {
+        let f=ProductionPolicyTests(),(wm,sys,eng,wins)=try f.world(f.pair()),sink=SnapshotHandoffTests.Recorder()
+        wm.cfgSink=sink;wm.overviewFrozen={false};sys.publicOverview=true
+        sys.front=101;sys.contexts[101]=(1,0);sys.activeSpaceID=1
+        sys.nativeSnapshot=Snapshot(space:1,stable:true,area:f.area,windows:wins)
+        wm.target.removeAll();wm.lastSpace=2
+        wm.tick(socketReady:false)
+        XCTAssertTrue(eng.ch.ops.isEmpty,"Do not configure transformed Mission Control cards as desktop windows")
+        XCTAssertTrue(sink.jobs.isEmpty)
+        XCTAssertTrue(sys.calls.filter{$0.array?.first == .string("ax_focus")}.isEmpty)
+        sys.publicOverview=false;wm.tick(socketReady:false)
+        XCTAssertFalse(eng.ch.ops.isEmpty,"Resume ordinary reconciliation after the system transition")
+    }
     func testPreparationNeverHidesAnAlreadyPresentedUnadmittedWindow() throws {
         let f=ProductionPolicyTests(),(wm,sys,eng,wins)=try f.world(f.pair())
         wm.cfg=try HyprConfig(json:wm.cfg.raw.setting("runtime",.object([("prehide",.bool(true))])),timeScale:1)

@@ -7,6 +7,7 @@ import Foundation
 import HyprCore
 
 final class LiveSys: SysAPI {
+    private let publicOverview=PublicOverviewMonitor()
     private let ruleMetadata=AXWindowMetadata()
     private let applicationMetadata=ApplicationMetadataCache()
     private func metadata(_ pid:Int) -> ApplicationMetadata? {
@@ -265,8 +266,9 @@ final class LiveSys: SysAPI {
             acceptedTime:value.sample>0 ? value.accepted_time:nil,sample:value.sample)
     }
     var overviewGuard:(()->Bool)?
+    func overviewTransitionActive() -> Bool {publicOverview.active}
     func interactionOverlay() -> Bool {
-        overviewGuard?() == true || OverviewNativeMode.active(hs_overview10_mode()) || ws_menu_tracking() != 0 || ws_input_overlay() != 0
+        publicOverview.active || overviewGuard?() == true || OverviewNativeMode.active(hs_overview10_mode()) || ws_menu_tracking() != 0 || ws_input_overlay() != 0
     }
     func sessionLocked() -> Bool { hs_session_locked() != 0 }
     func tabProperty(_ wid: Int, _ pid: Int) -> TabProperty? {

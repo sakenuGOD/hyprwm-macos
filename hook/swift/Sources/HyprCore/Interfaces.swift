@@ -222,6 +222,7 @@ public protocol SysAPI: AnyObject {
     func clientMinimum(_ pid:Int,_ wid:Int) -> (Double,Double)?
     func nativeResize(_ pid: Int) -> NativeResizeContext?
     func interactionOverlay() -> Bool
+    func overviewTransitionActive() -> Bool
     func sessionLocked() -> Bool
     func processBirth(_ pid: Int) -> String?
     func tabProperty(_ wid: Int, _ pid: Int) -> TabProperty?
@@ -258,6 +259,7 @@ public extension SysAPI {
     func clientMinimum(_ pid:Int,_ wid:Int) -> (Double,Double)? { nil }
     func nativeResize(_ pid: Int) -> NativeResizeContext? { nil }
     func interactionOverlay() -> Bool { false }
+    func overviewTransitionActive() -> Bool { false }
     func sessionLocked() -> Bool { false }
     func processBirth(_ pid: Int) -> String? { nil }
     func tabProperty(_ wid: Int, _ pid: Int) -> TabProperty? { nil }

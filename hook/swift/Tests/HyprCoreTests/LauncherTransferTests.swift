@@ -2,6 +2,35 @@
 import XCTest
 
 final class LauncherTransferTests:XCTestCase {
+    func testMissionControlSelectionCannotReuseEarlierLauncherToStealDestinationWindow() throws {
+        for (nativeOverview,kind,alreadyObserved) in [false,true].flatMap({native in
+            [1,2,3].flatMap{kind in [false,true].map{(native,kind,$0)}}
+        }) {
+            let f=ProductionPolicyTests(),(wm,sys,eng,original)=try f.world(f.pair())
+            wm.cfgSink=SnapshotHandoffTests.Recorder();wm.rescued=true;wm.frontPid=101;wm.lastSpace=1
+            wm.sp(1).tree=Node(leaf:1);wm.sp(2).tree=Node(leaf:2)
+            wm.launcherAreas[1]=f.area
+            sys.launch=LauncherIntent(sequence:7,space:1,frontPID:101,kind:kind,started:sys.t)
+            if alreadyObserved {wm.observeLauncher(f.area,1,original)}
+            // The native event may arrive before the daemon has observed it.
+            sys.front=101;sys.contexts[101]=(1,0);sys.activeSpaceID=1
+            sys.nativeSnapshot=Snapshot(space:1,stable:true,area:f.area,windows:original)
+            sys.publicOverview = !nativeOverview;wm.overviewFrozen={nativeOverview}
+            wm.tick(socketReady:false)
+            var entered=original
+            for i in entered.indices {entered[i].space=entered[i].wid;entered[i].on=entered[i].wid==2}
+            sys.publicOverview=false;wm.overviewFrozen={false}
+            sys.front=102;sys.contexts[102]=(2,0);sys.activeSpaceID=2
+            sys.transferCatalog=try PublicWorkspaceCatalog(PublicWorkspaceTests().raw(2))
+            sys.nativeSnapshot=Snapshot(space:2,stable:true,area:f.area,windows:entered)
+            eng.ch.ops=[];sys.t+=0.1;wm.tick(socketReady:false)
+            XCTAssertNil(wm.launcherIntent,"Mission Control supersedes a prior launch selection")
+            XCTAssertTrue(wm.launcherTransfers.isEmpty)
+            XCTAssertFalse(eng.ch.ops.contains{$0["op"] == .string("space")},"Selecting a desktop must never move its windows to the launcher's old desktop")
+            XCTAssertFalse(eng.ch.ops.contains{$0["op"] == .string("alpha") && $0["wid"] == .int(2) && $0["a"] == .double(0)},"A destination window must not disappear after the desktop selection")
+            XCTAssertTrue(wm.sp(2).tree?.contains(2)==true)
+        }
+    }
     func testSelectingOverlayAndModalFocusWaitWithoutReparkingActorOrConsumingIntent() throws {
         let f=ProductionPolicyTests(),(wm,sys,eng,windows)=try f.world(f.pair())
         wm.cfgSink=SnapshotHandoffTests.Recorder();wm.sp(1).tree=Node(leaf:2)
