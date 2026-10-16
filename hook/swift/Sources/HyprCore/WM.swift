@@ -476,6 +476,14 @@ public final class WM {
                         if presentedOpening {c.geom(wid,to,16,16,dpos:0,dsize:0,frm:to,move:true,warp:true)}
                         else if nativeFrames {c.geometry(wid,to:to,curves:(mvC,mvC),durations:(mvD,mvD),from:frm,warp:!mvOn || noAnimation,
                             stretch:false,native:true,wait:false,hold:false)}
+                        else if motionOn && !noAnimation && !opening.contains(wid) && dragSession==nil &&
+                            (to.w>(real[wid] ?? cw.rect).w+1 || to.h>(real[wid] ?? cw.rect).h+1) {
+                            // Growth needs a position+size AX write to avoid edge clamping.
+                            // Park the native origin inside this geometry publication first;
+                            // otherwise AX can move A between two presented B frames.
+                            c.geom(wid,to,motionCurve,motionCurve,dpos:motionDuration,dsize:motionDuration,frm:frm,move:true,warp:false,stretch:false)
+                            terminalMove=true
+                        }
                         else if motionOn && !noAnimation && (!opening.contains(wid) || presentedOpening) && dragSession==nil && c.terminalGeometrySupported {
                             guard c.geomTerminal(wid,to:to,curves:(motionCurve,motionCurve),durations:(motionDuration,motionDuration),from:frm) else {target[wid]=nil;continue}
                             terminalMove=true

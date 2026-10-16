@@ -66,7 +66,7 @@ final class LiveBufferMotionTests:XCTestCase {
         wm.apply(f.area,1,[parent],force:true)
         XCTAssertEqual(sink.jobs.count,1);XCTAssertFalse(sink.jobs[0].sizeOnly);XCTAssertEqual(sink.jobs[0].to,goal)
         let motion=eng.ch.ops.first{$0["wid"] == .int(1) && $0["op"] == .string("geom")}!
-        XCTAssertEqual(motion["frm"],right.json);XCTAssertEqual(motion["move_end"],.bool(true))
+        XCTAssertEqual(motion["frm"],right.json);XCTAssertEqual(motion["move"],.bool(true),"Growth must park the physical origin in the engine batch before AX changes it");XCTAssertNil(motion["move_end"])
         slot.pos=(goal.x,goal.y);slot.size=(goal.w,goal.h);slot.ax=goal.x;slot.ay=goal.y;slot.geo=1;eng.ch.eng=[slot]
         wm.pollLiveBufferShrinks();XCTAssertNotNil(wm.liveBufferShrinks[1]) // Origin alone cannot certify a clamped growth.
         slot.aw=goal.w;slot.ah=goal.h;eng.ch.eng=[slot];wm.pollLiveBufferShrinks()
