@@ -129,6 +129,7 @@ final class LiveSys: SysAPI {
             guard let self else{return}
             func current() -> Bool {self.focusLock.lock();defer{self.focusLock.unlock()};return sequence==self.focusSequence}
             func allowed() -> Bool {current()&&self.now()<request.deadline && !self.sessionLocked() && !self.interactionOverlay() &&
+                self.activeSpace()==UInt64(request.space) &&
                 !OverviewNativeMode.active(hs_overview10_mode()) && self.overviewGuard?() != true &&
                 !self.mouseDown() && !self.protectedProcess(request.pid) && self.processBirth(request.pid)==request.birth &&
                 self.winPidLevel(request.wid).pid==request.pid}
@@ -173,7 +174,7 @@ final class LiveSys: SysAPI {
                     let commitSource=self.nativeFocusContext(source)
                     guard commitSource.wid==context.wid,commitSource.flags==context.flags else{return}
                 }
-                guard allowed(),self.frontPid()==source,self.axFocus(request.pid,request.wid,raise:false)==0,current(),self.frontPid()==request.pid else{return}
+                guard allowed(),self.frontPid()==source,self.activeSpace()==UInt64(request.space),self.axFocus(request.pid,request.wid,raise:false)==0,current(),self.frontPid()==request.pid else{return}
                 let actual=self.nativeFocusContext(request.pid)
                 accepted=actual.wid==request.wid && actual.flags&(NativeFocusFlags.positive|NativeFocusFlags.unknown)==0
                 if accepted {
