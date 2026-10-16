@@ -2,6 +2,80 @@
 import XCTest
 
 final class LauncherTransferTests:XCTestCase {
+
+    func testCommittedLauncherTransferResizesBackgroundSourcePeerWithoutReturning() throws {
+        for (source,destination,mode) in [(1,2,"ordinary"),(2,1,"ordinary"),(1,2,"hidden"),(1,2,"missing"),
+                                          (1,2,"foreign"),(1,2,"zero"),(1,2,"owner"),(1,2,"protected"),(1,2,"area")] {
+            let f=ProductionPolicyTests(),initial=Node(split:"v",ratio:0.5,a:f.pair(),b:Node(leaf:3))
+            let (wm,sys,eng,original)=try f.world(initial),sink=SnapshotHandoffTests.Recorder()
+            wm.cfgSink=sink;wm.rescued=true;wm.lastSpace=destination;wm.frontPid=101
+            wm.sp(source).tree=f.pair();wm.sp(source).focus=1;wm.sp(destination).tree=Node(leaf:3)
+            wm.launcherAreas[source]=f.area;wm.launcherAreas[destination]=f.area
+            let sourceFrames=wm.layout(f.area,wm.sp(source)),destinationFrames=wm.layout(f.area,wm.sp(destination))
+            var windows=original
+            for i in windows.indices {
+                let wid=windows[i].wid,r=(wid==3 ? destinationFrames:sourceFrames)[wid]!
+                windows[i].x=r.x;windows[i].y=r.y;windows[i].w=r.w;windows[i].h=r.h
+                windows[i].space=wid==3 ? destination:source;windows[i].on=wid==3
+                wm.target[wid]=r;sys.bounds[wid]=r;sys.alphaM[wid]=1
+            }
+            let oldPeer=try XCTUnwrap(wm.target[2]),actor=windows.firstIndex{$0.wid==1}!
+            let request=LauncherTransferFocus(pid:101,wid:1,birth:"birth-1",origin:destination,source:source,
+                sequence:7,deadline:sys.t+8,catalog:try PublicWorkspaceCatalog(PublicWorkspaceTests().raw(destination)))
+            var arrival=try XCTUnwrap(wm.launcherArrivalPlan(windows[actor],destination,f.area))
+            arrival.accepted=arrival.rect
+            // Seed the authenticated terminal receipt: production tick must
+            // commit this transfer and configure its source before any reentry.
+            var transfer=LauncherTransfer(request:request,frame:windows[actor].rect,wasHidden:false,
+                nativeFrame:windows[actor].rect,originalAlpha:1,arrival:arrival)
+            transfer.samples=2;transfer.revealQueued=true;transfer.revealSamples=2;transfer.focusAccepted=true
+            wm.launcherTransfers[1]=transfer
+            wm.launcherIntent=LauncherIntent(sequence:7,space:destination,frontPID:103,kind:1,started:sys.t)
+            windows[actor].space=destination;windows[actor].on=true
+            windows[actor].x=arrival.rect.x;windows[actor].y=arrival.rect.y
+            windows[actor].w=arrival.rect.w;windows[actor].h=arrival.rect.h
+            wm.target[1]=arrival.rect;sys.bounds[1]=arrival.rect
+            var slot=EngWin(wid:1,pos:(arrival.rect.x,arrival.rect.y),size:(arrival.rect.w,arrival.rect.h),curAlpha:1,a:arrival.rect)
+            slot.geo=1;eng.ch.eng=[slot]
+            sys.front=101;sys.contexts[101]=(1,0);sys.activeSpaceID=UInt64(destination)
+            sys.transferCatalog=try PublicWorkspaceCatalog(PublicWorkspaceTests().raw(destination))
+            let peer=windows.firstIndex{$0.wid==2}!
+            switch mode {
+            case "hidden":wm.hidden=[Hidden(wid:2,pid:102,owner:"Fixture",space:source,rect:windows[peer].rect.arr,
+                extra:.object([("swift_birth",.string("birth-2"))]))]
+            case "missing":windows.remove(at:peer)
+            case "foreign":windows[peer].space=destination
+            case "zero":windows[peer].space=0
+            case "owner":sys.pidlevel[2]=(999,0)
+            case "protected":sys.protectedPIDs.insert(102)
+            case "area":wm.launcherAreas[source]=nil
+            default:break
+            }
+            sys.nativeSnapshot=Snapshot(space:destination,stable:true,area:f.area,windows:windows)
+            wm.tick(socketReady:false)
+            XCTAssertTrue(wm.launcherTransfers.isEmpty);XCTAssertNil(wm.launcherIntent)
+            XCTAssertEqual(wm.sp(source).tree?.wid,2);XCTAssertTrue(wm.sp(destination).tree?.contains(1)==true)
+            let full=try XCTUnwrap(wm.layout(f.area,wm.sp(source))[2])
+            XCTAssertNotEqual(oldPeer,full)
+            if mode != "ordinary" {
+                XCTAssertFalse(sink.jobs.contains{$0.wid==2 && $0.expectedSpace==source},"Refuse unverifiable source peer: \(mode)")
+                continue
+            }
+            XCTAssertEqual(wm.target[2],full,"Source must be resized while destination is still active")
+            let job=sink.jobs.first{$0.wid==2 && $0.to==full}
+            XCTAssertNotNil(job,"No source-peer native configure was submitted")
+            guard let job else{continue}
+            XCTAssertEqual(job.expectedSpace,source);XCTAssertTrue(job.requireOwnership);XCTAssertEqual(job.birth,"birth-2")
+            XCTAssertTrue(eng.ch.ops.contains{$0["wid"] == .int(2) && $0["to"] == full.json})
+            XCTAssertEqual(sys.activeSpaceID,UInt64(destination));XCTAssertEqual(wm.lastSpace,destination)
+            XCTAssertFalse(sys.calls.contains{$0.array?.first == .string("ax_focus")})
+            XCTAssertFalse(eng.ch.ops.contains{$0["op"] == .string("space")})
+            let count=sink.jobs.filter{$0.wid==2}.count
+            sys.t+=0.3;wm.tick(socketReady:false)
+            XCTAssertEqual(sink.jobs.filter{$0.wid==2}.count,count,"Unchanged background peers must not be resubmitted")
+        }
+    }
+
     func testMissionControlSelectionCannotReuseEarlierLauncherToStealDestinationWindow() throws {
         for (nativeOverview,kind,alreadyObserved) in [false,true].flatMap({native in
             [1,2,3].flatMap{kind in [false,true].map{(native,kind,$0)}}

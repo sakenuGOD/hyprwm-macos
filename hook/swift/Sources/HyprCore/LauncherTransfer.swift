@@ -23,6 +23,35 @@ struct LauncherTransfer {
     var revealQueued=false,revealSamples=0,lastRevealSample=0
 }
 extension WM {
+    /// A completed ordinary transfer changes a source that is no longer current.
+    /// Land its remaining native frames without selecting that desktop or app.
+    func reflowBackgroundLauncherSource(_ source:Int,_ snapshot:Snapshot) {
+        guard enabled,snapshot.stable,!snapshot.locked,snapshot.spaceType==0,source != snapshot.space,cfgSink != nil,
+              sys.activeSpace()==UInt64(snapshot.space),!sys.sessionLocked(),!sys.interactionOverlay(),overviewFrozen?() != true,
+              !nativeSuspendedSpaces.contains(String(source)),let area=launcherAreas[source] else{return}
+        let state=sp(source),byID=Dictionary(snapshot.windows.map{($0.wid,$0)},uniquingKeysWith:{$1})
+        let excluded=Set(hidden.map(\.wid)).union(floating).union(closing).union(restoring)
+            .union(restorePending.keys).union(launcherTransfers.keys).union(activationMoves.keys).union(nativeFullscreenWindows)
+        let peers=Set(Dwindle.leaves(state.tree).compactMap(\.wid)).subtracting(excluded)
+        guard !peers.isEmpty,peers.allSatisfy({wid in
+            byID[wid].map{$0.space==source && !$0.nativeFullscreen && $0.layer==0 && $0.alpha>0.05} == true
+        }) else{return}
+        let projected=SpaceState.from(state.json)
+        for wid in Set(Dwindle.leaves(projected.tree).compactMap(\.wid)).subtracting(peers).sorted() {
+            projected.tree=tile.removeReorientingPromoted(projected.tree,wid,in:area)
+        }
+        var jobs:[CfgJob]=[]
+        for (wid,to) in layout(area,projected) where target[wid] != to {
+            guard let window=byID[wid],pids[wid]==window.pid,!sys.protectedProcess(window.pid),tileable(window),
+                  sys.winPidLevel(wid).pid==window.pid,let job=job(window.pid,wid,to) else{continue}
+            var configureJob=job;configureJob.expectedSpace=source
+            cfgSink?.cancel(wid);revokeSnapshotLease(wid);liveBufferShrinks[wid]=nil
+            eng.c.geom(wid,to,16,16,frm:to,move:false,warp:true,stretch:false)
+            target[wid]=to;jobs.append(configureJob)
+        }
+        if !jobs.isEmpty {eng.c.commit();configure(jobs)}
+    }
+
     @discardableResult func beginLauncherTransfer(_ launcher:LauncherIntent,_ window:WinInfo,_ current:Int,_ frame:Rect,_ wasHidden:Bool) -> Bool {
         guard launcherTransfers.isEmpty,sys.frontPid()==window.pid,let birth=sys.processBirth(window.pid),
               sys.winPidLevel(window.wid).pid==window.pid,let catalog=sys.launcherCatalog(),catalog.active==current,
@@ -106,6 +135,7 @@ extension WM {
                 hidden.removeAll{$0.wid==wid};restoring.remove(wid);restoreFrom[wid]=nil;restoreChecks[wid]=nil;restorePending[wid]=nil
                 target[wid]=arrival.rect;newbies[wid]=nil;optimistic[wid]=nil
                 cfgQ.removeAll{$0.wid==wid};launcherTransfers[wid]=nil;consumeLauncher();ownFocus=(request.pid,sys.now());save()
+                reflowBackgroundLauncherSource(request.source,snapshot)
                 apply(snapshot.area,request.origin,snapshot.windows)
             } else {launcherTransfers[wid]=transfer}
         }
