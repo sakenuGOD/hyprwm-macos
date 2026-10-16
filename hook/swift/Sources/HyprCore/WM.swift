@@ -540,6 +540,13 @@ public final class WM {
             if options.production {
                 guard r.isCurrent?() == true, let pid=r.pid, let birth=r.birth,
                       sys.winPidLevel(r.wid).pid == pid, sys.processBirth(pid) == birth else { continue }
+                // Spotlight or a modal can defer placement completion while
+                // this queue drains. Retain its exact ACK without revealing.
+                if var request=restorePending[r.wid],var plan=request.placement,
+                   let pid=request.record.pid,
+                   let actual=PlacementFrameAcceptance.accepted(r,wid:r.wid,pid:pid,birth:plan.birth,target:plan.rect) {
+                    plan.accepted=actual;request.placement=plan;restorePending[r.wid]=request
+                }
             }
             if r.e != 0 {
                 log("configure window \(r.wid): error \(r.e)")
