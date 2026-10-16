@@ -26,7 +26,7 @@ Quit an older companion normally before opening another, to avoid duplicate menu
 
 `build_app.sh` packages the interface with the build checkout path recorded in its metadata. Moving/deleting that checkout can break config/runtime discovery. Rebuild after moving it, or provide `HYPRWM_HOOK` for an explicit CLI launch. This packaging command alone does **not** produce a standalone window manager installer, configure Engine prerequisites, notarize the app or publish a release. The separate source `./install.sh` flow builds a runtime app with bundled config resources and installed local CLI launchers; it does not use this menu-companion package as a standalone distribution. Its matching `./uninstall.sh` restores windows before removal. See the [README](../../README.md).
 
-The deployment target comes from `Package.swift`, currently macOS 14. This is a build minimum, not proof that private native integrations work on every supported macOS version. Liquid Glass effects are conditional on OS support.
+The deployment target comes from `Package.swift`, currently macOS 14. This is a build minimum, not proof that private native integrations work on every supported macOS version. The current menu uses AppKit; the settings window uses SwiftUI.
 
 ## Build receipts
 

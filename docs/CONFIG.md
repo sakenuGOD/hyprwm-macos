@@ -39,7 +39,7 @@ All numeric distances are macOS points unless the name says milliseconds.
 | `time_scale` | `1` | `time_scale = 1.5` (`0.1…4`) | `NativeRuntimeConfig.build` scales geometry animation timing; `HYPRWM_TIME_SCALE` overrides it. |
 | `runtime.enabled` | `true` | `runtime.enabled = false` | `RuntimeOptions.load` and runtime reload enable/disable automatic tiling. |
 | `runtime.menu_bar` | `true` | `runtime.menu_bar = false` | `RuntimeOptions.load`, daemon menu construction at launch; restart to change menu presence. `HYPRWM_MENU_BAR=0/1` overrides it. |
-| `runtime.startup_animation` | `false` in generated file | `runtime.startup_animation = true` | `RuntimeOptions.load` → `MenuBarController` startup presentation; applies on launch. The options fallback is `true` if a hand-written file omits it. |
+| `runtime.startup_animation` | `false` in generated file | `runtime.startup_animation = true` | **Accepted, not currently effective:** `RuntimeOptions.load` passes `startupAnimation` to `MenuBarController`, which does not consume it. The options fallback is `true` if a hand-written file omits it. |
 | `runtime.window_resize_mode` | `native` | `native` or `buffer` | `Channel.configureAppearance` sets the engine's live-buffer scale flag. Neither mode enables per-frame AX configuration. |
 | `runtime.overview_hidden_windows` | `false` | `runtime.overview_hidden_windows = false` | `RuntimeOptions.load` → overview policy. Experimental hidden-window Mission Control path; leave off unless separately verified. |
 | `runtime.prehide` | `false` | `runtime.prehide = false` | `LiveEngine` publishes native prehide policy; `WM` first-map path reads it. `HYPRWM_PREHIDE=0/1` overrides it. |
