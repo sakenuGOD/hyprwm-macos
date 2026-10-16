@@ -30,7 +30,9 @@ extension WM {
         for (key,state) in spaces where !Set(Dwindle.leaves(state.tree).compactMap(\.wid)).isDisjoint(with:native) { origins.insert(key) }
         if nativeSpaceType != 4 { origins.insert(String(space)) }
         let originWindows=Set(spaces.filter { origins.contains($0.0) }.flatMap { Dwindle.leaves($0.1.tree).compactMap(\.wid) })
-        for window in windows where nativePIDs.contains(window.pid) && originWindows.contains(window.wid) && managed.contains(window.wid) && !window.on { native.insert(window.wid) }
+        // An ordinary window on a background desktop is offscreen too. Only
+        // Space-zero transition evidence can inherit its app's fullscreen gap.
+        for window in windows where nativePIDs.contains(window.pid) && originWindows.contains(window.wid) && managed.contains(window.wid) && !window.on && window.space==0 { native.insert(window.wid) }
         let byID=Dictionary(windows.map { ($0.wid,$0) },uniquingKeysWith: { first,_ in first })
         var returning=Set<Int>(), returnTimes: [Int:Double]=[:]
         for wid in previous.intersection(retained).subtracting(hiddenIDs) {
@@ -49,7 +51,7 @@ extension WM {
             guard !owners.isEmpty else { continue }
             sources[key]=leaves
             let peers=leaves.subtracting(owners)
-            if nativeSpaceType == 4 || !owners.isDisjoint(with:returning) || owners.contains(where: { byID[$0]?.space == 0 || byID[$0].map { $0.on && String($0.space)==key } == true }) || peers.contains(where: { byID[$0]?.on != true || String(byID[$0]?.space ?? 0) != key }) { suspended.insert(key) }
+            if nativeSpaceType == 4 || !owners.isDisjoint(with:returning) || owners.contains(where: { byID[$0]?.space == 0 || byID[$0].map { $0.on && String($0.space)==key } == true }) || peers.contains(where: { String(byID[$0]?.space ?? 0) != key }) { suspended.insert(key) }
         }
         let departing=Set(sources.keys).subtracting(nativeSourceSpaces).union(suspended.subtracting(nativeSuspendedSpaces))
         var revoked=entering

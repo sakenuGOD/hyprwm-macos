@@ -103,6 +103,21 @@ final class MigrationParityTests: XCTestCase {
         wm.followMouse(1,windows)
         XCTAssertFalse(sys.calls.contains { $0.array?.first?.string == "ax_focus" })
     }
+    func testFullscreenChildDoesNotConvertItsBackgroundAppPeerIntoFullscreen() throws {
+        let f=ProductionPolicyTests(),tree=Node(split:"v",ratio:0.5,a:Node(leaf:1),b:f.pair("h"))
+        tree.b.a.wid=2;tree.b.b.wid=3
+        let (wm,sys,_,original)=try f.world(tree),saved=tree.json
+        var windows=original;let manager=windows.firstIndex{$0.wid==1}!,vm=windows.firstIndex{$0.wid==3}!
+        windows[vm].pid=windows[manager].pid;windows[vm].space=99;windows[vm].nativeFullscreen=true
+        sys.front=999;sys.contexts[999]=(nil,32)
+        for background in [true,false,true] {
+            for i in windows.indices where windows[i].wid != 3 {windows[i].on = !background}
+            _=wm.updateNativeFullscreen(windows,background ? 2:1)
+            XCTAssertEqual(wm.nativeFullscreenWindows,Set([3]),"Offscreen on an ordinary desktop is not native fullscreen")
+            XCTAssertFalse(wm.nativeSuspendedSpaces.contains("1"),"An inactive source does not lose its ordinary peers")
+            XCTAssertEqual(wm.sp(1).tree?.json,saved,"Keep the VM return position without changing the manager's identity")
+        }
+    }
     func testRuleOpacityNoAnimationAndSetpropAreActuallyConsumed() throws {
         let (wm,_,eng,windows)=try world()
         wm.cfg=try NativeRuntimeConfig.build(base:wm.cfg,document:JSON.parse("{\"appearance\":{\"active_opacity\":0.8,\"inactive_opacity\":0.6},\"window_rules\":[{\"match\":{\"class\":\"Fixture\"},\"opacity\":\"0.5 override 0.25\",\"no_anim\":true,\"no_follow_mouse\":true}]}"))
