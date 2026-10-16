@@ -106,6 +106,7 @@ extension WM {
                 hidden.removeAll{$0.wid==wid};restoring.remove(wid);restoreFrom[wid]=nil;restoreChecks[wid]=nil;restorePending[wid]=nil
                 target[wid]=arrival.rect;newbies[wid]=nil;optimistic[wid]=nil
                 cfgQ.removeAll{$0.wid==wid};launcherTransfers[wid]=nil;consumeLauncher();ownFocus=(request.pid,sys.now());save()
+                apply(snapshot.area,request.origin,snapshot.windows)
             } else {launcherTransfers[wid]=transfer}
         }
     }

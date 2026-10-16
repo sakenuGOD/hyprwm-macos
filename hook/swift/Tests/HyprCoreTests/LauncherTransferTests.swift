@@ -28,6 +28,9 @@ final class LauncherTransferTests:XCTestCase {
         wm.cfgSink=SnapshotHandoffTests.Recorder()
         var moved=windows;moved[0].space=2;moved[0].on=false
         wm.sp(1).tree=Node(leaf:2);wm.sp(2).tree=Node(leaf:1)
+        let peerFull=try XCTUnwrap(wm.layout(f.area,wm.sp(1))[2])
+        wm.target[2]=peerFull;sys.bounds[2]=peerFull
+        moved[1].x=peerFull.x;moved[1].y=peerFull.y;moved[1].w=peerFull.w;moved[1].h=peerFull.h
         wm.rescued=true;wm.frontPid=101;wm.lastSpace=2
         sys.front=101;sys.contexts[101]=(1,0);sys.activeSpaceID=2
         sys.alphaM[1]=1;sys.alphaM[2]=1
@@ -69,6 +72,22 @@ final class LauncherTransferTests:XCTestCase {
         sys.t+=0.02;wm.tick(socketReady:false)
         XCTAssertTrue(wm.launcherTransfers.isEmpty);XCTAssertNil(wm.launcherIntent)
         XCTAssertNil(wm.sp(2).tree);XCTAssertTrue(wm.sp(1).tree?.contains(1)==true)
+        XCTAssertEqual(wm.target[2],wm.layout(f.area,wm.sp(1))[2],"The destination peer must shrink without a click after the transfer commits")
+    }
+    func testReturningToSourceSpaceAppliesItsAlreadyChangedTreeWithoutMouseInput() throws {
+        let f=ProductionPolicyTests(),(wm,sys,eng,original)=try f.world(f.pair())
+        let sink=SnapshotHandoffTests.Recorder();wm.cfgSink=sink
+        wm.sp(1).tree=Node(leaf:2);wm.sp(2).tree=Node(leaf:1)
+        wm.lastSpace=2;wm.rescued=true;wm.frontPid=102
+        sys.front=102;sys.contexts[102]=(2,0);sys.activeSpaceID=1
+        var windows=original;windows[0].space=2;windows[0].on=false
+        sys.nativeSnapshot=Snapshot(space:1,stable:true,area:f.area,windows:windows)
+        let full=try XCTUnwrap(wm.layout(f.area,wm.sp(1))[2])
+        XCTAssertNotEqual(wm.target[2],full)
+        wm.tick(socketReady:false)
+        XCTAssertEqual(wm.target[2],full)
+        XCTAssertTrue(eng.ch.ops.contains{$0["wid"] == .int(2) && $0["op"] == .string("geom")})
+        XCTAssertTrue(sink.jobs.contains{$0.wid==2 && $0.to==full})
     }
     func testHiddenLauncherWaitsForConsumedRevealAndTwoNewNativeSamplesBeforeFocus() throws {
         let f=ProductionPolicyTests(),(wm,sys,eng,windows)=try f.world(f.pair())

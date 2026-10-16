@@ -1617,7 +1617,7 @@ public final class WM {
             else if md { updateSharedResize(area,space,wins) }
         }
         var (changed, opened) = sync(area, space, wins)
-        changed = changed || drifted || overviewRetilePending
+        changed = changed || drifted || overviewRetilePending || (options.production && spaceChanged)
         let cf = configured()                                     // window rejected size: retarget immediately
         changed = changed || cf
         if wasDown && !md {                                       // button released: a window may have been dragged
@@ -1627,7 +1627,7 @@ public final class WM {
         }
         wasDown = md
         if changed {
-            apply(area, space, wins, force:overviewRetilePending,opening: opened)
+            apply(area, space, wins, force:overviewRetilePending || (options.production && spaceChanged),opening: opened)
             overviewRetilePending=false
         }
         if sys.now() - lastGuard > 0.25 {
