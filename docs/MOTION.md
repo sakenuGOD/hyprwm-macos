@@ -49,6 +49,11 @@ outer contour is derived from B, with constant configured thickness. A shadow's
 shape is derived from that same B. A content acknowledgement is scoped to the
 exact window owner, process birth and geometry generation.
 
+For layout animations, configure the final A size once and animate its
+presentation through B. Reflowing application content at every animation sample
+is not the intended appearance. Keep the experimental native per-frame configure
+mode disabled for normal use. Direct pointer resizing remains interactive.
+
 | Event | What moves and from/to | Duration and curve | Z-order | Stagger | Border | A relative to B |
 |---|---|---|---|---|---|---|
 | Open | New body grows from 86% of its allocated slot about the slot center, fading 0→1. Existing neighbors move from their current B to their new slots on the same transaction. | New geometry `windowsIn`/bounce; fade `fadeIn`/smooth 300 ms. Neighbors `windowsMove`/drift. | New tile belongs to the tiled plane; same-app dialogs and explicit floats remain above it. | 0 ms by default; any coalesced burst stagger must stay within 0–30 ms. | Geometry is exactly the new body's B at every sample; it fades with the event. | Predict final slot before first visible presentation. Request final A once; present the accepted content through B. Late readiness must have a bounded visible fallback, never an old-position flash. |
