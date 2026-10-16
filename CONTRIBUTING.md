@@ -1,10 +1,12 @@
 # Contributing to HyprWM
 
-HyprWM is an independent experimental macOS window manager. Contributions should improve a concrete behavior and make its verification reproducible. Check [existing issues](https://github.com/sakenuGOD/hyprwm-macos/issues) and the [roadmap](docs/ROADMAP.md) before opening overlapping work.
+Improve one concrete window-management behavior and make its verification reproducible. Read [AGENTS.md](AGENTS.md) for the source map and safety boundaries, then check the [roadmap](docs/ROADMAP.md) and existing issues for overlapping work.
 
-## Build and checks
+## Build
 
-Use macOS with Xcode Command Line Tools and the Swift toolchain required by [Package.swift](hook/swift/Package.swift). From the repository root:
+The Swift package requires macOS 14 or later and Swift 5.9 or later. Install Xcode Command Line Tools. The native engine has additional development-system requirements; a build alone does not establish its compatibility with your macOS version.
+
+From the repository root:
 
 ```sh
 swift build -c release --package-path hook/swift
@@ -12,49 +14,30 @@ swift test --package-path hook/swift
 git diff --check
 ```
 
-The release executable is `hook/swift/.build/release/hyprwm-swift`. Building it does not install the native engine or start a window manager. `hook/swift/build_app.sh` creates an ad-hoc signed local **menu companion** bundle and manifest, preserving an existing output path. It embeds the build checkout path and does not create a standalone distribution. The legacy `hook/start.sh` starts the Python daemon; it does not select the Swift runtime.
+The executable is `hook/swift/.build/release/hyprwm-swift`. `scripts/hyprwm --help` shows dry CLI modes. The repository also contains Python/Lua and native integration paths. `hook/start.sh` and `hook/stop.sh` require the development helper `hook/lifecycle.py`, which is not tracked in the public checkout. They are not a clean-clone launch path. Running this Engine-only branch needs the already verified native installation described in the README; Lite is developed on its separate experimental branch. See [packaging](hook/swift/PACKAGING.md) for app bundles and their current distribution limits.
 
-Read [AGENTS.md](AGENTS.md) before changing runtime or native integration. Do not launch a daemon, attach to WindowServer, or change system security settings as part of routine build/test checks.
+## Choose the narrowest check
 
-## Source map
+Layout, configuration, import and command policy belong in `HyprCore` with deterministic tests. OS adapters live in `hyprwm-swift`; native render and ownership protocols live under `hook/src`/`hook/wm`. Preserve PID/window-birth and epoch guards when changing lifecycle behavior. Prefer generic role/modal/parent signals to app names.
 
-| Area | Location |
-| --- | --- |
-| Layout and window-management policy | `hook/swift/Sources/HyprCore/` |
-| Text configuration and runtime schema | `HyprCore/TextConfig.swift`, `hook/config/runtime.schema.json` |
-| Runtime entry point and native adapters | `hook/swift/Sources/hyprwm-swift/` |
-| Settings, onboarding, menu bar | `Settings*.swift`, `Onboarding.swift`, `Menu*.swift` in the runtime target |
-| Native engine and bridges | `hook/src/`, `hook/wm/`, `hook/identity/` |
-| Deterministic tests and fixtures | `hook/swift/Tests/` |
-| Packaging | `hook/swift/build_app.sh`, `hook/swift/tools/package_app.py` |
-| Command and configuration reference | [docs/API.md](docs/API.md) |
+Run a relevant test filter while iterating, then the appropriate completion gate. Record a pre-existing failure once. Do not repeat the same test without a relevant change. Documentation-only changes need command, default, source and relative-link verification; they do not need a new full native build merely to prove prose.
 
-## Verification and manual QA
+A build or unit test does not prove focus, keyboard routing, visibility or motion. For live work, arrange one desktop operator, use windows you opened yourself, record the build/config/permissions and baseline, then inspect the result. A pass requires two of: expected IPC state, native focus/input truth, and inspected screenshot/clip evidence. Cover the affected baseline rows and restore every test window before leaving. Never attach to WindowServer or change a running session as part of routine automated checks.
 
-Use the smallest meaningful automated check, then the appropriate build/test gate. Explain what ran and remaining limits in the pull request. Documentation changes need source/link checks; runtime changes need relevant regression tests.
+For motion, inspect first frames, retargets and landing in real capture: body and border stay together, no old-position flash, no final snap and no invisible survivors. For recovery, verify orderly shutdown and the documented crash path. For config, verify an invalid line does not discard a valid edit, atomic-save reload survives, and appearance edits do not move windows.
 
-Live desktop testing must be deliberately scheduled with one operator. Record macOS version, build identifier, permissions, configuration, steps, expected/actual results, and recovery result. Sanitize logs and screenshots before sharing. Manual QA should cover:
+## Propose a change
 
-- Opening, tiling, resizing, moving, closing, hiding/restoring, and orderly shutdown with all windows restored.
-- Focus after close, pointer focus, app activation, and keyboard routing.
-- Modal dialogs and sheets, including cancellation and owner-window focus.
-- Zen browser tabs, multiple windows, fullscreen, close/reopen, and restoration.
-- Rapid repeated opens/closes/moves and animation retargeting, without stranded windows or transforms.
-- Mission Control entry/exit and selection, testing the default separately from the experimental hidden-window opt-in.
-- Appearance changes and transparency, with explicit evidence before marking unfinished behavior complete.
+A bug report needs exact steps, expected/actual behavior, macOS version, build identifier, mode, relevant configuration and a checkable acceptance criterion. Remove private titles, application content, personal paths and credentials before sharing evidence. Do not attach an unsanitized window inventory.
 
-Passing unit tests or compiling a preview does not pass these live checks. Keep unverified scenarios marked unverified.
+Keep pull requests scoped. Lead with the concrete trigger and resulting behavior, then describe meaningful validation and limits. Separate implemented code from live-verified behavior. Public strings and new documentation are English; preserve historical notes. Do not replace real product media with generated screenshots.
 
-## Issues and pull requests
+Preserve existing changes, stage exact paths and use an English commit message for one scenario. During stabilization, timebox a bug to 40 minutes or three failed hypotheses and record what would unblock the next attempt. A change that breaks a passing baseline row must be reverted before integration.
 
-For a bug, include a small reproduction, expected/actual behavior, version/build, relevant settings, and a concrete acceptance criterion. For an enhancement, explain the user problem and how completion can be checked. Never include private application content, personal paths, credentials, or unsanitized window inventories.
-
-Keep changes scoped, preserve user edits, and document externally visible changes. Use existing `bug` and `enhancement` labels; use `good first issue` only for bounded tasks with clear guidance.
-
-## Optional automatic synchronization
+## Optional synchronization hook
 
 ```sh
 scripts/setup-hooks.sh
 ```
 
-This configures `core.hooksPath=.githooks`. Every commit then runs `git pull --rebase && git push` through `post-commit`, so committing can immediately publish your branch. Ensure its upstream is correct before enabling or committing. Network/rebase failures need resolution before assuming publication; avoid force pushes. To stop using this local setting, run `git config --unset core.hooksPath`.
+This sets `core.hooksPath=.githooks`; the post-commit hook runs `git pull --rebase && git push`. A commit may therefore publish the current branch immediately. Establish the intended upstream first. If inherited dirty work blocks rebase, preserve both the new commit and the unrelated work, report the failure, and use a normal push only when safe. Never force-push to conceal a synchronization problem. Disable the local hook setting with `git config --unset core.hooksPath` when appropriate.

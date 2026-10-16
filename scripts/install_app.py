@@ -141,7 +141,7 @@ def install(root):
         os.replace(temporary, destination)
     print(f'Installed {app}')
     print(f'CLI: {bin_dir}/hyprwm (add {bin_dir} to PATH)')
-    print('Open ~/Applications/HyprWM.app to start. Lite is selected when the Engine is unavailable.')
+    print('Open ~/Applications/HyprWM.app to start Engine mode. An existing Engine channel is required.')
     print('System Settings → Privacy & Security → Accessibility: enable HyprWM for tiling and focus.')
     print('System Settings → Privacy & Security → Screen & System Audio Recording: enable HyprWM for capture animations.')
     print('Carbon hotkeys need no Input Monitoring. Automation → System Events is only needed for scripted desktop verification.')

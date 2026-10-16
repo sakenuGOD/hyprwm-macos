@@ -1,20 +1,25 @@
-# Repository guidance
+# HyprWM contributor map
 
-HyprWM is an independent experimental macOS window manager. Public documentation must distinguish implemented code, automated checks, and behavior verified on a live desktop.
+HyprWM is an experimental macOS tiling WM. Distinguish implementation, automated checks and live evidence. The active task runbook takes precedence.
 
-## Scope and source map
+## Map and commands
 
-- `hook/swift/Sources/HyprCore/`: layout, state, configuration, command protocol, and testable runtime policy.
-- `hook/swift/Sources/hyprwm-swift/`: native adapters, daemon entry point, settings, menu companion, and shutdown.
-- `hook/swift/Tests/`: deterministic tests and fixtures; success does not establish live WindowServer behavior.
-- `hook/src/`, `hook/wm/`, `hook/identity/`: native engine, bridges, and process/window identity integration.
-- `hook/config/`: schema, Lua compatibility code, and default configuration inputs.
-- `hook/swift/build_app.sh`, `hook/swift/tools/package_app.py`: local app packaging and build receipts.
-- `docs/API.md`: interface reference; `docs/ROADMAP.md`: unfinished work and validation gates.
+| Concern | Source |
+| --- | --- |
+| State, apply, census, hide/restore, pointer focus | `hook/swift/Sources/HyprCore/WM.swift` |
+| Pause, activation, transfer, drag | `HyprCore/WMProduction.swift` |
+| Split tree, geometry, promotion | `HyprCore/Tile.swift` |
+| Engine recovery and startup preflight | `HyprCore/EngineRecovery.swift`, runtime `EngineStatePreflight.swift` |
+| Focus, dialog policy and restoration | `HyprCore/FocusPolicy.swift`, `FocusRecovery.swift`, `RestorePlacement.swift`, `LauncherArrival.swift` |
+| Rules, config, migration | `HyprCore/WindowProperties.swift`, `TextConfig.swift`, `RuntimeConfig.swift`, `ForeignConfigImport.swift` |
+| Entry, real AX/Space/process access, engine | `hook/swift/Sources/hyprwm-swift/main.swift`, `LiveSys.swift`, `LiveEngine.swift` |
+| Experimental Lite branch: runtime, AX, recovery, proxy/borders, shortcuts | `LiteRuntime.swift`, `LiteAX.swift`, `LiteSys.swift`, `LiteRestorePump.swift`, `LiteEngine.swift`, `LiteOverlay.swift`, `LiteHotkeys.swift`, `LiteWorkspaceReceiver.swift` in the runtime target |
+| Settings, menu, shortcuts | `Settings*.swift`, `MenuBar.swift`, `NativeHotkeys.swift` in that runtime target; `hook/keys/` |
+| Native engine and bridge | `hook/src/`, `hook/wm/`, `hook/identity/` |
+| Tests, schema, package | `hook/swift/Tests/`, `hook/config/runtime.schema.json`, `hook/swift/build_app.sh` |
+| User references | `docs/CONFIG.md`, `docs/MIGRATING.md`, `docs/TROUBLESHOOTING.md`, `docs/API.md` |
 
-## Checks
-
-Run from the repository root:
+Paths abbreviated `HyprCore/` above are relative to `hook/swift/Sources/`.
 
 ```sh
 swift build -c release --package-path hook/swift
@@ -22,16 +27,30 @@ swift test --package-path hook/swift
 git diff --check
 ```
 
-For documentation-only changes, verify names, commands, defaults, and relative links against source; a new full native build is unnecessary. Do not add tests that merely mirror prose.
+Binary: `hook/swift/.build/release/hyprwm-swift`; wrapper: `scripts/hyprwm`; live status: `scripts/hyprwmctl status`. `./install.sh` installs without launching; `zsh hook/swift/build_app.sh` builds the separate menu companion. Config: `~/.config/hyprwm/hyprwm.conf` / `HYPRWM_CONFIG`. Control: `/tmp/hyprwm.ctl` / `HYPRWM_CTL`. `hook/start.sh`/`stop.sh` require the development helper `hook/lifecycle.py`, which is not tracked in the public checkout; they are not a clean-clone launch path.
 
-Do not start, stop, inject into, attach a debugger to, or reconfigure the live window manager merely to verify documentation or packaging. Native desktop QA requires explicit task authorization and one operator at a time. Never claim GUI, device, or WindowServer validation from compile/test output.
+## Work discipline
 
-## Configuration and release truth
+1. Record git state and affected baseline before editing; preserve unrelated work. Small diffs, one scenario per English commit; stage exact paths. Commit or record the blocker every 60–90 minutes.
+2. Log checks with time, commit, result and evidence. Rerun only after a relevant change. Record pre-existing failures once. Docs normally need source/command/link verification.
+3. Timebox bugs to 40 minutes or three failed hypotheses. Record blocker and next new hypothesis, then move on. During stabilization: no refactors, renames or new frameworks; diagnostic tooling gets 20 minutes maximum.
+4. Revert baseline regressions immediately. Integration requires a rebuild and affected baseline rows passing. Freeze permits regression fixes only; time running out never completes a milestone.
+5. Save progress at phase boundaries. After compaction, reread runbook and ledger; never repeat recorded failed approaches.
 
-The editable configuration is `~/.config/hyprwm/hyprwm.conf`, overridden by `HYPRWM_CONFIG`. Preserve user configuration and unrelated changes. Keep hidden-window Mission Control off by default and describe it as in progress; transparency is unfinished. Focus/dialog/Zen/animation-burst behavior remains unverified until actual manual evidence is recorded.
+## Evidence and baseline matrix
 
-Current packaging creates a menu companion with a source-checkout dependency and does not install the native engine. Do not describe a DMG as a standalone installer or broaden compatibility claims beyond evidence. Do not publish private diagnostics, window titles, local paths, or fabricated screenshots.
+Keep scenario ID, baseline/current status, build and evidence in one matrix. Cover focus, dialogs, restore/transfer, layout, motion/first-frame/tabs/bursts, resize/throw, config, pause, IPC/import, Lite, recovery and installation. Use the active runbook's full matrix.
 
-## Commit synchronization
+A live pass needs **two of three** on the current build/session: expected IPC state; native key/input truth; inspected screenshot/clip. Builds, tests and settings previews never prove desktop behavior. For motion inspect first three, midpoint and final five actual frames: body/border divergence ≤2 px, no jump/flash, exact landing. Use disposable windows, verify recovery, close only test windows. One desktop lease/operator at a time.
 
-`scripts/setup-hooks.sh` enables `.githooks` through `core.hooksPath`. The current `post-commit` hook runs `git pull --rebase && git push`; a commit can therefore contact the remote and publish the branch immediately. Inspect branch/upstream and the staged diff before committing. If synchronization fails, report the actual failure and preserve the commit; do not force-push or discard other work.
+## Hard lines
+
+- Never kill/restart WindowServer, Dock, loginwindow or owner apps. A wedged engine is a reason to use Lite, not restart the session.
+- Never change SIP, NVRAM or boot arguments during a stabilization run. Touch `/etc` only for a specifically authorized temporary sudoers drop-in.
+- Never use `git reset --hard`, `git clean`, `git add -A`, force-push or stash-pop onto a changed tree. Do not merge into `main` or publish releases/issues/posts without explicit authorization.
+- Never commit caches, private screenshots, title-bearing logs, credentials or machine-specific absolute paths.
+- Never overwrite owner configuration except through the validated writer during an authorized test after a backup. Keep file operations reversible; never move owner files without an agreed manifest and restoration path.
+- No app-name/bundle-ID special cases in focus, dialog or layout policy. Preserve identity, birth, sequence and epoch guards; make refusals bounded and recoverable.
+- Keep hidden-window Mission Control off by default and user transparency labeled unfinished until live evidence establishes otherwise. Do not fabricate media, broaden platform compatibility or call a checkout-dependent companion a standalone installer.
+
+The optional `.githooks/post-commit` runs `git pull --rebase && git push`. Set the correct branch upstream before committing. If synchronization fails on inherited dirt, preserve the commit and report it; never discard unrelated work to satisfy the hook.
