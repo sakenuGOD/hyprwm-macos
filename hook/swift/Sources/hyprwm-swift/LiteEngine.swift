@@ -33,9 +33,11 @@ final class LiteChannel: ChannelAPI {
     final class Slot {
         let wid: Int, pid: Int, birth: String
         var target: Rect, actual: Rect, presented: Rect, landingTarget: Rect
-        var version = 0, configureError = -1, busy = false, capturing = false, landing = false
+        var version = 0 { didSet { pendingCover?.close(); pendingCover = nil } }
+        var configureError = -1, busy = false, capturing = false, landing = false
         var forgetVersion: Int?
         var proxy: LiteProxy?
+        var pendingCover: LiteProxy?
         var alpha = 1.0, visible = true
         var lastSample: (time: Double, frame: Rect)?
         var velocity: [Double] = []
@@ -60,6 +62,7 @@ final class LiteChannel: ChannelAPI {
     private var releasing = Set<Int>()
     private(set) var proxyMotions = 0, directPlacements = 0, captureFailures = 0, earlyParks = 0, coverReuses = 0
     private(set) var nativeBackingMotions = 0, nativeBackingFallbacks = 0
+    private(set) var coversReady = 0, coverRefusals = 0
     var widMax = 1
     init(sys: LiteSys, config: HyprConfig) throws {
         self.sys = sys; self.config = config; borders = try LiteBorders(config: config)
@@ -226,6 +229,7 @@ final class LiteChannel: ChannelAPI {
         let velocity = oldProxy == nil ? [] : slot.velocity
         let curves = config.sortedCurves(), curve = curves.indices.contains(geometry.curve) ? curves[geometry.curve].1 : nil
         let frames = LiteMotion.frames(from: start, to: geometry.to, velocity: velocity, duration: geometry.duration, curve: curve, timeScale: config.timeScale)
+        oldProxy?.freeze()
         slot.target = geometry.to; slot.busy = true; slot.capturing = true; slot.landing = false
         borders.hide(slot.wid)
         func captured(_ image: CGImage?) {
@@ -239,12 +243,15 @@ final class LiteChannel: ChannelAPI {
                 appearance: self.borders.appearance, focused: self.focused == slot.wid, relativeTo: slot.wid,
                 nativeContent: !opening, contentSize: oldProxy?.contentSize(at: start))
             if opening { proxy.window.orderOut(nil) }
-            slot.proxy = proxy; oldProxy?.close()
+            slot.pendingCover = proxy
             self.sys.presentation[slot.wid] = start
             // Resize the parked real client first; the proxy remains the only body
             // on screen until its exact final AX placement is acknowledged.
             let park = self.sys.park(geometry.to)
-            self.sys.ax.setFrameAsync(slot.pid, slot.wid, park) { [weak self] result, accepted in
+            func parkClient() {
+                guard self.current(slot, version), slot.pendingCover === proxy, slot.capturing else { return }
+                slot.pendingCover = nil; slot.proxy = proxy; oldProxy?.close()
+                self.sys.ax.setFrameAsync(slot.pid, slot.wid, park) { [weak self] result, accepted in
                 guard let self, self.current(slot, version) else { return }
                 if result != 0 {
                     self.counters.errors += 1; self.place(slot, frame: geometry.to, logical: geometry.to); return
@@ -318,6 +325,44 @@ final class LiteChannel: ChannelAPI {
                     guard remaining >= 0.08 else { return }
                     landingProxy.replaceImage(image, duration: min(0.12 * self.config.timeScale, remaining - 0.034))
                     slot.cached = image; slot.capturedAt = self.sys.now()
+                }
+                }
+            }
+            if opening { parkClient() }
+            else {
+                proxy.awaitVisibleCover { [weak self, weak slot] ready in
+                    guard let self, let slot, self.current(slot, version), slot.pendingCover === proxy, slot.capturing else { proxy.close(); return }
+                    if self.sys.sessionLocked() {
+                        self.coverRefusals += 1; slot.pendingCover = nil; proxy.close()
+                        slot.busy = false; slot.capturing = false; slot.configureError = -1
+                        // Retain the prior frozen cover/ledger if its client
+                        // was parked; no AX placement is authorized while locked.
+                        return
+                    }
+                    if self.sys.applicationHidden(slot.pid) {
+                        slot.pendingCover = nil; proxy.close(); oldProxy?.close(); slot.proxy = nil
+                        slot.busy = false; slot.capturing = false
+                        self.sys.presentation[slot.wid] = nil
+                        // Consume the known native-hide state now, as observe()
+                        // does. A rapid unhide must not lose the restore signal.
+                        if oldProxy != nil || self.sys.parked(slot.actual) {
+                            self.place(slot, frame: slot.target, logical: slot.target)
+                        }
+                        return
+                    }
+                    if ready { self.coversReady += 1; parkClient() }
+                    else {
+                        self.coverRefusals += 1; slot.pendingCover = nil; proxy.close()
+                        if oldProxy != nil {
+                            // The real client was already parked for the prior
+                            // motion. Retain that frozen cover and its ledger.
+                            slot.busy = false; slot.capturing = false
+                            slot.configureError = -1
+                        } else {
+                            self.directPlacements += 1
+                            self.place(slot, frame: geometry.to, logical: geometry.to)
+                        }
+                    }
                 }
             }
         }
@@ -524,6 +569,7 @@ final class LiteChannel: ChannelAPI {
                  ("engine_channel_used", .bool(false)), ("virtual_workspaces", .bool(true)),
                  ("created_stages", sys.ax.createdStatus), ("created_admissions", .int(sys.createdAdmissions)), ("early_parks", .int(earlyParks)), ("cover_reuses", .int(coverReuses)),
                  ("native_backing_motions", .int(nativeBackingMotions)), ("native_backing_fallbacks", .int(nativeBackingFallbacks)),
+                 ("covers_ready", .int(coversReady)), ("cover_refusals", .int(coverRefusals)),
                  ("proxy_motions", .int(proxyMotions)), ("direct_placements", .int(directPlacements)),
                  ("capture_failures", .int(captureFailures)), ("client_opacity", .string("opaque; public API does not set foreign alpha"))])
     }

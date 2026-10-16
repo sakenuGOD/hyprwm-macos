@@ -180,6 +180,29 @@ final class LiteProxy {
         setModel(from)
         CATransaction.commit()
     }
+    func awaitVisibleCover(_ completion: @escaping (Bool) -> Void) {
+        let number = window.windowNumber, began = CACurrentMediaTime()
+        let interval = 1 / Double(max(30, min(240, NSScreen.main?.maximumFramesPerSecond ?? 60)))
+        window.displayIfNeeded(); CATransaction.flush()
+        func check() {
+            guard number > 0, self.window.windowNumber == number, self.window.isVisible else { completion(false); return }
+            let rows = CGWindowListCopyWindowInfo(.optionIncludingWindow, CGWindowID(number)) as? [[String: Any]] ?? []
+            let ready = rows.contains { row in
+                guard (row[kCGWindowNumber as String] as? NSNumber)?.intValue == number,
+                      (row[kCGWindowOwnerPID as String] as? NSNumber)?.intValue == Int(getpid()),
+                      (row[kCGWindowIsOnscreen as String] as? NSNumber)?.boolValue == true,
+                      let bounds = row[kCGWindowBounds as String] as? [String: Any],
+                      let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return false }
+                return Rect(frame.origin.x, frame.origin.y, frame.width, frame.height).maxDiff(self.canvas) <= 1
+            }
+            if ready { completion(true) }
+            else if CACurrentMediaTime()-began >= 0.12 { completion(false) }
+            else { DispatchQueue.main.asyncAfter(deadline: .now()+0.008) { check() } }
+        }
+        // Ordering and a CA commit are not a presentation receipt. Allow two
+        // display intervals, then require the exact own public CG window row.
+        DispatchQueue.main.asyncAfter(deadline: .now()+2*interval) { check() }
+    }
     private func point(_ frame: Rect) -> CGPoint {
         CGPoint(x: frame.x-canvas.x+frame.w/2, y: canvas.h-(frame.y-canvas.y)-frame.h/2)
     }
