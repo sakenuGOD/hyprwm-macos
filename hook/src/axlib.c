@@ -295,6 +295,28 @@ int ax_focus_context(int pid, unsigned *focused_wid, unsigned *context) {
     return error == kAXErrorSuccess || *context != AXWM_FOCUS_UNKNOWN ? 0 : -1;
 }
 
+// Enhanced UI can animate AX position writes: the following size write then
+// clamps against the old origin. Configure work is serialized per application.
+// Suppress that mode only for the setters, preserving false/unsupported values.
+static AXUIElementRef suspend_ax_animation(pid_t pid) {
+    AXUIElementRef app = AXUIElementCreateApplication(pid);
+    if (!app) return NULL;
+    AXUIElementSetMessagingTimeout(app, 0.25f);
+    CFTypeRef value = NULL;
+    AXError e = AXUIElementCopyAttributeValue(app, CFSTR("AXEnhancedUserInterface"), &value);
+    int enabled = e == kAXErrorSuccess && value && CFGetTypeID(value) == CFBooleanGetTypeID() && CFBooleanGetValue(value);
+    if (value) CFRelease(value);
+    if (enabled && AXUIElementSetAttributeValue(app, CFSTR("AXEnhancedUserInterface"), kCFBooleanFalse) == kAXErrorSuccess) return app;
+    CFRelease(app);
+    return NULL;
+}
+
+static void resume_ax_animation(AXUIElementRef app) {
+    if (!app) return;
+    AXUIElementSetAttributeValue(app, CFSTR("AXEnhancedUserInterface"), kCFBooleanTrue);
+    CFRelease(app);
+}
+
 // Window frame in global pt (top-left origin). 0 = success; otherwise AXError code.
 int ax_frame(int pid, unsigned wid, double x, double y, double w, double h) {
     for (int attempt = 0; attempt < 2; attempt++) {
@@ -303,11 +325,13 @@ int ax_frame(int pid, unsigned wid, double x, double y, double w, double h) {
         CGPoint p = {x, y};
         CGSize s = {w, h};
         AXValueRef pv = AXValueCreate(kAXValueCGPointType, &p), sv = AXValueCreate(kAXValueCGSizeType, &s);
+        AXUIElementRef app = suspend_ax_animation(pid);
         // position -> size -> position: AppKit clamps the frame to the screen edge, so first move up
         // a window growing upward, then reposition a shrinking window that hit the edge on the first move.
         AXUIElementSetAttributeValue(el, kAXPositionAttribute, pv);
         AXError e = AXUIElementSetAttributeValue(el, kAXSizeAttribute, sv);
         if (e == kAXErrorSuccess) AXUIElementSetAttributeValue(el, kAXPositionAttribute, pv);
+        resume_ax_animation(app);
         CFRelease(pv); CFRelease(sv); CFRelease(el);
         if (e == kAXErrorSuccess) return 0;
         if (e != kAXErrorInvalidUIElement && e != kAXErrorCannotComplete) return e;
@@ -321,7 +345,9 @@ int ax_size(int pid, unsigned wid, double w, double h) {
     if (!el) return -1;
     CGSize s = {w, h};
     AXValueRef sv = AXValueCreate(kAXValueCGSizeType, &s);
+    AXUIElementRef app = suspend_ax_animation(pid);
     AXError e = AXUIElementSetAttributeValue(el, kAXSizeAttribute, sv);
+    resume_ax_animation(app);
     CFRelease(sv); CFRelease(el);
     return e;
 }
