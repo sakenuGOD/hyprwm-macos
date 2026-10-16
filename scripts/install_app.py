@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""User-local, relocatable Lite installation and fail-closed window restoration."""
+"""User-local app installation and fail-closed window restoration."""
 import argparse
 import hashlib
 import json
@@ -143,8 +143,8 @@ def install(root):
     print(f'CLI: {bin_dir}/hyprwm (add {bin_dir} to PATH)')
     print('Open ~/Applications/HyprWM.app to start Engine mode. An existing Engine channel is required.')
     print('System Settings → Privacy & Security → Accessibility: enable HyprWM for tiling and focus.')
-    print('System Settings → Privacy & Security → Screen & System Audio Recording: enable HyprWM for capture animations.')
-    print('Carbon hotkeys need no Input Monitoring. Automation → System Events is only needed for scripted desktop verification.')
+    print('System Settings → Privacy & Security → Screen & System Audio Recording: enable HyprWM for optional capture features.')
+    print('Control–Option–P uses Carbon. Other Engine shortcuts require the separate native watcher; some watcher builds also need Input Monitoring permission. Automation → System Events is needed only for scripted desktop verification.')
     print('Run hyprwm doctor after granting permissions. No SIP, boot-args, injection or root changes were made.')
 
 

@@ -65,7 +65,7 @@ Press **Control–Option–P**, choose the menu’s pause action, or use the cli
 ~/.local/bin/hyprwmctl resume
 ```
 
-`pause` stops automatic tiling for the session; it is not an uninstall or a promise to unhide every parked window. Use `restore-all` for visibility recovery. `runtime.enabled` controls the persistent setting. An unrelated config save preserves a manual pause. Resume explicitly, or change the persistent enable setting; incomplete Lite recovery must finish before resuming.
+`pause` stops automatic tiling for the session; it is not an uninstall or a promise to unhide every parked window. Use `restore-all` for visibility recovery. `runtime.enabled` controls the persistent setting. IPC pause/resume, the menu action and Control–Option–P change the current session. A config reload reapplies `runtime.enabled` and can resume a session-only pause. Set `runtime.enabled=false`, or use Settings → General → Tiling, to keep tiling paused across config edits. Incomplete Lite recovery must finish before resuming.
 
 An empty Lite workspace can show a **Workspace N / No windows** panel. This is HyprWM's visible keyboard receiver while clients are parked; it does not edit or retain typed text. Switch back to an occupied workspace to return to a client. If a workspace command refuses keyboard-receiver verification, read that error before retrying; the failed reservation preserves the current windows. `status` exposes the panel under `workspace_public.empty_receiver`.
 

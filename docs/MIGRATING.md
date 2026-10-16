@@ -8,7 +8,7 @@ After `./install.sh`, use the installed CLI (or add `~/.local/bin` to PATH and r
 ~/.local/bin/hyprwm import /path/to/aerospace.toml
 ```
 
-Import reads a regular UTF-8 file no larger than 256 KiB, parses it as data, merges supported values, and makes a sibling `hyprwm.conf.backup-<UUID>` before replacing an existing configuration. It never executes the source file. Unsupported or invalid entries produce warnings with their original line numbers; supported independent entries can still apply. If nothing maps, import fails and preserves the configuration. Review the warnings and resulting file before running a session. To undo an import, quit/pause HyprWM and copy the reported sibling backup back over `hyprwm.conf`.
+Import reads a regular UTF-8 file no larger than 256 KiB, parses it as data, merges supported values, and makes a sibling `hyprwm.conf.backup-<UUID>` before replacing an existing configuration. It never executes the source file. Unsupported or invalid entries produce warnings with their original line numbers; supported independent entries can still apply. If nothing maps, import fails and preserves the configuration. Review the warnings and resulting file before running a session. To undo an import, quit/pause HyprWM and copy the generated sibling backup back over `hyprwm.conf`.
 
 The examples below show the supported patch against a fresh baseline. Binding IDs can be reassigned when merging with existing overrides; command and chord values are what matter.
 

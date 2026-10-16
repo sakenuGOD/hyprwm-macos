@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build and install the public-API Lite app. Never changes system configuration.
+# Build and install the user-local app. Never changes system configuration.
 set -eu
 HYPRWM_PROJECT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 case "${1:-}" in

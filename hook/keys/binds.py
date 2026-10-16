@@ -121,12 +121,12 @@ def main():
 
     # своё: переложить принудительно (в Hyprland такого бинда нет — раскладка там сама, как и у нас)
     out.append({"keycode": KEY["t"], "mods": MOD["CTRL"] | MOD["SUPER"] | MOD["SHIFT"], "cmd": ["retile"],
-                "desc": "[наше] Разложить окна", "keys": "CTRL + SUPER + SHIFT + T"})
+                "desc": "Retile windows", "keys": "CTRL + SUPER + SHIFT + T"})
 
     json.dump(out, open("/tmp/hyprkeys.json", "w"), ensure_ascii=False, indent=1)
     for b in out:
         print("+ %-28s %s" % (b["keys"], b["desc"]))
-    print("\nвсего: %d; пока не умеем: %d" % (len(out), len(skipped)))
+    print("\nTotal: %d; skipped: %d" % (len(out), len(skipped)))
 
 
 if __name__ == "__main__":
