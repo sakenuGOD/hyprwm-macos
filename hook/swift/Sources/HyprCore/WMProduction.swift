@@ -387,7 +387,9 @@ extension WM {
         let direction = horizontal ? (dx < 0 ? "left" : "right") : (dy < 0 ? "up" : "down")
         let state = sp(space), rects = layout(area, state)
         let cursor = sys.mouse()
-        let originalBox = tile.boxes(state.tree, area)[drag.wid] ?? drag.frame
+        let detached=nativeFullscreenWindows.subtracting(nativeSuspendedWindows)
+        let projected=options.production && Dwindle.leaves(state.tree).contains{detached.contains($0.wid!)}
+        let originalBox = projected ? rects[drag.wid] ?? drag.frame : tile.boxes(state.tree, area)[drag.wid] ?? drag.frame
         let shortThrow = cursor.0 >= originalBox.x && cursor.0 <= originalBox.x+originalBox.w &&
             cursor.1 >= originalBox.y && cursor.1 <= originalBox.y+originalBox.h
         if !shortThrow || options.dragMode == "insert" {

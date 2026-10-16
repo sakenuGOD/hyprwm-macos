@@ -128,6 +128,26 @@ final class ProductionPolicyTests: XCTestCase {
         XCTAssertTrue(eng.ch.ops.contains{$0["wid"] == .int(1) && $0["to"]==oldPeer.json})
         XCTAssertTrue(eng.ch.ops.contains{$0["wid"] == .int(2) && $0["to"]==start.json})
     }
+    func testThrowUsesVisibleAllocationWhileFullscreenReturnSlotIsRetained() throws {
+        for fullscreenOnLeft in [false,true] {
+            let tree=Node(split:"v",ratio:0.5,a:fullscreenOnLeft ? Node(leaf:3):pair("h"),b:fullscreenOnLeft ? pair("h"):Node(leaf:3))
+            let (wm,sys,_,original)=try world(tree)
+            wm.nativeFullscreenWindows=[3]
+            let projected=wm.layout(area,wm.sp(1)),actor=fullscreenOnLeft ? 1:2,peer=actor==1 ? 2:1
+            var windows=original
+            for i in windows.indices {
+                if windows[i].wid==3 {windows[i].nativeFullscreen=true;windows[i].space=99;windows[i].on=false}
+                else {let frame=projected[windows[i].wid]!;windows[i].x=frame.x;windows[i].y=frame.y;windows[i].w=frame.w;windows[i].h=frame.h;sys.bounds[windows[i].wid]=frame}
+            }
+            let frame=projected[actor]!,dx=fullscreenOnLeft ? 65.0:-65.0
+            sys.front=100+actor;sys.contexts[100+actor]=(actor,0);sys.m=(frame.x+180,frame.y+12)
+            wm.beginInteraction(area,1,windows);XCTAssertEqual(wm.dragSession?.wid,actor)
+            sys.bounds[actor]=Rect(frame.x+dx,frame.y,frame.w,frame.h);sys.m.0+=dx
+            XCTAssertTrue(wm.endInteraction(area,1,windows),"A short throw inside the displayed tile must not use the fullscreen placeholder's old boxes")
+            XCTAssertEqual(wm.layout(area,wm.sp(1))[actor],projected[peer])
+            XCTAssertTrue(wm.sp(1).tree?.contains(3)==true,"Keep the native fullscreen return position")
+        }
+    }
     func testResizeUpdatesWholeSiblingSubtreeAndAcceptedActorIsNotConfigured() throws {
         let right = Node(split: "h", ratio: 0.5, a: Node(leaf: 2), b: Node(leaf: 3))
         let (wm, sys, eng, wins) = try world(Node(split: "v", ratio: 0.5, a: Node(leaf: 1), b: right))
