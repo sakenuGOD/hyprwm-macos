@@ -148,6 +148,33 @@ final class ProductionPolicyTests: XCTestCase {
             XCTAssertTrue(wm.sp(1).tree?.contains(3)==true,"Keep the native fullscreen return position")
         }
     }
+    func testShortFastThrowSwapsButSlowMovementAndSmallTremorDoNot() throws {
+        for (distance,duration,hold,swaps) in [(14.0,0.02,0.008,true),(14.0,0.10,0.008,true),(14.0,0.3,0.008,false),(5.0,0.02,0.008,false),(14.0,0.02,0.2,false)] {
+            let (wm,sys,_,original)=try world(pair()),start=sys.bounds[1]!
+            wm.cfgSink=SnapshotHandoffTests.Recorder();wm.rescued=true;wm.lastSpace=1;wm.frontPid=101
+            sys.front=101;sys.contexts[101]=(1,0);sys.activeSpaceID=1;sys.md=true;sys.m=(start.x+100,start.y+12)
+            sys.nativeSnapshot=Snapshot(space:1,stable:true,area:area,windows:original);wm.tick(socketReady:false)
+            var moved=original;let i=moved.firstIndex{$0.wid==1}!;moved[i].x+=distance
+            sys.bounds[1]=moved[i].rect;sys.m.0+=distance;sys.t+=duration
+            sys.nativeSnapshot=Snapshot(space:1,stable:true,area:area,windows:moved);wm.tick(socketReady:false)
+            sys.md=false;sys.t+=hold;wm.tick(socketReady:false)
+            XCTAssertEqual(Dwindle.leaves(wm.sp(1).tree).compactMap(\.wid),swaps ? [2,1]:[1,2],"distance=\(distance), duration=\(duration)")
+        }
+    }
+    func testFastThrowMeasuresMovementAfterTheInitialTitlebarHold() throws {
+        let (wm,sys,_,original)=try world(pair()),start=sys.bounds[1]!
+        let started=sys.t
+        wm.cfgSink=SnapshotHandoffTests.Recorder();wm.rescued=true;wm.lastSpace=1;wm.frontPid=101
+        sys.front=101;sys.contexts[101]=(1,0);sys.activeSpaceID=1;sys.md=true;sys.m=(start.x+100,start.y+12)
+        sys.nativeSnapshot=Snapshot(space:1,stable:true,area:area,windows:original);wm.tick(socketReady:false)
+        var moved=original;let i=moved.firstIndex{$0.wid==1}!
+        for (time,distance) in [(0.045,7.0),(0.062,22.0)] {
+            sys.t=started+time;sys.m.0=start.x+100+distance;moved[i].x=start.x+distance;sys.bounds[1]=moved[i].rect
+            sys.nativeSnapshot=Snapshot(space:1,stable:true,area:area,windows:moved);wm.tick(socketReady:false)
+        }
+        sys.md=false;sys.t=started+0.070;wm.tick(socketReady:false)
+        XCTAssertEqual(Dwindle.leaves(wm.sp(1).tree).compactMap(\.wid),[2,1])
+    }
     func testResizeUpdatesWholeSiblingSubtreeAndAcceptedActorIsNotConfigured() throws {
         let right = Node(split: "h", ratio: 0.5, a: Node(leaf: 2), b: Node(leaf: 3))
         let (wm, sys, eng, wins) = try world(Node(split: "v", ratio: 0.5, a: Node(leaf: 1), b: right))

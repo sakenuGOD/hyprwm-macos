@@ -32,6 +32,7 @@ struct DragSession {
     var tree: JSON
     let nativeEpoch: UInt64?
     var resized = false
+    var motion:[(time:Double,x:Double,y:Double)]=[]
 }
 
 extension WM {
@@ -300,7 +301,18 @@ extension WM {
             owners[peer.wid] = (peer.pid, generation)
         }
         dragSession = DragSession(wid: window.wid, pid: window.pid, space: space, frame:frame,birth:birth,owners:owners,point:point,cuts:cuts,area:area,tree:sp(space).tree?.json ?? .null,nativeEpoch:native?.epoch)
+        dragSession?.motion=[(sys.now(),point.0,point.1)]
         if !cuts.isEmpty { cfgSink?.cancel(window.wid) }
+    }
+
+    func sampleInteractionMotion() {
+        guard var drag=dragSession,drag.cuts.isEmpty,sys.winPidLevel(drag.wid).pid==drag.pid,
+              sys.processBirth(drag.pid)==drag.birth,let previous=drag.motion.last else{return}
+        let point=sys.mouse(),now=sys.now()
+        guard now.isFinite,point.0.isFinite,point.1.isFinite,now-previous.time>=0.008,
+              hypot(point.0-previous.x,point.1-previous.y)>=0.5 else{return}
+        drag.motion=Array((drag.motion+[(now,point.0,point.1)]).suffix(2))
+        dragSession=drag
     }
 
     @discardableResult func updateSharedResize(_ area: Rect, _ space: Int, _ wins: [WinInfo]) -> Bool {
@@ -368,6 +380,7 @@ extension WM {
     }
 
     @discardableResult func endInteraction(_ area: Rect, _ space: Int, _ wins: [WinInfo]) -> Bool {
+        sampleInteractionMotion()
         guard let drag = dragSession else { return false }
         defer { dragSession = nil }
         guard drag.space == space, sys.winPidLevel(drag.wid).pid == drag.pid, sys.processBirth(drag.pid) == drag.birth else { return false }
@@ -383,7 +396,13 @@ extension WM {
         let dx = actual.x-drag.frame.x, dy = actual.y-drag.frame.y
         let horizontal = abs(dx) >= abs(dy)*options.directionRatio
         let vertical = abs(dy) >= abs(dx)*options.directionRatio
-        guard max(abs(dx), abs(dy)) >= options.throwDistance, horizontal || vertical else { return false }
+        var fastThrow=false
+        if let first=drag.motion.dropLast().last,let last=drag.motion.last,last.time-first.time>=0.008,
+           sys.now()-last.time<=0.10,max(abs(dx),abs(dy))>=min(12,options.throwDistance) {
+            let vx=(last.x-first.x)/(last.time-first.time),vy=(last.y-first.y)/(last.time-first.time)
+            fastThrow=hypot(vx,vy)>=min(12,options.throwDistance)/0.10 && (horizontal ? dx*vx>0:dy*vy>0)
+        }
+        guard max(abs(dx), abs(dy)) >= options.throwDistance || fastThrow, horizontal || vertical else { return false }
         let direction = horizontal ? (dx < 0 ? "left" : "right") : (dy < 0 ? "up" : "down")
         let state = sp(space), rects = layout(area, state)
         let cursor = sys.mouse()
