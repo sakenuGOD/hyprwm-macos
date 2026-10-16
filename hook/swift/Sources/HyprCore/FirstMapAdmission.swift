@@ -18,7 +18,7 @@ public struct FirstMapLayout {
         let tree=Node.from(self.tree)
         guard tree?.contains(wid) != true else{return nil}
         let tile=Dwindle(gapsIn:gapsIn,gapsOut:gapsOut,splitWidthMult:splitWidthMult,defaultRatio:defaultRatio)
-        tile.minimumPolicy=minimumPolicy;tile.mins=minima;tile.mins[wid]=minimum
+        tile.constrainFrames=true;tile.minimumPolicy=minimumPolicy;tile.mins=minima;tile.mins[wid]=minimum
         let target=focus.flatMap { tree?.contains($0)==true ? $0:nil }
         let boxes=tile.boxes(tree,area), inserted=tile.insert(tree,wid,target,area)
         var remaining=presel
@@ -210,13 +210,15 @@ extension WM {
     public func publishAdmission() {
         guard let admission else{return}
         guard options.production,enabled,let last,sys.now()-lastSnap<=0.3,sys.activeSpace()==UInt64(last.space),!sys.sessionLocked(),overviewFrozen?() != true,
-              nativeSpaceType==0,dragSession==nil else{admission.suspend();return}
+              nativeSpaceType==0,dragSession==nil,
+              nativeFullscreenWindows.isDisjoint(with:Dwindle.leaves(sp(last.space).tree).compactMap(\.wid)) else{admission.suspend();return}
         admission.publish(admissionLayout(last.area,last.space,last.wins))
         claimAdmission([])
     }
     public func reconcileAdmission(_ area:Rect,_ space:Int,_ wins:[WinInfo])->(opened:[Int],reserved:Set<Int>) {
         guard options.production,let admission else{return([],[])}
-        guard enabled,!sys.sessionLocked(),overviewFrozen?() != true,nativeSpaceType==0,dragSession==nil else{admission.suspend();return([],[])}
+        guard enabled,!sys.sessionLocked(),overviewFrozen?() != true,nativeSpaceType==0,dragSession==nil,
+              nativeFullscreenWindows.isDisjoint(with:Dwindle.leaves(sp(space).tree).compactMap(\.wid)) else{admission.suspend();return([],[])}
         let batch=admission.reconcile(admissionLayout(area,space,wins),windows:wins,now:sys.now()) {claim in
             !self.sys.protectedProcess(claim.key.pid) && self.sys.processBirth(claim.key.pid)==claim.birth &&
                 self.sys.winPidLevel(claim.key.wid).pid==claim.key.pid && self.sys.winPidLevel(claim.key.wid).level==0

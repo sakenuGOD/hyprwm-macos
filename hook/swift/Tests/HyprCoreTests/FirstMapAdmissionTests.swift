@@ -94,4 +94,24 @@ final class FirstMapAdmissionTests:XCTestCase {
         XCTAssertNotEqual(gateway.handle(prepare(),now:1.02,pid:102,birth:"b",owner:"Fixture")["status"],.string("offer"))
         XCTAssertNotEqual(gateway.handle(prepare(),now:1,pid:999,birth:"b",owner:"Fixture")["status"],.string("offer"))
     }
+    func testCrowdedFirstMapOfferMatchesTheProductionAllocation() throws {
+        let f=ProductionPolicyTests(),tree=Node(split:"v",ratio:0.02,a:Node(leaf:1),b:Node(leaf:2))
+        tree.manualRatio=true
+        let (wm,_,_,windows)=try f.world(tree)
+        wm.sp(1).focus=1;wm.sp(1).presel="down"
+        let layout=wm.admissionLayout(f.area,1,windows)
+        let plan=try XCTUnwrap(layout.inserting(3,minimum:(200,150)))
+        let state=SpaceState();state.tree=Node.from(plan.tree)
+        XCTAssertEqual(plan.rect,wm.layout(f.area,state)[3],"The concealed first frame must use the same bounded slot as mapped tiling")
+        XCTAssertEqual(wm.sp(1).tree?.json,tree.json,"Planning must not mutate the live tree")
+    }
+    func testAdmissionWaitsWhileNativeFullscreenReturnSlotsAreRetained() throws {
+        let f=ProductionPolicyTests(),(wm,sys,_,windows)=try f.world(f.pair()),gateway=gateway()
+        wm.admission=gateway;wm.last=(f.area,1,windows);wm.lastSnap=sys.now();sys.activeSpaceID=1
+        wm.nativeFullscreenWindows=[1];wm.nativeSuspendedWindows=[]
+        wm.publishAdmission()
+        XCTAssertEqual(gateway.status["published"],.bool(false),"A retained fullscreen leaf is not a first-map allocation")
+        wm.nativeFullscreenWindows=[];wm.publishAdmission()
+        XCTAssertEqual(gateway.status["published"],.bool(true))
+    }
 }
