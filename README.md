@@ -15,7 +15,7 @@ cd hyprwm-macos
 ./install.sh
 ```
 
-**This installs an app and CLI without launching a window manager. It does not complete Engine setup.** The installer builds into `~/Applications`, adds `hyprwm` and `hyprwmctl` under `~/.local/bin`, preserves existing configuration and bundles portable configuration resources. Final clean-HOME command verification is pending on the selected launch revision.
+**This installs an app and CLI without launching a window manager. It does not complete Engine setup.** The installer builds into `~/Applications`, adds `hyprwm` and `hyprwmctl` under `~/.local/bin`, preserves existing configuration and bundles portable configuration resources. A clean public checkout of `9be1b54` passed the no-launch packaging check: build/install, CLI help, doctor, supported imports with exact backups, and offline uninstall preserving configuration. This does not verify a running window manager or permissions on a fresh account.
 
 Running this branch additionally requires **SIP disabled**, `amfi_get_out_of_my_way=1`, a matching native engine already injected into the current WindowServer, and its verified development `hook` directory with `anim4.state` and generated configuration. A legacy configuration cache rebuild also needs Lua. Required native resources and lifecycle helpers are not all tracked in the public checkout; cloning and installing alone cannot establish this runtime. The installer does not configure those prerequisites. If you do not already have a verified Engine installation, stop after packaging and follow the [experimental Lite branch](#experimental-lite).
 
@@ -85,7 +85,7 @@ cd hyprwm-macos-lite
 
 These commands only obtain source. Follow that branch's current instructions and recovery prerequisites before installing or launching it. Its `HYPRWM_MODE=lite` selection, automatic fallback and Carbon runtime bindings are branch-specific; this launch branch does not implement them.
 
-Lite's observed failures include a default-position first-map flash and stretched/crossfaded content during motion. Accepted native sizes can also differ from logical targets. A captured proxy contains static content during a transition. Apple's [window-created notification](https://developer.apple.com/documentation/applicationservices/kaxwindowcreatednotification) does not guarantee delivery before presentation. No universal flash-free or clean-landing claim is made.
+Lite's live gate remains failed: default-position first-map flashes, cached closing-image replay and interrupted window coverage were observed. Later content improvements do not establish a clean full transition. Accepted native sizes can also differ from logical targets. A captured proxy contains static content during a transition. Apple's [window-created notification](https://developer.apple.com/documentation/applicationservices/kaxwindowcreatednotification) does not guarantee delivery before presentation. No universal flash-free or clean-landing claim is made.
 
 ### Returning from Engine to Lite
 
