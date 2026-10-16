@@ -80,6 +80,8 @@ capture capability is not evidence that a particular animation succeeded. Window
 persistent identifiers; obtain a fresh state before acting on them. Additional
 fields are diagnostic and may change between releases.
 
+Production Engine status also exposes `configuration.submitted`, `configuration.running` and `configuration.pending` for the shared AX configuration queue. `submitted` is a process-local job sequence, not an AX setter-call count; `running` counts active jobs and `pending` counts queued jobs not yet taken. These read-only diagnostics can help distinguish an appearance reload from geometry work. They are null when that sink is unavailable.
+
 ## Lite virtual workspace commands
 
 Lite workspace IDs are `1…10`. These commands require enabled tiling, completed recovery and no active mouse interaction or session lock. They do not create or switch Mission Control Spaces. Sending to the current workspace is a no-op.
