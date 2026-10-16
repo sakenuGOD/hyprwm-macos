@@ -120,8 +120,8 @@ final class LiteProxy {
         context.setBlendMode(.plusLighter); context.setAlpha(progress); context.draw(backingImage, in: bounds)
         return context.makeImage() ?? backingImage
     }
-    let canvas: Rect
-    let target: Rect
+    private(set) var canvas: Rect
+    private(set) var target: Rect
     let width: Double, radius: Double
     private(set) var began = 0.0, duration = 0.0
     private var focusColors: [RGBA] = []
@@ -144,6 +144,28 @@ final class LiteProxy {
         mask.fillColor = nil; mask.strokeColor = NSColor.white.cgColor; mask.lineWidth = width; border.mask = mask
         setModel(from)
         window.order(.above, relativeTo: wid)
+    }
+    static func extendedCanvas(_ canvas: Rect, frames: [Rect], padding: Double) -> Rect {
+        var left = canvas.x, top = canvas.y, right = canvas.x+canvas.w, bottom = canvas.y+canvas.h
+        for frame in frames {
+            left = min(left, frame.x-padding); top = min(top, frame.y-padding)
+            right = max(right, frame.x+frame.w+padding); bottom = max(bottom, frame.y+frame.h+padding)
+        }
+        return Rect(left, top, right-left, bottom-top)
+    }
+    /// Keep the already ordered cover while adapting to AX-accepted dimensions.
+    /// Creating and ordering another NSWindow here can expose the parked client.
+    func prepareLanding(from: Rect, to: Rect, frames: [Rect]) {
+        let extended = Self.extendedCanvas(canvas, frames: frames+[from, to], padding: width+1)
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        if extended != canvas {
+            canvas = extended
+            window.setFrame(LiteSys.cocoa(canvas), display: false)
+            window.contentView?.layer?.frame = CGRect(x: 0, y: 0, width: canvas.w, height: canvas.h)
+        }
+        target = to
+        setModel(from)
+        CATransaction.commit()
     }
     private func point(_ frame: Rect) -> CGPoint {
         CGPoint(x: frame.x-canvas.x+frame.w/2, y: canvas.h-(frame.y-canvas.y)-frame.h/2)

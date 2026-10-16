@@ -58,7 +58,7 @@ final class LiteChannel: ChannelAPI {
     private var capturePending = Set<Int>()
     private var shuttingDown = false
     private var releasing = Set<Int>()
-    private(set) var proxyMotions = 0, directPlacements = 0, captureFailures = 0, earlyParks = 0
+    private(set) var proxyMotions = 0, directPlacements = 0, captureFailures = 0, earlyParks = 0, coverReuses = 0
     var widMax = 1
     init(sys: LiteSys, config: HyprConfig) throws {
         self.sys = sys; self.config = config; borders = try LiteBorders(config: config)
@@ -257,10 +257,9 @@ final class LiteChannel: ChannelAPI {
                 slot.landingTarget = Rect(geometry.to.x, geometry.to.y, actual.w, actual.h)
                 let acceptedFrames = LiteMotion.frames(from: start, to: slot.landingTarget, velocity: velocity,
                     duration: geometry.duration, curve: curve, timeScale: self.config.timeScale)
-                let landingProxy = LiteProxy(image: image, from: start, to: slot.landingTarget, motionFrames: acceptedFrames,
-                    appearance: self.borders.appearance, focused: self.focused == slot.wid, relativeTo: slot.wid)
-                if opening { landingProxy.window.orderOut(nil) }
-                slot.proxy = landingProxy; proxy.close()
+                let landingProxy = proxy
+                landingProxy.prepareLanding(from: start, to: slot.landingTarget, frames: acceptedFrames)
+                self.coverReuses += 1
                 slot.capturing = false
                 slot.started = CACurrentMediaTime()+0.008; slot.duration = geometry.duration
                 landingProxy.animate(frames: acceptedFrames, duration: geometry.duration, started: slot.started, fromAlpha: opening ? 0 : 1)
@@ -485,7 +484,7 @@ final class LiteChannel: ChannelAPI {
                  ("animation", .string(captures.permitted ? "captured-proxy" : "direct-ax-fallback")),
                  ("private_ax_id_bridge", .bool(sys.ax.privateIDBridgeAvailable)), ("private_ax_id_sip", .string("documented SIP-on by AeroSpace; not locally verified")),
                  ("engine_channel_used", .bool(false)), ("virtual_workspaces", .bool(true)),
-                 ("created_stages", sys.ax.createdStatus), ("created_admissions", .int(sys.createdAdmissions)), ("early_parks", .int(earlyParks)),
+                 ("created_stages", sys.ax.createdStatus), ("created_admissions", .int(sys.createdAdmissions)), ("early_parks", .int(earlyParks)), ("cover_reuses", .int(coverReuses)),
                  ("proxy_motions", .int(proxyMotions)), ("direct_placements", .int(directPlacements)),
                  ("capture_failures", .int(captureFailures)), ("client_opacity", .string("opaque; public API does not set foreign alpha"))])
     }
