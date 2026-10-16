@@ -21,7 +21,7 @@ static void sendLine(NSDictionary *b) {
         int fd = socket(AF_UNIX, SOCK_STREAM, 0);
         struct sockaddr_un a = {.sun_family = AF_UNIX};
         strlcpy(a.sun_path, CTL, sizeof a.sun_path);
-        char reply[512] = "демон hyprwm не запущен (hook/start.sh)";
+        char reply[512] = "Cannot connect to the HyprWM daemon.";
         if (connect(fd, (struct sockaddr *)&a, sizeof a) == 0) {
             write(fd, line.UTF8String, strlen(line.UTF8String));
             ssize_t n = read(fd, reply, sizeof reply - 1);
@@ -56,7 +56,7 @@ static OSStatus onHotKey(EventHandlerCallRef call, EventRef ev, void *ctx) {
 int main(void) {
     @autoreleasepool {
         NSData *d = [NSData dataWithContentsOfFile:@"/tmp/hyprkeys.json"];
-        if (!d) { NSLog(@"[hyprkeys] нет /tmp/hyprkeys.json — сначала keys/binds.py"); return 1; }
+        if (!d) { NSLog(@"[hyprkeys] Missing /tmp/hyprkeys.json; generate the hotkey configuration first."); return 1; }
         gBinds = [NSJSONSerialization JSONObjectWithData:d options:0 error:nil];
 
         gQ = dispatch_queue_create("hyprkeys.send", DISPATCH_QUEUE_SERIAL);
