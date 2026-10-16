@@ -161,6 +161,42 @@ final class MigrationParityTests: XCTestCase {
             XCTAssertTrue(eng.ch.ops.contains{$0["wid"] == .int(2) && $0["to"]==full.json})
         }
     }
+    func testFullscreenSourceExpandsInBackgroundWithoutReturningToOrdinaryDesktop() throws {
+        let (wm,sys,eng,original)=try world(),sink=SnapshotHandoffTests.Recorder(),saved=wm.sp(1).tree!.json
+        wm.cfgSink=sink;wm.rescued=true;wm.lastSpace=1;wm.frontPid=101;wm.launcherAreas[1]=area
+        sys.front=101;sys.contexts[101]=(1,NativeFocusFlags.fullscreen);sys.activeSpaceID=99
+        var windows=original
+        for i in windows.indices {windows[i].on=windows[i].wid==1}
+        let owner=windows.firstIndex{$0.wid==1}!;windows[owner].space=99;windows[owner].nativeFullscreen=true
+        var snapshot=Snapshot(space:99,stable:true,area:area,windows:windows);snapshot.spaceType=4;sys.nativeSnapshot=snapshot
+        wm.tick(socketReady:false)
+        let only=SpaceState();only.tree=Node(leaf:2);let full=try XCTUnwrap(wm.layout(area,only)[2])
+        XCTAssertEqual(wm.target[2],full,"Do not wait for the user to return before expanding the source peer")
+        XCTAssertTrue(sink.jobs.contains{$0.wid==2 && $0.to==full})
+        XCTAssertEqual(wm.sp(1).tree?.json,saved,"Retain the fullscreen return slot")
+        XCTAssertEqual(sys.activeSpaceID,99)
+        XCTAssertFalse(sys.calls.contains{$0.array?.first == .string("ax_focus")})
+        XCTAssertFalse(eng.ch.ops.contains{$0["op"] == .string("space")})
+        let count=sink.jobs.count;sys.t+=0.3;wm.tick(socketReady:false)
+        XCTAssertEqual(sink.jobs.count,count,"Do not reconfigure unchanged background windows every tick")
+    }
+    func testBackgroundFullscreenReflowDoesNotTouchHiddenForeignOrTransitionalPeers() throws {
+        for mode in ["hidden","owner","protected","zero"] {
+            let (wm,sys,_,original)=try world(),sink=SnapshotHandoffTests.Recorder()
+            wm.cfgSink=sink;wm.rescued=true;wm.lastSpace=1;wm.launcherAreas[1]=area
+            sys.front=101;sys.contexts[101]=(1,NativeFocusFlags.fullscreen);sys.activeSpaceID=99
+            var windows=original
+            for i in windows.indices {windows[i].on=windows[i].wid==1}
+            let owner=windows.firstIndex{$0.wid==1}!,peer=windows.firstIndex{$0.wid==2}!
+            windows[owner].space=99;windows[owner].nativeFullscreen=true
+            if mode=="hidden" {wm.hidden=[record(windows[peer],space:1)]}
+            if mode=="owner" {sys.pidlevel[2]=(999,0)}
+            if mode=="protected" {sys.protectedPIDs=[102]}
+            if mode=="zero" {windows[peer].space=0}
+            var snapshot=Snapshot(space:99,stable:true,area:area,windows:windows);snapshot.spaceType=4;sys.nativeSnapshot=snapshot
+            wm.tick(socketReady:false);XCTAssertTrue(sink.jobs.isEmpty,mode)
+        }
+    }
     func testRuleOpacityNoAnimationAndSetpropAreActuallyConsumed() throws {
         let (wm,_,eng,windows)=try world()
         wm.cfg=try NativeRuntimeConfig.build(base:wm.cfg,document:JSON.parse("{\"appearance\":{\"active_opacity\":0.8,\"inactive_opacity\":0.6},\"window_rules\":[{\"match\":{\"class\":\"Fixture\"},\"opacity\":\"0.5 override 0.25\",\"no_anim\":true,\"no_follow_mouse\":true}]}"))

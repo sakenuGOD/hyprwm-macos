@@ -227,6 +227,7 @@ final class ConfigurerTests: XCTestCase {
         var cur = Rect(0, 0, 800, 600)
         let gate = DispatchSemaphore(value: 0)
         var gateFirst = true
+        var membership=1,moveOnRead:Int?
         var t = 0.0
         func now() -> Double { lock.lock(); defer { lock.unlock() }; return t }
         func sleep(_ s: Double) { lock.lock(); t += s; lock.unlock() }
@@ -236,7 +237,8 @@ final class ConfigurerTests: XCTestCase {
             lock.lock(); cur = Rect(r.x, r.y, max(r.w, 470), max(r.h, 584)); lock.unlock()
             return 0
         }
-        func axGetFrame(_ pid: Int, _ wid: Int) -> Rect? { lock.lock(); defer { lock.unlock() }; return cur }
+        func axGetFrame(_ pid: Int, _ wid: Int) -> Rect? { lock.lock(); defer { lock.unlock() };if let space=moveOnRead {membership=space;moveOnRead=nil};return cur }
+        func windowOnSpace(_ pid:Int,_ wid:Int,_ space:Int) -> Bool {lock.lock();defer{lock.unlock()};return membership==space}
         func axSize(_ pid:Int,_ wid:Int,_ width:Double,_ height:Double) -> Int {
             lock.lock();defer{lock.unlock()}
             sizes.append((width,height));cur=Rect(cur.x,cur.y,max(width,470),max(height,584));return 0
@@ -262,6 +264,21 @@ final class ConfigurerTests: XCTestCase {
         func background(_ f: @escaping () -> Void) { f() }
     }
 
+    func testBackgroundConfigureRejectsMembershipChangeBeforeItsAXWrite() throws {
+        for duringRead in [false,true] {
+            let sys=AXSys(),done=DispatchSemaphore(value:0)
+            sys.gateFirst=false;sys.membership=duringRead ? 1:2;sys.moveOnRead=duringRead ? 2:nil
+            let worker=Configurer(sys:sys){_ in done.signal()}
+            var job=CfgJob(wid:1,pid:9,owner:"Fixture",to:Rect(0,0,600,600));job.expectedSpace=1
+            worker.submit([job])
+            let deadline=Date().addingTimeInterval(2)
+            while !worker.idle && Date()<deadline {Thread.sleep(forTimeInterval:0.001)}
+            XCTAssertTrue(worker.idle);XCTAssertTrue(sys.frames.isEmpty,"Never resize the peer after it has moved to another Space")
+            job.expectedSpace=2;worker.submit([job])
+            XCTAssertEqual(done.wait(timeout:.now()+2),.success)
+            sys.lock.lock();let count=sys.frames.count;sys.lock.unlock();XCTAssertEqual(count,1)
+        }
+    }
     func testLatestTargetWinsAndMinimumReported() throws {
         let sys = AXSys()
         let got = DispatchSemaphore(value: 0)

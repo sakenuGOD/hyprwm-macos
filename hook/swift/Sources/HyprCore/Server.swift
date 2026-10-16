@@ -218,7 +218,10 @@ public final class Configurer: ConfigureSink {
     /// _cfg_one: set the frame and wait for the frame the window actually accepts.
     func cfgOne(_ j: CfgJob) {
         let (wid, seq, pid, to) = (j.wid, j.seq, j.pid, j.to)
-        func owned() -> Bool { !j.requireOwnership || (!sys.sessionLocked() && !sys.protectedProcess(pid) && sys.winPidLevel(wid).pid == pid && sys.processBirth(pid) == j.birth && j.birth != nil) }
+        func owned() -> Bool {
+            if let space=j.expectedSpace,!sys.windowOnSpace(pid,wid,space) {return false}
+            return !j.requireOwnership || (!sys.sessionLocked() && !sys.protectedProcess(pid) && sys.winPidLevel(wid).pid == pid && sys.processBirth(pid) == j.birth && j.birth != nil)
+        }
         guard latest(wid,seq), owned() else { return }
         let pre = sys.axGetFrame(pid, wid)
         guard latest(wid, seq), owned() else { return }

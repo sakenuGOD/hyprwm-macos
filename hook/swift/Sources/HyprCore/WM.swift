@@ -1549,6 +1549,7 @@ public final class WM {
                 nativeSpaceType = d.spaceType
                 nativeLayoutChanged=updateNativeFullscreen(d.windows,d.space)
                 if d.spaceType != 0 {
+                    if d.spaceType==4 {reflowBackgroundFullscreenSources(d)}
                     admission?.suspend()
                     dragSession = nil; frontPid = fp; lastSp = spNow; lastSnap = sys.now()
                     last = (d.area,d.space,d.windows); return

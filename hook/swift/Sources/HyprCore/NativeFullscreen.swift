@@ -1,6 +1,39 @@
 import Foundation
 
 extension WM {
+    /// A confirmed native fullscreen view leaves its ordinary peers behind.
+    /// Configure those peers without focusing them or changing the user's view.
+    func reflowBackgroundFullscreenSources(_ snapshot:Snapshot) {
+        guard enabled,snapshot.stable,!snapshot.locked,snapshot.spaceType==4,cfgSink != nil,
+              !sys.sessionLocked(),!sys.interactionOverlay(),overviewFrozen?() != true else{return}
+        let byID=Dictionary(snapshot.windows.map{($0.wid,$0)},uniquingKeysWith:{$1})
+        let excluded=Set(hidden.map(\.wid)).union(floating).union(closing).union(restoring)
+            .union(restorePending.keys).union(launcherTransfers.keys).union(activationMoves.keys)
+        var jobs:[CfgJob]=[]
+        for key in nativeSourceSpaces.sorted() {
+            guard let source=Int(key),source != snapshot.space,let area=launcherAreas[source] else{continue}
+            let state=sp(source),leaves=Set(Dwindle.leaves(state.tree).compactMap(\.wid)).subtracting(excluded)
+            let departed=leaves.filter{wid in byID[wid].map{$0.nativeFullscreen && $0.space>0 && $0.space != source} == true}
+            guard !departed.isEmpty else{continue}
+            let peers=leaves.subtracting(departed)
+            guard !peers.isEmpty,peers.allSatisfy({wid in
+                byID[wid].map{$0.space==source && !$0.nativeFullscreen && $0.layer==0 && $0.alpha>0.05} == true
+            }) else{continue}
+            let projected=SpaceState();projected.tree=Node.from(state.tree?.json)
+            for wid in Set(Dwindle.leaves(projected.tree).compactMap(\.wid)).subtracting(peers).sorted() {
+                projected.tree=tile.removeReorientingPromoted(projected.tree,wid,in:area)
+            }
+            for (wid,to) in layout(area,projected) where target[wid] != to {
+                guard let window=byID[wid],pids[wid]==window.pid,!sys.protectedProcess(window.pid),tileable(window),
+                      sys.winPidLevel(wid).pid==window.pid,let job=job(window.pid,wid,to) else{continue}
+                var configureJob=job;configureJob.expectedSpace=source
+                cfgSink?.cancel(wid);revokeSnapshotLease(wid);liveBufferShrinks[wid]=nil
+                eng.c.geom(wid,to,16,16,frm:to,move:false,warp:true,stretch:false)
+                target[wid]=to;jobs.append(configureJob)
+            }
+        }
+        if !jobs.isEmpty {eng.c.commit();configure(jobs)}
+    }
     /// Preserve native fullscreen ownership through AppKit's order-out/Space-zero gaps.
     /// Trees remain intact; stale configure and transforms are revoked for the whole departing source.
     @discardableResult func updateNativeFullscreen(_ windows: [WinInfo], _ space: Int) -> Bool {

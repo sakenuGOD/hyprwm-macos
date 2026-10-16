@@ -189,6 +189,7 @@ public protocol SysAPI: AnyObject {
     func winAlpha(_ wid: Int) -> Double?
     func moveToSpace(_ wids: [Int], _ space: Int)
     func activeSpace() -> UInt64
+    func windowOnSpace(_ pid:Int,_ wid:Int,_ space:Int) -> Bool
     func mouse() -> (Double, Double)
     func mouseDown() -> Bool
     // AX (axlib.c)
@@ -241,6 +242,7 @@ public protocol SysAPI: AnyObject {
 }
 
 public extension SysAPI {
+    func windowOnSpace(_ pid:Int,_ wid:Int,_ space:Int) -> Bool {false}
     func preserveAppFloats(_ tile:WinInfo,space:Int,windows:[WinInfo]) {}
     func windowPresence(_ pid:Int,_ wid:Int) -> Int {-1}
     func invalidateWindowPresence(_ wid:Int) {}
@@ -296,6 +298,7 @@ public struct CfgJob: Equatable {
     public var seq = 0
     public var birth: String?
     public var requireOwnership = false
+    public var expectedSpace:Int?
     /// C5 already posted its one final native configure; this job ONLY reads ACK.
     public var verifyOnly = false
     /// One logical configure at motion start. Physical origin belongs to the

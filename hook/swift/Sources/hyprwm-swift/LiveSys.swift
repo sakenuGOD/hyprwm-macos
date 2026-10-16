@@ -353,6 +353,10 @@ final class LiveSys: SysAPI {
     }
 
     func activeSpace() -> UInt64 { hs_active_space() }
+    func windowOnSpace(_ pid:Int,_ wid:Int,_ space:Int) -> Bool {
+        guard let snapshot=try? focusSnapshot(),snapshot.stable,!snapshot.locked else{return false}
+        return snapshot.windows.contains{$0.pid==pid && $0.wid==wid && $0.space==space && $0.layer==0 && !$0.nativeFullscreen}
+    }
 
     func mouse() -> (Double, Double) {
         var x = 0.0, y = 0.0
