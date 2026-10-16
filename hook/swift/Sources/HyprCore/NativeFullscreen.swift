@@ -51,7 +51,10 @@ extension WM {
             guard !owners.isEmpty else { continue }
             sources[key]=leaves
             let peers=leaves.subtracting(owners)
-            if nativeSpaceType == 4 || !owners.isDisjoint(with:returning) || owners.contains(where: { byID[$0]?.space == 0 || byID[$0].map { $0.on && String($0.space)==key } == true }) || peers.contains(where: { String(byID[$0]?.space ?? 0) != key }) { suspended.insert(key) }
+            // Missing peers can be closed, and positive foreign membership is
+            // a completed move. Let sync retire those leaves; suspending here
+            // prevents the very reconciliation that could unfreeze the source.
+            if nativeSpaceType == 4 || !owners.isDisjoint(with:returning) || owners.contains(where: { byID[$0]?.space == 0 || byID[$0].map { $0.on && String($0.space)==key } == true }) || peers.contains(where: { byID[$0]?.space == 0 }) { suspended.insert(key) }
         }
         let departing=Set(sources.keys).subtracting(nativeSourceSpaces).union(suspended.subtracting(nativeSuspendedSpaces))
         var revoked=entering

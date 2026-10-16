@@ -1527,6 +1527,7 @@ public final class WM {
             !closing.isEmpty || (options.production && (!overlappingSince.isEmpty || !tabMissingSince.isEmpty || !closePresenceTransitions.isEmpty || !nativeGapSince.isEmpty || !activationMoves.isEmpty || !silentSpaceMoves.isEmpty || !liveBufferShrinks.isEmpty || !launcherTransfers.isEmpty || !restorePending.isEmpty || !nativeReturnSince.isEmpty || activationIntent != nil || launcherIntent != nil || !closeRequests.isEmpty || spaceFocusRetry != nil || closeFocusRetry != nil || focusPending != nil)) || spNow != lastSp || md != wasDown || fp != frontPid || !cfgQ.isEmpty || sys.now() - lastSnap > 0.25
         let area: Rect, space: Int, wins: [WinInfo]
         var freshFocusSnapshot:Snapshot?
+        var nativeLayoutChanged=false
         if need {
             let d: Snapshot
             do { d = try sys.snapshot() } catch { admission?.suspend(); log("window snapshot: \(error)"); return }
@@ -1546,7 +1547,7 @@ public final class WM {
             if options.production {
                 verifySnapshotHandoffs(d)
                 nativeSpaceType = d.spaceType
-                _ = updateNativeFullscreen(d.windows, d.space)
+                nativeLayoutChanged=updateNativeFullscreen(d.windows,d.space)
                 if d.spaceType != 0 {
                     admission?.suspend()
                     dragSession = nil; frontPid = fp; lastSp = spNow; lastSnap = sys.now()
@@ -1623,7 +1624,7 @@ public final class WM {
             else if md { updateSharedResize(area,space,wins) }
         }
         var (changed, opened) = sync(area, space, wins)
-        changed = changed || drifted || overviewRetilePending || (options.production && spaceChanged)
+        changed = changed || drifted || nativeLayoutChanged || overviewRetilePending || (options.production && spaceChanged)
         let cf = configured()                                     // window rejected size: retarget immediately
         changed = changed || cf
         if wasDown && !md {                                       // button released: a window may have been dragged

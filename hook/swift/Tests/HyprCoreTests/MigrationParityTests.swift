@@ -118,6 +118,49 @@ final class MigrationParityTests: XCTestCase {
             XCTAssertEqual(wm.sp(1).tree?.json,saved,"Keep the VM return position without changing the manager's identity")
         }
     }
+    func testFullscreenSourceReconcilesClosedOrTransferredPeerAndAdmitsNewWindow() throws {
+        for transferred in [false,true] {
+            let (wm,sys,_,original)=try world()
+            wm.cfgSink=SnapshotHandoffTests.Recorder();wm.rescued=true;wm.lastSpace=2;wm.frontPid=103
+            var windows=original;let owner=windows.firstIndex{$0.wid==1}!,peer=windows.firstIndex{$0.wid==2}!
+            windows[owner].space=99;windows[owner].on=false;windows[owner].nativeFullscreen=true
+            if transferred {windows[peer].space=2;windows[peer].on=false}
+            else {windows.remove(at:peer);sys.bounds[2]=nil}
+            let new=WinInfo(wid:3,pid:103,owner:"Fixture",x:40,y:50,w:500,h:400,on:true,space:1)
+            windows.append(new);sys.tileableM[3]=1;sys.pidlevel[3]=(103,0);sys.bounds[3]=new.rect;sys.births[103]="birth-3"
+            sys.front=103;sys.contexts[103]=(3,0);sys.activeSpaceID=1
+            sys.nativeSnapshot=Snapshot(space:1,stable:true,area:area,windows:windows)
+            wm.tick(socketReady:false);sys.t+=0.1;wm.tick(socketReady:false)
+            XCTAssertFalse(wm.nativeSuspendedSpaces.contains("1"),"A departed ordinary peer must not permanently freeze a fullscreen window's source desktop")
+            XCTAssertTrue(wm.sp(1).tree?.contains(3)==true,"New windows must enter the source tiling without clicks")
+            XCTAssertFalse(wm.sp(1).tree?.contains(2)==true)
+            XCTAssertEqual(wm.layout(area,wm.sp(1)).keys,[3])
+        }
+    }
+    func testFullscreenDepartureExpandsSourcePeerInFullTickWithoutClick() throws {
+        for visitedFullscreenDesktop in [false,true] {
+            let (wm,sys,eng,original)=try world(),sink=SnapshotHandoffTests.Recorder()
+            wm.cfgSink=sink;wm.rescued=true;wm.lastSpace=1;wm.frontPid=101
+            sys.front=101;sys.contexts[101]=(1,NativeFocusFlags.fullscreen)
+            var windows=original;let owner=windows.firstIndex{$0.wid==1}!
+            windows[owner].space=99;windows[owner].nativeFullscreen=true
+            if visitedFullscreenDesktop {
+                for i in windows.indices {windows[i].on=windows[i].wid==1}
+                var full=Snapshot(space:99,stable:true,area:area,windows:windows);full.spaceType=4
+                sys.activeSpaceID=99;sys.nativeSnapshot=full
+                wm.tick(socketReady:false)
+            }
+            for i in windows.indices {windows[i].on=windows[i].wid==2}
+            sys.front=102;sys.contexts[102]=(2,0);sys.activeSpaceID=1
+            sys.nativeSnapshot=Snapshot(space:1,stable:true,area:area,windows:windows)
+            eng.ch.ops=[];sink.jobs=[];sys.t+=0.1;wm.tick(socketReady:false)
+            let full=try XCTUnwrap(wm.layout(area,wm.sp(1))[2])
+            XCTAssertGreaterThan(full.w,area.w*0.9)
+            XCTAssertEqual(wm.target[2],full,"The retained fullscreen return slot must not leave its peer at half width")
+            XCTAssertTrue(sink.jobs.contains{$0.wid==2 && $0.to==full})
+            XCTAssertTrue(eng.ch.ops.contains{$0["wid"] == .int(2) && $0["to"]==full.json})
+        }
+    }
     func testRuleOpacityNoAnimationAndSetpropAreActuallyConsumed() throws {
         let (wm,_,eng,windows)=try world()
         wm.cfg=try NativeRuntimeConfig.build(base:wm.cfg,document:JSON.parse("{\"appearance\":{\"active_opacity\":0.8,\"inactive_opacity\":0.6},\"window_rules\":[{\"match\":{\"class\":\"Fixture\"},\"opacity\":\"0.5 override 0.25\",\"no_anim\":true,\"no_follow_mouse\":true}]}"))
