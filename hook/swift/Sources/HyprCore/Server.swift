@@ -150,6 +150,12 @@ public final class Configurer: ConfigureSink {
     let lock = NSLock()
     var want: [Int: Want] = [:]
     var seq = 0
+    /// Read-only queue counters, including work not yet sent to the AX adapter.
+    public var status: JSON {
+        lock.lock(); defer { lock.unlock() }
+        return .object([("submitted", .int(seq)), ("running", .int(running)),
+                        ("pending", .int(want.values.filter { !$0.taken }.count))])
+    }
     var queues: [Int: DispatchQueue] = [:]
     var scheduled=Set<Int>()
     var running=0

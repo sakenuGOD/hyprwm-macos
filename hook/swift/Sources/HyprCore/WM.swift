@@ -875,6 +875,7 @@ public final class WM {
         return options.production ? result.setting("overview",overviewStatus?() ?? .object([("bound",.bool(false))])).setting("enabled", .bool(enabled)).setting("runtime", .string("swift"))
             .setting("daemon",.object([("pid",.int(Int(getpid()))),("runtime",.string("swift")),("version",.string("swift-native-20261014.1"))]))
             .setting("visibility", .object([("restore_pending",.array(Set(restorePending.keys).union(engineRecoveryWork.keys).union(pauseLandingWitnesses.keys).sorted().map(JSON.int))), ("restoring",.array(restoring.sorted().map(JSON.int))), ("engine_recovery_active",.bool(engineRecoveryActive))]))
+            .setting("configuration", (cfgSink as? Configurer)?.status ?? .null)
             .setting("close",closeMetrics.setting("pending",.array(closeRequests.keys.sorted().map(JSON.int))).setting("worker_busy",.bool(sys.closeBusy)))
             .setting("first_map",admission?.status ?? .object([("published",.bool(false))]))
             .setting("launcher",launcherStatus)
