@@ -180,6 +180,9 @@ extern NSString *const NSWindowWillOrderOnScreenNotification;
 // рамка, поставленная здесь, — уже рамка первого кадра [V PROGRESS 15:10].
 static void will_order(NSWindow *w) {
     if (objc_getAssociatedObject(w, &kShown) || !eligible(w)) return;
+    // Stop AppKit's own appearance animation before the first server order.
+    // DidBecomeKey/DidUpdate can arrive after an unwanted default-pose frame.
+    force(w);
     objc_setAssociatedObject(w, &kShown, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     uint64_t s = nstate(T_NEXT);
     if (!s) { publish_min(w); return; }
