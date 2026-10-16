@@ -83,7 +83,7 @@ final class LiteAX {
         client.queue.async { [weak self] in
             guard let self, Self.birth(pid) == client.birth else { return }
             AXUIElementSetMessagingTimeout(element, 0.08)
-            guard let values = Self.attributes(element), let frame = Self.frame(values), frame.w > 0, frame.h > 0,
+            guard let values = Self.attributes(element), let frame = Self.frame(values), Self.validCreatedFrame(frame),
                   values[kAXRoleAttribute] as? String == kAXWindowRole,
                   values[kAXSubroleAttribute] as? String == kAXStandardWindowSubrole,
                   let modal = values[kAXModalAttribute] as? Bool, !modal,
@@ -172,6 +172,10 @@ final class LiteAX {
             return blocked(unsafeBitCast(focused, to: AXUIElement.self))
         }
         return false
+    }
+    static func validCreatedFrame(_ frame: Rect) -> Bool {
+        frame.arr.allSatisfy(\.isFinite) && frame.w > 0 && frame.h > 0 && frame.w <= 32768 && frame.h <= 32768 &&
+            abs(frame.x) <= 1_048_576 && abs(frame.y) <= 1_048_576
     }
     static func frame(_ attributes: [String: Any]) -> Rect? {
         guard let rawPosition = attributes[kAXPositionAttribute], let rawSize = attributes[kAXSizeAttribute] else { return nil }
@@ -341,6 +345,38 @@ final class LiteAX {
         var result: Rect?
         _ = perform(pid, wid) { _, window in result = Self.frame(window); return result == nil ? -1 : 0 }
         return result
+    }
+    /// Activation can follow AX-created delivery. A deferred admission gets a
+    /// new ordinary/key/owner read on its original worker, never a cached replay.
+    func revalidateCreated(_ created: Created, completion: @escaping (Created?) -> Void) {
+        let pid = created.window.pid, wid = created.window.wid
+        guard let client = client(pid), client.birth == created.birth else { completion(nil); return }
+        client.queue.async { [weak self] in
+            func finish(_ value: Created?) { DispatchQueue.main.async { completion(value) } }
+            guard let self, Self.birth(pid) == created.birth,
+                  ProcessInfo.processInfo.systemUptime-created.received < 0.25 else { finish(nil); return }
+            self.lock.lock()
+            let exact = self.clients[pid] === client && client.windows[wid].map { CFEqual($0.element, created.element) } == true
+            self.lock.unlock()
+            guard exact, let values = Self.attributes(created.element), let frame = Self.frame(values), Self.validCreatedFrame(frame),
+                  values[kAXRoleAttribute] as? String == kAXWindowRole,
+                  values[kAXSubroleAttribute] as? String == kAXStandardWindowSubrole,
+                  values[kAXModalAttribute] as? Bool == false, values["AXFullScreen"] as? Bool == false,
+                  let focused = Self.attribute(client.application, kAXFocusedWindowAttribute), CFEqual(focused, created.element),
+                  let ui = Self.attribute(client.application, kAXFocusedUIElementAttribute), CFGetTypeID(ui) == AXUIElementGetTypeID(),
+                  !Self.string(unsafeBitCast(ui, to: AXUIElement.self), kAXRoleAttribute).isEmpty,
+                  !Self.modalBarrier(client.application, created.element) else { finish(nil); return }
+            var settable = DarwinBoolean(false)
+            guard AXUIElementIsAttributeSettable(created.element, kAXSizeAttribute as CFString, &settable) == .success, settable.boolValue,
+                  let row = (CGWindowListCopyWindowInfo(.optionIncludingWindow, CGWindowID(wid)) as? [[String: Any]])?.first(where: {
+                      $0[kCGWindowNumber as String] as? Int == wid && $0[kCGWindowOwnerPID as String] as? Int == pid
+                  }), row[kCGWindowLayer as String] as? Int == 0,
+                  Self.birth(pid) == created.birth, ProcessInfo.processInfo.systemUptime-created.received < 0.25 else { finish(nil); return }
+            var window = created.window
+            window.name = values[kAXTitleAttribute] as? String ?? ""
+            window.x = frame.x; window.y = frame.y; window.w = frame.w; window.h = frame.h
+            finish(Created(window: window, birth: created.birth, element: created.element, received: created.received))
+        }
     }
     func expireCreated(_ created: Created) {
         lock.lock(); defer { lock.unlock() }

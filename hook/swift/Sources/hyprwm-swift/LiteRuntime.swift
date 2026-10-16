@@ -32,6 +32,8 @@ final class LiteRuntime {
     private var pendingReload: DispatchWorkItem?
     private var censusAt = 0.0
     private var createdRuntimeStages: [String: Int] = [:]
+    private var pendingCreated: [Int: LiteAX.Created] = [:]
+    private var createdEpoch = 0
     private var observer: NSObjectProtocol?
     init(hook: String, config: HyprConfig, controlPath: String, stateDir: String, environment: [String: String]) throws {
         self.hook = hook; self.controlPath = controlPath; self.stateDir = stateDir; self.environment = environment
@@ -50,12 +52,19 @@ final class LiteRuntime {
         wm.controlHandler = { [weak self] command in try self?.control(command) }
         sys.ax.onCreated = { [weak self] created in self?.created(created) }
     }
-    private func created(_ created: LiteAX.Created) {
+    private func created(_ created: LiteAX.Created, mayDefer: Bool = true) {
         func note(_ stage: String) { createdRuntimeStages[stage, default: 0] += 1 }
         note("received")
         guard !stopping, !recovering, wm.enabled else { note("paused"); return }
         guard !sys.sessionLocked(), !sys.mouseDown(), !sys.interactionOverlay() else { note("interaction"); return }
-        guard sys.frontPid() == created.window.pid else { note("foreground"); return }
+        guard sys.frontPid() == created.window.pid else {
+            note("foreground")
+            if mayDefer, pendingCreated.count < 16 || pendingCreated[created.window.wid] != nil {
+                pendingCreated[created.window.wid] = created
+                note("deferred")
+            }
+            return
+        }
         guard !sys.applicationHidden(created.window.pid) else { note("hidden"); return }
         guard sys.now()-censusAt < 0.1 else { note("old_census"); return }
         guard let last = wm.last, last.space == sys.workspace else { note("workspace"); return }
@@ -67,11 +76,34 @@ final class LiteRuntime {
         wm.last = (last.area, last.space, windows)
         if changed { wm.apply(last.area, last.space, windows, opening: opened) }
     }
+    private func invalidateCreated() { createdEpoch += 1; pendingCreated.removeAll() }
+    private func retryCreated() {
+        guard !stopping, !recovering, wm.enabled else { pendingCreated.removeAll(); return }
+        let foreground = sys.frontPid(), now = sys.now()
+        for (wid, candidate) in pendingCreated {
+            if now-candidate.received >= 0.25 || sys.processBirth(candidate.window.pid) != candidate.birth {
+                pendingCreated[wid] = nil; continue
+            }
+            guard foreground == candidate.window.pid else { continue }
+            pendingCreated[wid] = nil
+            createdRuntimeStages["retry", default: 0] += 1
+            let epoch = createdEpoch, workspace = sys.workspace
+            sys.ax.revalidateCreated(candidate) { [weak self] fresh in
+                guard let self else { return }
+                guard self.createdEpoch == epoch, self.sys.workspace == workspace else {
+                    self.createdRuntimeStages["retry_cancelled", default: 0] += 1; return
+                }
+                guard let fresh else { self.createdRuntimeStages["retry_rejected", default: 0] += 1; return }
+                self.created(fresh, mayDefer: false)
+            }
+        }
+    }
     private var workspaceStatus: JSON {
         .object([("state", .string("virtual")), ("active", .int(sys.workspace)), ("previous", .int(sys.previousWorkspace)),
                  ("native_spaces_used", .bool(false)), ("empty_receiver", workspaceReceiver?.status ?? .null), ("members", .object(sys.membership.map { (String($0.key), .int($0.value)) }))])
     }
     private func control(_ command: String) throws -> String? {
+        if command == "pause" || command == "restore-all" { invalidateCreated() }
         if command == "status", !formattingStatus, let last = wm.last {
             formattingStatus = true; defer { formattingStatus = false }
             let original = try wm.command("status", last.area, last.space, last.wins)
@@ -195,6 +227,7 @@ final class LiteRuntime {
     }
     private func switchWorkspace(_ target: Int) {
         guard target != sys.workspace, wm.enabled else { return }
+        invalidateCreated()
         sys.cancelFocus()
         let source = sys.workspace
         configure?.cancelAll(); wm.target.removeAll()
@@ -225,6 +258,7 @@ final class LiteRuntime {
         }
     }
     private func reload() throws {
+        invalidateCreated()
         let base = try HyprConfig.load(configDir: hook+"/config", rebuild: false, timeScale: wm.cfg.timeScale)
         let next = try NativeRuntimeConfig.load(base: base, configDir: hook+"/config", environment: environment)
         var options = try RuntimeOptions.load(configDir: hook+"/config", environment: environment)
@@ -285,7 +319,7 @@ final class LiteRuntime {
         ecosystem = try? EcosystemAPI(path: environment["HYPRWM_EVENTS"] ?? controlPath+".events")
         do { hotkeys = try LiteHotkeys(configDir: hook+"/config") { [weak self] command in
             guard let self else { return }
-            if command == "panic-toggle" { if !self.recovering { self.wm.setEnabled(!self.wm.enabled) }; return }
+            if command == "panic-toggle" { if !self.recovering { self.invalidateCreated(); self.wm.setEnabled(!self.wm.enabled) }; return }
             guard let last = self.wm.last else { return }
             do { _ = try self.wm.command(command, last.area, last.space, last.wins) } catch { log("Lite hotkey:", error.localizedDescription) }
         }} catch { log("Lite hotkeys:", error.localizedDescription) }
@@ -307,6 +341,7 @@ final class LiteRuntime {
         timer.schedule(deadline: .now(), repeating: .milliseconds(16), leeway: .milliseconds(1))
         timer.setEventHandler { [weak self] in
             guard let self, !self.stopping else { return }
+            self.retryCreated()
             if self.sys.now()-self.censusAt >= 0.05 {
                 self.censusAt = self.sys.now()
                 if self.restoringAll {
@@ -340,6 +375,7 @@ final class LiteRuntime {
         socket.setEventHandler { [weak self] in self?.wm.tick(socketReady: true) }; socket.resume(); socketSource = socket
         observer = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
             guard let self, !self.stopping else { return }
+            self.retryCreated()
             if let pid = self.sys.frontPid(), let wid = self.sys.focusContext(pid).wid,
                let workspace = self.sys.membership[wid], workspace != self.sys.workspace { self.switchWorkspace(workspace) }
             self.wm.tick(socketReady: false)
@@ -361,6 +397,7 @@ final class LiteRuntime {
     }
     private func shutdown(_ completion: @escaping (Bool) -> Void) {
         guard !stopping else { completion(false); return }; stopping = true; recovering = true; restoringAll = false; recoveryEpoch += 1
+        invalidateCreated()
         pendingReload?.cancel(); wm.setEnabled(false); configure?.cancelAll(); engine.channel.prepareRecovery()
         wm.hidden.removeAll(); wm.save()
         let deadline = sys.now()+3
