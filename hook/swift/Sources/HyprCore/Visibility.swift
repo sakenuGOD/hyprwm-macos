@@ -43,7 +43,7 @@ extension WM {
         switch which {
         case let .filter(f)?: todo=hidden.filter(f)
         case let .wids(ids)?: todo=hidden.filter { ids.contains($0.wid) }
-        case nil: todo=everything ? hidden : Array(hidden.filter { $0.extra["scratch"]?.truthy != true }.suffix(1))
+        case nil: todo=everything ? hidden : Array(hidden.filter { $0.extra["scratch"]?.truthy != true && hiddenRecordLive($0) }.suffix(1))
         }
         let c=eng.c
         var restored: [Int]=[], requested: [Int]=[]

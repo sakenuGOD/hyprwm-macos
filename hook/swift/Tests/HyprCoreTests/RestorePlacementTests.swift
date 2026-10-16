@@ -2,6 +2,21 @@
 import XCTest
 
 final class RestorePlacementTests:XCTestCase {
+    func testUnhideSkipsUnverifiableTailAndPlacesMostRecentLiveWindow() throws {
+        let f=ProductionPolicyTests(),(wm,sys,_,windows)=try f.world(f.pair())
+        let sink=SnapshotHandoffTests.Recorder();wm.cfgSink=sink
+        wm.sp(1).tree=Node(leaf:2);wm.sp(1).focus=2
+        let live=Hidden(wid:1,pid:101,owner:"Fixture",space:1,rect:windows[0].rect.arr,
+            extra:.object([("swift_birth",.string("birth-1")),("tiled",.bool(true))]))
+        let unavailable=Hidden(wid:999,pid:101,owner:"Fixture",space:1,rect:windows[0].rect.arr,
+            extra:.object([("swift_birth",.string("birth-1")),("tiled",.bool(true))]))
+        wm.hidden=[live,unavailable];sys.alphaM[1]=0
+        _=try wm.command("unhide",f.area,1,windows)
+        XCTAssertNotNil(wm.restorePending[1],"An unavailable last window must not block an older live hidden window")
+        XCTAssertEqual(sink.jobs.map(\.wid),[1])
+        XCTAssertNil(wm.restorePending[999]);XCTAssertEqual(wm.hidden,[live,unavailable],"Unknown ownership is retained, never silently discarded or revealed")
+    }
+
     func testCurrentConfigureMinimumRequiresExactDestinationAndNeverUsesCachedGuess() {
         let target=Rect(738,41,730,400),minimum=Rect(738,41,730,508)
         var result=CfgResult(wid:66,owner:"Fixture",to:target,got:minimum,e:0,pre:Rect(12,41,1446,508))
