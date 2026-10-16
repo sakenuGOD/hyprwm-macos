@@ -2,6 +2,16 @@
 import XCTest
 
 final class OpeningPresentationTests:XCTestCase {
+    func testPreparationNeverHidesAnAlreadyPresentedUnadmittedWindow() throws {
+        let f=ProductionPolicyTests(),(wm,sys,eng,wins)=try f.world(f.pair())
+        wm.cfg=try HyprConfig(json:wm.cfg.raw.setting("runtime",.object([("prehide",.bool(true))])),timeScale:1)
+        sys.alphaM[2]=1;wm.newbies[2]=sys.now();wm.target[2]=nil
+        wm.hideNewbies(1,wins)
+        XCTAssertFalse(eng.ch.ops.contains{$0["op"] == .string("alpha") && $0["wid"] == .int(2) && $0["a"] == .double(0)},
+                       "Late concealment makes a mapped window flash off before appearing in its tile")
+        XCTAssertNil(wm.newbies[2])
+    }
+
     func testAlreadyPresentedWindowNeverDisappearsOrFliesFromItsInitialFrame() throws {
         let f=ProductionPolicyTests(),(wm,sys,eng,original)=try f.world(f.pair())
         let sink=SnapshotHandoffTests.Recorder();wm.cfgSink=sink;eng.ch.terminalEnabled=true

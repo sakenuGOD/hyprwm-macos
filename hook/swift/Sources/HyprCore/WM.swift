@@ -1273,6 +1273,13 @@ public final class WM {
             return target.contains { pids[$0.key] == pid && $0.value.maxDiff(r) <= TOL }
         }
         for (wid, t) in newbies {
+            if options.production && (sys.winAlpha(wid) ?? 1)>0.001 {
+                // A mapped client missed native first-map concealment. Hiding
+                // it now creates a visible disappear/reappear cycle. The
+                // presented-opening path places it directly in its final tile.
+                newbies[wid]=nil
+                continue
+            }
             let w = by[wid]
             if sys.now() - t > 1.5 {
                 newbies[wid] = nil
