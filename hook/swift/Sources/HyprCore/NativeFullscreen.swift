@@ -6,6 +6,7 @@ extension WM {
     @discardableResult func updateNativeFullscreen(_ windows: [WinInfo], _ space: Int) -> Bool {
         var native=Set(windows.filter(\.nativeFullscreen).map(\.wid))
         let previous=nativeFullscreenWindows
+        let previousSuspended=nativeSuspendedSpaces
         var source: [Int:String]=[:]
         for (key,state) in spaces { for leaf in Dwindle.leaves(state.tree) { if let wid=leaf.wid { source[wid]=key } } }
         let retained=Set(source.keys), hiddenIDs=Set(hidden.map(\.wid))
@@ -48,7 +49,7 @@ extension WM {
             guard !owners.isEmpty else { continue }
             sources[key]=leaves
             let peers=leaves.subtracting(owners)
-            if nativeSpaceType == 4 || !owners.isDisjoint(with:returning) || owners.contains(where: { byID[$0]?.on == true || byID[$0]?.space == 0 }) || peers.contains(where: { byID[$0]?.on != true || String(byID[$0]?.space ?? 0) != key }) { suspended.insert(key) }
+            if nativeSpaceType == 4 || !owners.isDisjoint(with:returning) || owners.contains(where: { byID[$0]?.space == 0 || byID[$0].map { $0.on && String($0.space)==key } == true }) || peers.contains(where: { byID[$0]?.on != true || String(byID[$0]?.space ?? 0) != key }) { suspended.insert(key) }
         }
         let departing=Set(sources.keys).subtracting(nativeSourceSpaces).union(suspended.subtracting(nativeSuspendedSpaces))
         var revoked=entering
@@ -65,6 +66,6 @@ extension WM {
         if let focused=context?.wid, context!.flags & 16 != 0 { nativeConfirmed.insert(focused) }
         nativeFullscreenWindows=native
         if !revoked.isEmpty { eng.c.commit() }
-        return !changed.isEmpty || !departing.isEmpty
+        return !changed.isEmpty || !departing.isEmpty || suspended != previousSuspended
     }
 }

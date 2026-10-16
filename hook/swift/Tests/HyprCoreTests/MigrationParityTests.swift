@@ -81,6 +81,20 @@ final class MigrationParityTests: XCTestCase {
         _=wm.sync(area,1,windows); wm.apply(area,1,windows,force:true)
         XCTAssertEqual(wm.sp(1).tree!.json,before); XCTAssertFalse(eng.ch.ops.contains { $0["op"]?.string == "geom" })
     }
+    func testConfirmedFullscreenOnAnotherSpaceReleasesSourceAllocationAndRestoresItsSlotOnReturn() throws {
+        let (wm,sys,_,windows)=try world(),before=wm.sp(1).tree!.json
+        var departing=windows;departing[0].space=0;departing[0].nativeFullscreen=true
+        _=wm.updateNativeFullscreen(departing,1)
+        var settled=windows;settled[0].space=99;settled[0].nativeFullscreen=true
+        sys.front=102;sys.contexts[102]=(2,0);wm.nativeSpaceType=0
+        _=wm.sync(area,1,settled)
+        XCTAssertFalse(wm.nativeSuspendedSpaces.contains("1"),"A confirmed fullscreen window on another Space must not freeze its source desktop")
+        let rects=wm.layout(area,wm.sp(1))
+        XCTAssertEqual(rects.keys,[2]);XCTAssertGreaterThan(try XCTUnwrap(rects[2]).w,area.w*0.9)
+        XCTAssertEqual(wm.sp(1).tree!.json,before,"Keep the return position without reserving its pixels")
+        _=wm.sync(area,1,windows)
+        XCTAssertEqual(wm.layout(area,wm.sp(1)).keys,[1,2]);XCTAssertEqual(wm.sp(1).tree!.json,before)
+    }
     func testLockAndOverlayPreserveNativeInputOwnership() throws {
         let (wm,sys,eng,windows)=try world()
         sys.locked=true; XCTAssertTrue(try wm.command("hide",area,1,windows).contains("locked"))

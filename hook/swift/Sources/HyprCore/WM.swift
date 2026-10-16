@@ -358,9 +358,17 @@ public final class WM {
 
     // Layout
     public func layout(_ area: Rect, _ s: SpaceState) -> OrderedMap<Int, Rect> {
+        var tree=s.tree
+        if options.production {
+            let detached=nativeFullscreenWindows.subtracting(nativeSuspendedWindows)
+            if Dwindle.leaves(tree).contains(where:{detached.contains($0.wid!)}) {
+                tree=Node.from(tree?.json)
+                for wid in detached.sorted() {tree=tile.removeReorientingPromoted(tree,wid,in:area)}
+            }
+        }
         // Know per-app minima BEFORE layout, so each window immediately receives enough room.
         tile.mins = [:]
-        for n in Dwindle.leaves(s.tree) {
+        for n in Dwindle.leaves(tree) {
             if let o = owner[n.wid!], let m = mins[o], m.count >= 2 { tile.mins[n.wid!] = (m[0].double ?? 0, m[1].double ?? 0) }
             if options.production, let wid=n.wid,let pid=pids[wid],let accepted=admission?.minimum(wid,pid:pid,birth:sys.processBirth(pid)) {
                 let base=tile.mins[wid] ?? (Dwindle.minW,Dwindle.minH)
@@ -368,7 +376,7 @@ public final class WM {
             }
         }
         var rects = OrderedMap<Int, Rect>()
-        for (wid, b) in tile.boxes(s.tree, area) { rects[wid] = tile.withGaps(b, area) }
+        for (wid, b) in tile.boxes(tree, area) { rects[wid] = tile.withGaps(b, area) }
         if let f = s.full, rects.contains(f) {
             let go = tile.gapsOut
             if s.fullmode == "fullscreen" {                       // entire screen, without gaps
