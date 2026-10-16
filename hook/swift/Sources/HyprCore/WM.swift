@@ -358,6 +358,7 @@ public final class WM {
 
     // Layout
     public func layout(_ area: Rect, _ s: SpaceState) -> OrderedMap<Int, Rect> {
+        tile.constrainFrames=options.production
         var tree=s.tree
         if options.production {
             let detached=nativeFullscreenWindows.subtracting(nativeSuspendedWindows)

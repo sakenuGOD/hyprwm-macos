@@ -62,6 +62,7 @@ public final class Dwindle {
     public var gapsOut: Gaps
     public var splitWidthMult: Double
     public var minimumPolicy = "native"
+    public var constrainFrames = false
     public var defaultRatio: Double
     public var mins: [Int: (Double, Double)] = [:]
 
@@ -134,14 +135,14 @@ public final class Dwindle {
     }
 
     /// Minimum tile size for a subtree (including gaps around windows).
-    public func need(_ n: Node) -> (Double, Double) {
+    public func need(_ n: Node, learned:Bool=true) -> (Double, Double) {
         if let w = n.wid {
-            var (mw, mh) = mins[w] ?? (Dwindle.minW, Dwindle.minH)
+            var (mw, mh) = learned ? mins[w] ?? (Dwindle.minW, Dwindle.minH) : (Dwindle.minW,Dwindle.minH)
             mw = max(mw, Dwindle.minW); mh = max(mh, Dwindle.minH)   // a learned zero on an axis cannot lower the default
             let pad = 2 * max(gapsIn, gapsOut.values.max()!)          // worst case: tile at the screen edge
             return (mw + pad, mh + pad)
         }
-        let (aw, ah) = need(n.a), (bw, bh) = need(n.b)
+        let (aw, ah) = need(n.a,learned:learned), (bw, bh) = need(n.b,learned:learned)
         if n.split == "v" { return (aw + bw, max(ah, bh)) }
         return (max(aw, bw), ah + bh)
     }
@@ -150,8 +151,9 @@ public final class Dwindle {
     public func splitBox(_ box: Rect, _ n: Node) -> (Rect, Rect) {
         let (x, y, w, h) = (box.x, box.y, box.w, box.h)
         let r = n.ratio ?? 0.5
-        let (aw, ah) = need(n.a), (bw, bh) = need(n.b)
-        if minimumPolicy == "ratio" || n.manualRatio {
+        let ratioOnly = minimumPolicy == "ratio" || n.manualRatio
+        let (aw, ah) = need(n.a,learned:!constrainFrames || !ratioOnly), (bw, bh) = need(n.b,learned:!constrainFrames || !ratioOnly)
+        if ratioOnly && !constrainFrames {
             if n.split == "v" { return (Rect(x, y, w*r, h), Rect(x+w*r, y, w*(1-r), h)) }
             return (Rect(x, y, w, h*r), Rect(x, y+h*r, w, h*(1-r)))
         }
@@ -183,6 +185,13 @@ public final class Dwindle {
         let t = abs(box.y - area.y) < eps ? gapsOut.top : gapsIn
         let r = abs((box.x + box.w) - (area.x + area.w)) < eps ? gapsOut.right : gapsIn
         let b = abs((box.y + box.h) - (area.y + area.h)) < eps ? gapsOut.bottom : gapsIn
+        if constrainFrames {
+            // A client minimum cannot enlarge its viewport across a partition.
+            // When overcrowded, reduce gaps and clip the client inside its box.
+            let sx=l+r>0 ? min(1,max(0,box.w-1)/(l+r)):1
+            let sy=t+b>0 ? min(1,max(0,box.h-1)/(t+b)):1
+            return Rect(box.x+l*sx,box.y+t*sy,max(1,box.w-(l+r)*sx),max(1,box.h-(t+b)*sy))
+        }
         return Rect(box.x + l, box.y + t, max(Dwindle.minW, box.w - l - r), max(Dwindle.minH, box.h - t - b))
     }
 
