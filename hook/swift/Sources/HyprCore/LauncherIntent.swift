@@ -14,6 +14,7 @@ extension WM {
         if let value=sys.launcherIntent(after:launcherSequence) {
             launcherSequence=value.sequence
             launcherObserved=value
+            if value.kind>0 {cancelFocusRecovery()}
             launcherIntent=value.kind > 0 && value.space > 0 && launcherAreas[value.space] != nil ? value : nil
             launcherDisposition=launcherIntent != nil ? "awaiting-selection" : "cancelled-or-invalid-origin"
         }

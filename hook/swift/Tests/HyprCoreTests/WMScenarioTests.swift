@@ -19,6 +19,8 @@ final class FakeWorld: SysAPI {
     var calls: [JSON] = []
     var contexts: [Int: (Int?, Int)] = [:]
     var focusResult=0
+    var focusCancels=0
+    func cancelFocus() {focusCancels+=1}
     var deferredFocus=false
     var focusCallbacks:[(FocusRequest,(Bool)->Void)]=[]
     var births: [Int: String] = [:]

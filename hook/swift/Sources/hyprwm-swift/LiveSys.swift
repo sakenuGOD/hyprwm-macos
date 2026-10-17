@@ -125,11 +125,12 @@ final class LiveSys: SysAPI {
         _=axFocus(window.pid,window.wid,raise:true)
     }
     func requestFocus(_ request:FocusRequest,completion:@escaping(Bool)->Void) {
+        let launcherStamp=launcherIntent(after:0)?.sequence ?? 0
         focusLock.lock();focusSequence+=1;let sequence=focusSequence;focusWorkers+=1;focusLock.unlock()
         focusQueue.async {[weak self] in
             guard let self else{return}
             func current() -> Bool {self.focusLock.lock();defer{self.focusLock.unlock()};return sequence==self.focusSequence}
-            func allowed() -> Bool {current()&&self.now()<request.deadline && !self.sessionLocked() && !self.interactionOverlay() &&
+            func allowed() -> Bool {current()&&self.launcherIntent(after:launcherStamp)==nil && self.now()<request.deadline && !self.sessionLocked() && !self.interactionOverlay() &&
                 self.activeSpace()==UInt64(request.space) &&
                 !OverviewNativeMode.active(hs_overview10_mode()) && self.overviewGuard?() != true &&
                 !self.mouseDown() && !self.protectedProcess(request.pid) && self.processBirth(request.pid)==request.birth &&

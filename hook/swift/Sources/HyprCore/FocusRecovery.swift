@@ -70,6 +70,7 @@ struct SpaceFocusRetry {
 }
 extension WM {
     @discardableResult func queueFocus(_ window:WinInfo,space:Int,reason:FocusReason,pointer:(Double,Double)?=nil) -> Bool {
+        if launcherIntent != nil && (reason == .space || reason == .close) {return false}
         guard enabled,!sys.sessionLocked(),!sys.interactionOverlay(),overviewFrozen?() != true,
               !nativeSuspendedSpaces.contains(String(space)),!sys.protectedProcess(window.pid),
               !hidden.contains(where:{$0.wid==window.wid}),!ignored(window),
