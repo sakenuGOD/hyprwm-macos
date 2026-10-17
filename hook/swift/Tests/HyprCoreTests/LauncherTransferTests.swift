@@ -413,6 +413,42 @@ final class LauncherTransferTests:XCTestCase {
             if replace {XCTAssertEqual(wm.launcherIntent?.sequence,2)}
         }
     }
+    func testSilentSendReflowsSourceAfterFreshNativeACKWithoutReentry() throws {
+        for current in [1,2] {
+            let f=ProductionPolicyTests(),(wm,sys,eng,original)=try f.world(f.pair()),sink=SnapshotHandoffTests.Recorder()
+            wm.cfgSink=sink;wm.rescued=true;wm.lastSpace=1;wm.frontPid=102;wm.sp(1).focus=2
+            wm.launcherAreas[1]=f.area;wm.launcherAreas[2]=f.area
+            sys.activeSpaceID=1;sys.transferCatalog=try PublicWorkspaceCatalog(PublicWorkspaceTests().raw(1))
+            sys.nativeSnapshot=Snapshot(space:1,stable:true,area:f.area,windows:original)
+            for window in original {sys.alphaM[window.wid]=1}
+            let old=try XCTUnwrap(wm.target[2])
+            XCTAssertEqual(try wm.command("sendws 2 1",f.area,1,original),"sendws queued 1 -> 2")
+            var windows=original
+            for i in windows.indices {
+                if windows[i].wid==1 {windows[i].space=2}
+                windows[i].on=windows[i].space==current
+            }
+            sys.activeSpaceID=UInt64(current);sys.transferCatalog=try PublicWorkspaceCatalog(PublicWorkspaceTests().raw(current))
+            wm.lastSpace=current;sys.front=nil
+            sys.nativeSnapshot=Snapshot(space:current,stable:true,area:f.area,windows:windows)
+            wm.tick(socketReady:false)
+            XCTAssertTrue(wm.sp(1).tree?.contains(1)==true);XCTAssertTrue(sink.jobs.isEmpty,"One sample must not change source")
+            eng.ch.ops=[];sys.calls=[];sys.t+=0.1;wm.tick(socketReady:false)
+            XCTAssertTrue(wm.silentSpaceMoves.isEmpty);XCTAssertEqual(wm.sp(1).tree?.wid,2)
+            let full=try XCTUnwrap(wm.layout(f.area,wm.sp(1))[2]);XCTAssertNotEqual(full,old)
+            XCTAssertEqual(wm.target[2],full,"Native target must match published layout before any click/reentry")
+            let job=sink.jobs.first{$0.wid==2 && $0.to==full}
+            XCTAssertNotNil(job,"ACK detached source leaf but never submitted its surviving peer")
+            if current==2 {XCTAssertEqual(job?.expectedSpace,1)}
+            XCTAssertEqual(job?.birth,"birth-2");XCTAssertEqual(job?.requireOwnership,true)
+            XCTAssertEqual(sys.activeSpaceID,UInt64(current));XCTAssertEqual(wm.lastSpace,current)
+            XCTAssertFalse(sys.calls.contains{$0.array?.first == .string("ax_focus")})
+            XCTAssertFalse(eng.ch.ops.contains{$0["op"] == .string("space")})
+            let count=sink.jobs.filter{$0.wid==2}.count
+            sys.t+=0.3;wm.tick(socketReady:false)
+            XCTAssertEqual(sink.jobs.filter{$0.wid==2}.count,count,"Unchanged peer must not be resubmitted")
+        }
+    }
     func testSilentSendUsesOnlyEngineAndTwoFreshMembershipACKsBeforeSourceDetach() throws {
         let f=ProductionPolicyTests(),(wm,sys,eng,windows)=try f.world(f.pair())
         sys.transferCatalog=try PublicWorkspaceCatalog(PublicWorkspaceTests().raw(1));sys.nativeSnapshot=Snapshot(space:1,stable:true,area:f.area,windows:windows)

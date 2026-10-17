@@ -23,7 +23,8 @@ extension WM {
         eng.c.space(window.wid,destination);eng.c.commit()
         return "sendws queued \(window.wid) -> \(destination)"
     }
-    func pollSilentSpaceMoves(_ snapshot:Snapshot) {
+    @discardableResult func pollSilentSpaceMoves(_ snapshot:Snapshot) -> Bool {
+        var changed=false
         for (wid,var request) in silentSpaceMoves {
             guard sys.now()<request.deadline,!snapshot.locked,!sys.sessionLocked(),!sys.interactionOverlay(),
                   sys.processBirth(request.pid)==request.birth,sys.processUID(request.pid)==Int(getuid()),sys.winPidLevel(wid).pid==request.pid,
@@ -39,8 +40,12 @@ extension WM {
                 if source.focus==wid {source.focus=nil};if source.full==wid {source.full=nil}
                 target[wid]=nil;newbies[wid]=nil;optimistic[wid]=nil;restoreFrom[wid]=nil;restoring.remove(wid)
                 silentSpaceMoves[wid]=nil;silentSpaceMoveLast=silentSpaceMoveLast.setting("state",.string("acknowledged"));save()
+                // Detaching before sync means sync cannot discover this layout change.
+                if request.source==snapshot.space {changed=true}
+                else {reflowBackgroundLauncherSource(request.source,snapshot)}
             } else {silentSpaceMoves[wid]=request}
         }
+        return changed
     }
     var silentSpaceMoveStatus:JSON {
         .object([("pending",.array(silentSpaceMoves.sorted{$0.key<$1.key}.map{wid,r in .object([("wid",.int(wid)),("pid",.int(r.pid)),("source",.int(r.source)),("destination",.int(r.destination)),("native_samples",.int(r.samples))])})),("last",silentSpaceMoveLast)])

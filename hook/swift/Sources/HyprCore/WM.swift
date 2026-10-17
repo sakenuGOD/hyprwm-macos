@@ -1588,7 +1588,7 @@ public final class WM {
         if options.production {
             if launcherIntent != nil,let fp {activateOnCurrentSpace(area,space,wins,fp)}
             if let freshFocusSnapshot {pollLauncherTransfers(freshFocusSnapshot)}
-            if let freshFocusSnapshot {pollSilentSpaceMoves(freshFocusSnapshot)}
+            if let freshFocusSnapshot {nativeLayoutChanged=pollSilentSpaceMoves(freshFocusSnapshot) || nativeLayoutChanged}
             if !launcherTransfers.isEmpty || !silentSpaceMoves.isEmpty {admission?.suspend();return} // No source surgery before actual native ACK.
         }
         followMouse(space, wins)
