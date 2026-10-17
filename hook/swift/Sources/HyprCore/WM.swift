@@ -1535,7 +1535,13 @@ public final class WM {
             workspaceManagerWitness = .object(witnessKeys.compactMap {key in witness.nativeMetadata?[key].map{(key,$0)} })
                 .setting("sampled_at",.double(sys.now()))
             workspaceObserver?(witness,true)
-            if !d.stable || options.production && d.locked { admission?.suspend(); dragSession = nil; return }
+            if !d.stable || options.production && d.locked {
+                admission?.suspend();dragSession=nil
+                // An uncertain native census can precede its committed SID.
+                // Invalidate queued focus before the later spaceChanged branch.
+                if options.production {cancelFocusRecovery()}
+                return
+            }
             freshFocusSnapshot=d
             if options.production {
                 verifySnapshotHandoffs(d)
