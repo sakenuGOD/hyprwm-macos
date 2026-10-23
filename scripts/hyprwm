@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+HYPRWM_PROJECT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+export HYPRWM_HOOK=${HYPRWM_HOOK:-"$HYPRWM_PROJECT/hook"}
+case "${1:-}" in
+    restore-all)
+        if [ -S "${HYPRWM_CTL:-/tmp/hyprwm.ctl}" ]; then exec "$HYPRWM_PROJECT/scripts/hyprwmctl" "$@"; fi ;;
+    status|pause|resume|reload) exec "$HYPRWM_PROJECT/scripts/hyprwmctl" "$@" ;;
+esac
+HYPRWM_BINARY="$HYPRWM_PROJECT/hook/swift/.build/release/hyprwm-swift"
+[ -x "$HYPRWM_BINARY" ] || { printf '%s\n' 'Build HyprWM first: swift build -c release --package-path hook/swift' >&2; exit 1; }
+exec "$HYPRWM_BINARY" "$@"

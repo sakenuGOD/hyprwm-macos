@@ -1,0 +1,111 @@
+{
+  "$schema": "./runtime.schema.json",
+  "version": 1,
+  "time_scale": 1.0,
+  "layout": {
+    "gaps_in": 3,
+    "gaps_out": {
+      "top": 8,
+      "right": 12,
+      "bottom": 12,
+      "left": 12
+    },
+    "minimum_policy": "native",
+    "default_split_ratio": 1.0,
+    "split_width_multiplier": 1.0
+  },
+  "appearance": {
+    "border": {
+      "size": 2,
+      "active": {
+        "colors": [
+          "rgba(ffb4a4ee)",
+          "rgba(7fd0f5ee)"
+        ],
+        "angle": 45
+      },
+      "inactive": "rgba(53434155)"
+    },
+    "rounding": 18,
+    "rounding_power": 2.6,
+    "active_opacity": 1.0,
+    "inactive_opacity": 1.0,
+    "fullscreen_opacity": 1.0,
+    "shadow": {
+      "enabled": true,
+      "range": 34,
+      "render_power": 3,
+      "scale": 1,
+      "offset": [
+        0,
+        10
+      ],
+      "color": "rgba(00000077)",
+      "color_inactive": "rgba(00000044)"
+    },
+    "glow": {
+      "enabled": true,
+      "range": 18,
+      "render_power": 3,
+      "color": "rgba(ffb4a433)",
+      "color_inactive": "rgba(ffb4a400)"
+    }
+  },
+  "curves": {
+    "mySpring": {
+      "type": "spring",
+      "mass": 1,
+      "stiffness": 210,
+      "damping": 24
+    },
+    "myEase": {
+      "type": "bezier",
+      "points": [
+        [
+          0.25,
+          1.0
+        ],
+        [
+          0.5,
+          1.0
+        ]
+      ]
+    }
+  },
+  "animations": {
+    "enabled": true,
+    "windowsMove": {
+      "curve": "mySpring"
+    },
+    "windowsIn": {
+      "style": "popin 86%"
+    },
+    "windowsOut": {
+      "duration_ms": 260,
+      "style": "popin 92%"
+    },
+    "border": {
+      "curve": "myEase",
+      "duration_ms": 600
+    }
+  },
+  "focus": {
+    "follow_mouse": 1,
+    "focus_on_close": 0,
+    "no_focus_fallback": false
+  },
+  "drag": {
+    "throw_distance_pt": 32,
+    "direction_ratio": 1.25,
+    "mode": "swap"
+  },
+  "runtime": {
+    "overview_hidden_windows": false,
+    "window_resize_mode": "native",
+    "prehide": false,
+    "hold_max_ms": 200,
+    "capture_sampling": false,
+    "pointer_focus_pause_ms": 0
+  },
+  "window_rules": []
+}

@@ -1,0 +1,81 @@
+{
+  "operation": "configure",
+  "seq": 323,
+  "payload": {
+    "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "dock_birth": [
+      81148,
+      501,
+      1791946947,
+      121489
+    ],
+    "windows": [
+      {
+        "window": {
+          "wid": 51901,
+          "pid": 95256,
+          "birth": [
+            95256,
+            501,
+            1792001342,
+            498757
+          ]
+        },
+        "parked_bounds": [
+          1430.0,
+          41.0,
+          352.0,
+          450.0
+        ],
+        "spaces": [
+          1
+        ],
+        "hidden_intent": "34b131f6841173c62f44b3fb28f34e2d55a927d04926d00c2db4f350df17f726"
+      },
+      {
+        "window": {
+          "wid": 51902,
+          "pid": 95256,
+          "birth": [
+            95256,
+            501,
+            1792001342,
+            498757
+          ]
+        },
+        "parked_bounds": [
+          1430.0,
+          41.0,
+          720.0,
+          450.0
+        ],
+        "spaces": [
+          1
+        ],
+        "hidden_intent": "098df6bb29b0d7a548f11d611cd759eb2f560fd3ed058821643d9be4c59a725f"
+      },
+      {
+        "window": {
+          "wid": 51903,
+          "pid": 95256,
+          "birth": [
+            95256,
+            501,
+            1792001342,
+            498757
+          ]
+        },
+        "parked_bounds": [
+          1430.0,
+          41.0,
+          720.0,
+          903.0
+        ],
+        "spaces": [
+          1
+        ],
+        "hidden_intent": "82c21dde070bd8f0d3e65ff59e924216423f017d49e14b384553fb5da0775dc6"
+      }
+    ]
+  }
+}

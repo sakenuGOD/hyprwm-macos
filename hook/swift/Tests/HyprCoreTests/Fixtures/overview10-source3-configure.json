@@ -1,0 +1,245 @@
+{
+  "schema": 1,
+  "result": {
+    "code": 1,
+    "snapshot": {
+      "dock_birth": [
+        81148,
+        501,
+        1791946947,
+        121489
+      ],
+      "commits": [],
+      "snapshot_counter": 322,
+      "supported_modes": [
+        1,
+        2
+      ],
+      "original_dispatch_restored": false,
+      "sampled_monotonic_time": 229377.92012775005,
+      "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "controller_observed": true,
+      "expired": false,
+      "overview_active": false,
+      "records": [
+        {
+          "inverse_samples": 0,
+          "geometry_evidence": {
+            "saved_parked_bounds": [
+              1430,
+              41,
+              352,
+              450
+            ],
+            "native_alpha": 0,
+            "intended_offscreen_bounds": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "native_bounds": [
+              1430,
+              41,
+              352,
+              450
+            ],
+            "configured_parked_bounds": [
+              1430,
+              41,
+              352,
+              450
+            ]
+          },
+          "native_record_caller_offsets": [],
+          "observed": {
+            "valid": true,
+            "alpha": 0
+          },
+          "alpha1": false,
+          "events": [],
+          "moved": false,
+          "inverse_failed": false,
+          "inverse_reassertions": 0,
+          "selected_transition": {
+            "root_cancel_requested": false,
+            "restore_authorized": false,
+            "acknowledged": false,
+            "commit_token": "",
+            "clear_observed": false,
+            "setup_observed": false,
+            "end_order_observed": false
+          },
+          "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "birth": [
+            95256,
+            501,
+            1792001342,
+            498757
+          ],
+          "epoch": 0,
+          "inverse_stable_span": 0,
+          "wid": 51901,
+          "hidden_intent": "34b131f6841173c62f44b3fb28f34e2d55a927d04926d00c2db4f350df17f726",
+          "rollback_local_park_observed": true,
+          "pid": 95256,
+          "attempted": false,
+          "inverse_settling": false
+        },
+        {
+          "inverse_samples": 0,
+          "geometry_evidence": {
+            "saved_parked_bounds": [
+              1430,
+              41,
+              720,
+              450
+            ],
+            "native_alpha": 0,
+            "intended_offscreen_bounds": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "native_bounds": [
+              1430,
+              41,
+              720,
+              450
+            ],
+            "configured_parked_bounds": [
+              1430,
+              41,
+              720,
+              450
+            ]
+          },
+          "native_record_caller_offsets": [],
+          "observed": {
+            "valid": true,
+            "alpha": 0
+          },
+          "alpha1": false,
+          "events": [],
+          "moved": false,
+          "inverse_failed": false,
+          "inverse_reassertions": 0,
+          "selected_transition": {
+            "root_cancel_requested": false,
+            "restore_authorized": false,
+            "acknowledged": false,
+            "commit_token": "",
+            "clear_observed": false,
+            "setup_observed": false,
+            "end_order_observed": false
+          },
+          "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "birth": [
+            95256,
+            501,
+            1792001342,
+            498757
+          ],
+          "epoch": 0,
+          "inverse_stable_span": 0,
+          "wid": 51902,
+          "hidden_intent": "098df6bb29b0d7a548f11d611cd759eb2f560fd3ed058821643d9be4c59a725f",
+          "rollback_local_park_observed": true,
+          "pid": 95256,
+          "attempted": false,
+          "inverse_settling": false
+        },
+        {
+          "inverse_samples": 0,
+          "geometry_evidence": {
+            "saved_parked_bounds": [
+              1430,
+              41,
+              720,
+              903
+            ],
+            "native_alpha": 0,
+            "intended_offscreen_bounds": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "native_bounds": [
+              1430,
+              41,
+              720,
+              903
+            ],
+            "configured_parked_bounds": [
+              1430,
+              41,
+              720,
+              903
+            ]
+          },
+          "native_record_caller_offsets": [],
+          "observed": {
+            "valid": true,
+            "alpha": 0
+          },
+          "alpha1": false,
+          "events": [],
+          "moved": false,
+          "inverse_failed": false,
+          "inverse_reassertions": 0,
+          "selected_transition": {
+            "root_cancel_requested": false,
+            "restore_authorized": false,
+            "acknowledged": false,
+            "commit_token": "",
+            "clear_observed": false,
+            "setup_observed": false,
+            "end_order_observed": false
+          },
+          "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "birth": [
+            95256,
+            501,
+            1792001342,
+            498757
+          ],
+          "epoch": 0,
+          "inverse_stable_span": 0,
+          "wid": 51903,
+          "hidden_intent": "82c21dde070bd8f0d3e65ff59e924216423f017d49e14b384553fb5da0775dc6",
+          "rollback_local_park_observed": true,
+          "pid": 95256,
+          "attempted": false,
+          "inverse_settling": false
+        }
+      ],
+      "schema": 1,
+      "enabled": true,
+      "body_pixels_ready": false,
+      "sampled_wall_us": 1792001345226634,
+      "mission_control_active": false,
+      "pool_generation": 16,
+      "conflict": false,
+      "mode": 0,
+      "raw_mode": 0,
+      "lease_seconds": 30
+    },
+    "native_completion_proven": false,
+    "original_dispatch_restored": false,
+    "native_request_submitted": true
+  },
+  "operation": "configure",
+  "generation": [
+    81148,
+    501,
+    1791946947,
+    121489
+  ],
+  "pending": false,
+  "main_evaluated": true,
+  "request_seq": 323,
+  "completed": true,
+  "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

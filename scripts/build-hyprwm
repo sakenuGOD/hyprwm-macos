@@ -1,0 +1,14 @@
+#!/bin/sh
+# Embed source identity at compiler invocation time; SwiftPM caches manifests.
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+# Prepare the ignored source cache without replacing an existing configuration.
+if [ ! -e "$root/hook/config/hypr_cfg.json" ]; then
+    cp "$root/hook/config/portable-defaults.json" "$root/hook/config/hypr_cfg.json"
+fi
+revision=$(git -C "$root" rev-parse HEAD)
+dirty=0
+if [ -n "$(git -C "$root" status --porcelain --untracked-files=no)" ]; then dirty=1; fi
+exec swift build -c release --package-path "$root/hook/swift" \
+    -Xcc "-DHYPRWM_GIT_REVISION=\"$revision\"" \
+    -Xcc "-DHYPRWM_SOURCE_DIRTY=$dirty" "$@"

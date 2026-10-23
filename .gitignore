@@ -1,0 +1,40 @@
+# Extracted system images and analysis databases
+extracted/
+ghidra_proj/
+scripts/sl_map.tsv
+cache/
+notes/
+coordination/
+evidence/
+AGENTS.md
+HANDOFF.md
+GOAL.md
+REVIEW-*.md
+# Environments, build products and caches
+.venv/
+__pycache__/
+*.whl
+*.zip
+hook/build/
+hook/wm/build/
+hook/*.bin
+hook/*.syms
+hook/*.words
+dist/
+hook/*.dylib
+hook/keys/hyprkeys
+hook/scripts/wlist.bin
+hook/scripts/wlist_json
+hook/active/*.dylib
+hook/swift/.build/
+# Generated differential scenarios
+hook/swift/Tests/HyprCoreTests/Fixtures/wm_scenarios.json
+# Runtime state, generated configuration and logs
+*.log
+hs_err_pid*
+hook/*.state
+hook/*.state.json
+hook/hyprwm.chan
+hook/minsize*.json
+hook/config/hypr_cfg.json
+.DS_Store

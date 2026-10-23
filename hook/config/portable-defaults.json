@@ -1,0 +1,682 @@
+{
+  "animations": [
+    {
+      "bezier": "smooth",
+      "enabled": true,
+      "leaf": "global",
+      "speed": 8
+    },
+    {
+      "enabled": true,
+      "leaf": "windowsMove",
+      "speed": 5,
+      "spring": "drift"
+    },
+    {
+      "enabled": true,
+      "leaf": "windowsIn",
+      "speed": 4.5,
+      "spring": "bounce",
+      "style": "popin 86%"
+    },
+    {
+      "bezier": "snappy",
+      "enabled": true,
+      "leaf": "windowsOut",
+      "speed": 2.6,
+      "style": "popin 92%"
+    },
+    {
+      "bezier": "smooth",
+      "enabled": true,
+      "leaf": "fadeIn",
+      "speed": 3
+    },
+    {
+      "bezier": "smooth",
+      "enabled": true,
+      "leaf": "fadeOut",
+      "speed": 2.4
+    },
+    {
+      "bezier": "smooth",
+      "enabled": true,
+      "leaf": "fadeSwitch",
+      "speed": 4
+    },
+    {
+      "bezier": "smooth",
+      "enabled": true,
+      "leaf": "border",
+      "speed": 6
+    }
+  ],
+  "binds": [
+    {
+      "action": {
+        "args": [
+          {
+            "direction": "left"
+          }
+        ],
+        "dsp": "focus"
+      },
+      "keys": "CTRL + SUPER + left",
+      "opts": {
+        "description": "[HyprWM] focus"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "direction": "left"
+          }
+        ],
+        "dsp": "window.move"
+      },
+      "keys": "CTRL + SUPER + SHIFT + left",
+      "opts": {
+        "description": "[HyprWM] window.move"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "direction": "up"
+          }
+        ],
+        "dsp": "focus"
+      },
+      "keys": "CTRL + SUPER + up",
+      "opts": {
+        "description": "[HyprWM] focus"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "direction": "up"
+          }
+        ],
+        "dsp": "window.move"
+      },
+      "keys": "CTRL + SUPER + SHIFT + up",
+      "opts": {
+        "description": "[HyprWM] window.move"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "direction": "right"
+          }
+        ],
+        "dsp": "focus"
+      },
+      "keys": "CTRL + SUPER + right",
+      "opts": {
+        "description": "[HyprWM] focus"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "direction": "right"
+          }
+        ],
+        "dsp": "window.move"
+      },
+      "keys": "CTRL + SUPER + SHIFT + right",
+      "opts": {
+        "description": "[HyprWM] window.move"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "direction": "down"
+          }
+        ],
+        "dsp": "focus"
+      },
+      "keys": "CTRL + SUPER + down",
+      "opts": {
+        "description": "[HyprWM] focus"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "direction": "down"
+          }
+        ],
+        "dsp": "window.move"
+      },
+      "keys": "CTRL + SUPER + SHIFT + down",
+      "opts": {
+        "description": "[HyprWM] window.move"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          "togglesplit"
+        ],
+        "dsp": "layout"
+      },
+      "keys": "CTRL + SUPER + Return",
+      "opts": {
+        "description": "[HyprWM] layout"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "action": "toggle"
+          }
+        ],
+        "dsp": "window.float"
+      },
+      "keys": "CTRL + SUPER + F",
+      "opts": {
+        "description": "[HyprWM] window.float"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "mode": "fullscreen"
+          }
+        ],
+        "dsp": "window.fullscreen"
+      },
+      "keys": "SUPER + F",
+      "opts": {
+        "description": "[HyprWM] window.fullscreen"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "mode": "maximized"
+          }
+        ],
+        "dsp": "window.fullscreen"
+      },
+      "keys": "SUPER + SHIFT + Return",
+      "opts": {
+        "description": "[HyprWM] window.fullscreen"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          []
+        ],
+        "dsp": "window.close"
+      },
+      "keys": "SUPER + Q",
+      "opts": {
+        "description": "[HyprWM] window.close"
+      }
+    },
+    {
+      "action": {
+        "lua": true
+      },
+      "keys": "SUPER + W",
+      "opts": {
+        "description": "[HyprWM] Hide window"
+      }
+    },
+    {
+      "action": {
+        "lua": true
+      },
+      "keys": "SUPER + SHIFT + W",
+      "opts": {
+        "description": "[HyprWM] Restore last hidden window"
+      }
+    },
+    {
+      "action": {
+        "lua": true
+      },
+      "keys": "SUPER + SHIFT + B",
+      "opts": {
+        "description": "[HyprWM] Balance layout"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "workspace": 1
+          }
+        ],
+        "dsp": "focus"
+      },
+      "keys": "SUPER + 1",
+      "opts": {
+        "description": "[HyprWM] focus"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "follow": true,
+            "workspace": 1
+          }
+        ],
+        "dsp": "window.move"
+      },
+      "keys": "CTRL + SUPER + 1",
+      "opts": {
+        "description": "[HyprWM] window.move"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "workspace": 2
+          }
+        ],
+        "dsp": "focus"
+      },
+      "keys": "SUPER + 2",
+      "opts": {
+        "description": "[HyprWM] focus"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "follow": true,
+            "workspace": 2
+          }
+        ],
+        "dsp": "window.move"
+      },
+      "keys": "CTRL + SUPER + 2",
+      "opts": {
+        "description": "[HyprWM] window.move"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "workspace": 3
+          }
+        ],
+        "dsp": "focus"
+      },
+      "keys": "SUPER + 3",
+      "opts": {
+        "description": "[HyprWM] focus"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "follow": true,
+            "workspace": 3
+          }
+        ],
+        "dsp": "window.move"
+      },
+      "keys": "CTRL + SUPER + 3",
+      "opts": {
+        "description": "[HyprWM] window.move"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "workspace": 4
+          }
+        ],
+        "dsp": "focus"
+      },
+      "keys": "SUPER + 4",
+      "opts": {
+        "description": "[HyprWM] focus"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "follow": true,
+            "workspace": 4
+          }
+        ],
+        "dsp": "window.move"
+      },
+      "keys": "CTRL + SUPER + 4",
+      "opts": {
+        "description": "[HyprWM] window.move"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "workspace": 5
+          }
+        ],
+        "dsp": "focus"
+      },
+      "keys": "SUPER + 5",
+      "opts": {
+        "description": "[HyprWM] focus"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "follow": true,
+            "workspace": 5
+          }
+        ],
+        "dsp": "window.move"
+      },
+      "keys": "CTRL + SUPER + 5",
+      "opts": {
+        "description": "[HyprWM] window.move"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "workspace": 6
+          }
+        ],
+        "dsp": "focus"
+      },
+      "keys": "SUPER + 6",
+      "opts": {
+        "description": "[HyprWM] focus"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "follow": true,
+            "workspace": 6
+          }
+        ],
+        "dsp": "window.move"
+      },
+      "keys": "CTRL + SUPER + 6",
+      "opts": {
+        "description": "[HyprWM] window.move"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "workspace": 7
+          }
+        ],
+        "dsp": "focus"
+      },
+      "keys": "SUPER + 7",
+      "opts": {
+        "description": "[HyprWM] focus"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "follow": true,
+            "workspace": 7
+          }
+        ],
+        "dsp": "window.move"
+      },
+      "keys": "CTRL + SUPER + 7",
+      "opts": {
+        "description": "[HyprWM] window.move"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "workspace": 8
+          }
+        ],
+        "dsp": "focus"
+      },
+      "keys": "SUPER + 8",
+      "opts": {
+        "description": "[HyprWM] focus"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "follow": true,
+            "workspace": 8
+          }
+        ],
+        "dsp": "window.move"
+      },
+      "keys": "CTRL + SUPER + 8",
+      "opts": {
+        "description": "[HyprWM] window.move"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "workspace": 9
+          }
+        ],
+        "dsp": "focus"
+      },
+      "keys": "SUPER + 9",
+      "opts": {
+        "description": "[HyprWM] focus"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "follow": true,
+            "workspace": 9
+          }
+        ],
+        "dsp": "window.move"
+      },
+      "keys": "CTRL + SUPER + 9",
+      "opts": {
+        "description": "[HyprWM] window.move"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "workspace": 10
+          }
+        ],
+        "dsp": "focus"
+      },
+      "keys": "SUPER + 0",
+      "opts": {
+        "description": "[HyprWM] focus"
+      }
+    },
+    {
+      "action": {
+        "args": [
+          {
+            "follow": true,
+            "workspace": 10
+          }
+        ],
+        "dsp": "window.move"
+      },
+      "keys": "CTRL + SUPER + 0",
+      "opts": {
+        "description": "[HyprWM] window.move"
+      }
+    }
+  ],
+  "config": {
+    "animations": {
+      "enabled": true
+    },
+    "binds": {
+      "allow_workspace_cycles": true,
+      "workspace_back_and_forth": true
+    },
+    "cursor": {
+      "no_warps": true
+    },
+    "decoration": {
+      "active_opacity": 1.0,
+      "glow": {
+        "color": "rgba(ffb4a433)",
+        "color_inactive": "rgba(ffb4a400)",
+        "enabled": true,
+        "range": 18,
+        "render_power": 3
+      },
+      "inactive_opacity": 1.0,
+      "rounding": 18,
+      "rounding_power": 2.6,
+      "shadow": {
+        "color": "rgba(00000077)",
+        "color_inactive": "rgba(00000044)",
+        "enabled": true,
+        "offset": [
+          0,
+          10
+        ],
+        "range": 34,
+        "render_power": 3
+      }
+    },
+    "dwindle": {
+      "default_split_ratio": 1.0,
+      "force_split": 0,
+      "preserve_split": true,
+      "smart_split": false,
+      "split_width_multiplier": 1.0
+    },
+    "general": {
+      "border_size": 2,
+      "col": {
+        "active_border": {
+          "angle": 45,
+          "colors": [
+            "rgba(ffb4a4ee)",
+            "rgba(7fd0f5ee)"
+          ]
+        },
+        "inactive_border": "rgba(53434155)"
+      },
+      "gaps_in": 5,
+      "gaps_out": {
+        "bottom": 12,
+        "left": 12,
+        "right": 12,
+        "top": 8
+      },
+      "layout": "dwindle"
+    },
+    "input": {
+      "follow_mouse": 1,
+      "repeat_delay": 280,
+      "repeat_rate": 40
+    }
+  },
+  "curves": {
+    "bounce": {
+      "damping": 20,
+      "mass": 1,
+      "stiffness": 260,
+      "type": "spring"
+    },
+    "drift": {
+      "damping": 24,
+      "mass": 1,
+      "stiffness": 210,
+      "type": "spring"
+    },
+    "overshot": {
+      "points": [
+        [
+          0.05,
+          0.9
+        ],
+        [
+          0.1,
+          1.06
+        ]
+      ],
+      "type": "bezier"
+    },
+    "smooth": {
+      "points": [
+        [
+          0.25,
+          1.0
+        ],
+        [
+          0.5,
+          1.0
+        ]
+      ],
+      "type": "bezier"
+    },
+    "snappy": {
+      "points": [
+        [
+          0.2,
+          0.9
+        ],
+        [
+          0.1,
+          1.0
+        ]
+      ],
+      "type": "bezier"
+    }
+  },
+  "events": [],
+  "execs": [],
+  "layer_rules": [],
+  "load_error": "nil",
+  "load_ok": true,
+  "monitors": [],
+  "unknown": [],
+  "window_rules": [],
+  "workspace_rules": []
+}

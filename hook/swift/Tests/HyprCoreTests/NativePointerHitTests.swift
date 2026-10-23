@@ -1,0 +1,127 @@
+@testable import HyprCore
+import XCTest
+
+final class NativePointerHitTests:XCTestCase {
+    func testFrozenOverviewDoesNotRetainAnEarlierMenuGesture() throws {
+        let f=ProductionPolicyTests(),(wm,sys,_,windows)=try f.world(f.pair())
+        wm.cfg=try NativeRuntimeConfig.build(base:wm.cfg,document:JSON.parse("{\"runtime\":{\"pointer_focus_pause_ms\":0}}"))
+        let target=try XCTUnwrap(windows.first{$0.wid==2})
+        sys.front=101;sys.deferredFocus=true;sys.contexts[101]=(1,0);sys.overlay=true
+        wm.followMouse(1,windows);wm.overviewFrozen={true};wm.tick(socketReady:false)
+        sys.overlay=false;wm.overviewFrozen={false}
+        sys.m=(target.x+40,target.y+40);sys.pointerHint=(2,102);wm.followMouse(1,windows)
+        XCTAssertEqual(sys.focusCallbacks.count,1)
+    }
+    func testOverlayDismissalIsRecordedWhileAXIsUnavailableAndCancellationClearsGesture() throws {
+        for flags in [NativeFocusFlags.unknown,NativeFocusFlags.modal] {
+            let f=ProductionPolicyTests(),(wm,sys,_,windows)=try f.world(f.pair())
+            wm.cfg=try NativeRuntimeConfig.build(base:wm.cfg,document:JSON.parse("{\"runtime\":{\"pointer_focus_pause_ms\":0}}"))
+            let target=try XCTUnwrap(windows.first{$0.wid==2})
+            sys.front=101;sys.deferredFocus=true;sys.contexts[101]=(1,0);sys.m=(27,16)
+            sys.overlay=true;wm.followMouse(1,windows)
+            sys.overlay=false;sys.contexts[101]=(nil,flags);wm.followMouse(1,windows)
+            sys.m=(target.x+40,target.y+40);sys.pointerHint=(2,102);sys.contexts[101]=(1,0)
+            wm.followMouse(1,windows)
+            XCTAssertEqual(sys.focusCallbacks.count,1,"AX readiness must not consume the movement after menu dismissal")
+            sys.overlay=true;wm.followMouse(1,windows)
+            wm.cancelFocusRecovery() // Pause and Space/overview suspension use this boundary.
+            sys.overlay=false;sys.m=(target.x+45,target.y+40);wm.followMouse(1,windows)
+            XCTAssertEqual(sys.focusCallbacks.count,2,"An overlay from before suspension must not consume new input")
+        }
+    }
+    func testDismissedMenuGestureDoesNotBecomePointerFocusEvenWhileNewAppHasNoKey() throws {
+        for nativeOverlay in [true,false] {
+            let f=ProductionPolicyTests(),(wm,sys,_,windows)=try f.world(f.pair())
+            wm.cfg=try NativeRuntimeConfig.build(base:wm.cfg,document:JSON.parse("{\"runtime\":{\"pointer_focus_pause_ms\":0}}"))
+            let target=try XCTUnwrap(windows.first{$0.wid==2})
+            sys.front=101;sys.deferredFocus=true;sys.m=(27,16)
+            sys.overlay=nativeOverlay;sys.contexts[101]=(1,nativeOverlay ? 0:NativeFocusFlags.menu)
+            wm.followMouse(1,windows)
+            // Clicking a menu item can move and dismiss the overlay within
+            // one tick. The point underneath belongs to that menu gesture.
+            sys.overlay=false;sys.contexts[101]=(nil,NativeFocusFlags.noKey)
+            sys.m=(target.x+40,target.y+40);sys.pointerHint=(2,102)
+            wm.followMouse(1,windows)
+            sys.t+=0.05;wm.followMouse(1,windows)
+            XCTAssertTrue(sys.focusCallbacks.isEmpty,"Menu dismissal must not steal a new application's input")
+            sys.m=(target.x+45,target.y+40);wm.followMouse(1,windows)
+            XCTAssertEqual(sys.focusCallbacks.count,1,"A subsequent physical movement must still focus its native receiver")
+            XCTAssertEqual(wm.focusPending?.wid,2)
+        }
+    }
+    func testTemporaryMissingNativeReceiverRetriesSamePointerAfterRoutingSettles() throws {
+        let f=ProductionPolicyTests(),(wm,sys,_,windows)=try f.world(f.pair())
+        wm.cfg=try NativeRuntimeConfig.build(base:wm.cfg,document:JSON.parse("{\"runtime\":{\"pointer_focus_pause_ms\":0}}"))
+        let target=try XCTUnwrap(windows.first{$0.wid==2})
+        sys.front=101;sys.contexts[101]=(1,0);sys.deferredFocus=true
+        sys.m=(target.x+40,target.y+40);sys.pointerHint=(999,102)
+        wm.followMouse(1,windows)
+        XCTAssertTrue(sys.focusCallbacks.isEmpty)
+        XCTAssertNotNil(wm.pointerFocusRetryPoint,"Exercise receiver retry independently of pointer dwell")
+        sys.t+=0.02;sys.pointerHint=(2,102)
+        wm.followMouse(1,windows)
+        XCTAssertEqual(sys.focusCallbacks.count,1,"A settled receiver must not require another physical mouse movement")
+        XCTAssertEqual(wm.focusPending?.wid,2)
+    }
+
+    func testKeyboardIntentCancelsUnresolvedPointerRouting() throws {
+        let f=ProductionPolicyTests(),(wm,sys,_,windows)=try f.world(f.pair())
+        wm.cfg=try NativeRuntimeConfig.build(base:wm.cfg,document:JSON.parse("{\"runtime\":{\"pointer_focus_pause_ms\":0}}"))
+        let target=try XCTUnwrap(windows.first{$0.wid==2})
+        sys.front=101;sys.contexts[101]=(1,0);sys.deferredFocus=true
+        sys.m=(target.x+40,target.y+40);sys.pointerHint=(999,102)
+        wm.followMouse(1,windows)
+        XCTAssertNotNil(wm.pointerFocusRetryPoint)
+        XCTAssertTrue(wm.queueFocus(windows.first{$0.wid==1}!,space:1,reason:.keyboard))
+        sys.t+=0.02;sys.pointerHint=(2,102);wm.followMouse(1,windows)
+        XCTAssertEqual(sys.focusCallbacks.count,1)
+        XCTAssertEqual(wm.focusPending?.wid,1)
+    }
+    func scene() throws -> (WM,FakeWorld,[WinInfo],Rect) {
+        let fixture=ProductionPolicyTests(),(wm,sys,_,windows)=try fixture.world(fixture.pair())
+        let actor=sys.bounds[1]!
+        sys.front=101;sys.contexts[101]=(1,0);sys.m=(actor.x+actor.w-1,actor.y+100);sys.md=true
+        sys.pidlevel[33]=(734,21);sys.protectedPIDs.insert(734)
+        var phantom=WinInfo(wid:33,pid:734,owner:"NotificationCenter",x:fixture.area.x,y:fixture.area.y,
+                            w:fixture.area.w,h:fixture.area.h,on:true,space:1)
+        phantom.layer=21
+        return(wm,sys,[phantom]+windows,fixture.area)
+    }
+
+    func testActualInputReceiverArmsResizeBelowPhantomNotificationBounds() throws {
+        let (wm,sys,windows,area)=try scene();sys.pointerHint=(1,101)
+        wm.beginInteraction(area,1,windows)
+        XCTAssertEqual(wm.dragSession?.wid,1)
+        XCTAssertFalse(wm.dragSession?.cuts.isEmpty ?? true)
+    }
+
+    func testActualNotificationAndUnknownNativeHitDoNotSelectTileBehindOverlay() throws {
+        let hints:[(wid:Int,pid:Int?)?]=[(33,734),nil]
+        for hint in hints {
+            let (wm,sys,windows,area)=try scene();sys.pointerHint=hint
+            wm.beginInteraction(area,1,windows)
+            XCTAssertNil(wm.dragSession)
+        }
+    }
+
+    func testNativeOwnerMismatchMissingReceiverAndOtherSpaceDoNotFallThrough() throws {
+        for hint in [(1,999),(99,101)] {
+            let (wm,sys,windows,area)=try scene();sys.pointerHint=(hint.0,hint.1)
+            wm.beginInteraction(area,1,windows)
+            XCTAssertNil(wm.dragSession)
+        }
+        let (wm,sys,windows,area)=try scene();sys.pointerHint=(1,101)
+        let other=windows.map {window -> WinInfo in var result=window;if result.wid==1{result.space=2};return result}
+        wm.beginInteraction(area,1,other)
+        XCTAssertNil(wm.dragSession)
+    }
+
+    func testExactNativeResizeEpochRemainsAuthoritativeWhenInputHintUnavailable() throws {
+        let (wm,sys,windows,area)=try scene();sys.pointerHint=nil
+        let frame=sys.bounds[1]!
+        wm.beginInteraction(area,1,windows,native:NativeResizeContext(pid:101,birth:"birth-1",wid:1,
+            epoch:7,sequence:2,phase:1,frame:frame,point:sys.m))
+        XCTAssertEqual(wm.dragSession?.wid,1)
+        XCTAssertEqual(wm.dragSession?.nativeEpoch,7)
+    }
+}

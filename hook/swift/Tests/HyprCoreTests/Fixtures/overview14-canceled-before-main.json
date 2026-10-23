@@ -1,0 +1,110 @@
+{
+  "provenance": "cache/restart-20261015-1100/overview-retained-debug.json",
+  "capture_sha256": "944f4ef274cc02daacaf69e490aec53652c5fbad8b82ed5a37eccebf1d5a79c3",
+  "binding": {
+    "schema": 1,
+    "actor": {
+      "pid": 825,
+      "birth": [
+        825,
+        501,
+        1792050797,
+        379141
+      ],
+      "path": "/System/Library/CoreServices/Dock.app/Contents/MacOS/Dock"
+    },
+    "nonce": "b52d256d943e4db3b12be29442f2bee9",
+    "endpoint": "/private/tmp/re-tools-overview10-501-b52d256d943e4db3b12be29442f2bee9/actor.sock",
+    "image": {
+      "path": "/Users/example/Developer/re-tools/cache/product-polish-20261014/overview10-source14-entry-guard/libhypr-overview-pool10-v14.dylib",
+      "uuid": "4c5f0290c9203bc9b9d4e23d92d3f80b"
+    }
+  },
+  "reply": {
+    "schema": 1,
+    "operation": "snapshot",
+    "generation": [
+      825,
+      501,
+      1792050797,
+      379141
+    ],
+    "pending": false,
+    "main_evaluated": false,
+    "request_seq": 12088,
+    "completed": false,
+    "canceled": 1,
+    "nonce": "b52d256d943e4db3b12be29442f2bee9"
+  },
+  "later_snapshot": {
+    "schema": 1,
+    "result": {
+      "code": 0,
+      "snapshot": {
+        "dock_birth": [
+          825,
+          501,
+          1792050797,
+          379141
+        ],
+        "commits": [],
+        "snapshot_counter": 12085,
+        "supported_modes": [
+          1,
+          2
+        ],
+        "original_dispatch_restored": false,
+        "sampled_monotonic_time": 5093.845407166667,
+        "nonce": "b52d256d943e4db3b12be29442f2bee9",
+        "controller_observed": true,
+        "expired": true,
+        "overview_active": false,
+        "records": [],
+        "schema": 1,
+        "enabled": true,
+        "pre_entry_barrier": {
+          "last_challenge_hex": "0000000000000000",
+          "request_pending": false,
+          "max_wait_ms": 250,
+          "supported": true,
+          "authority_live": true,
+          "entry_sequence": 0,
+          "last_ack_hex": "0000000000000000",
+          "ordinary_pre_entry": true,
+          "last_passed": false,
+          "daemon_birth": [
+            9989,
+            501,
+            1792057231,
+            28907
+          ],
+          "last_timed_out": false,
+          "required": true
+        },
+        "sampled_wall_us": 1792057955167929,
+        "mission_control_active": false,
+        "body_pixels_ready": false,
+        "pool_generation": 7,
+        "conflict": false,
+        "mode": 0,
+        "raw_mode": 0,
+        "lease_seconds": 30
+      },
+      "native_completion_proven": false,
+      "original_dispatch_restored": false,
+      "native_request_submitted": false
+    },
+    "operation": "snapshot",
+    "generation": [
+      825,
+      501,
+      1792050797,
+      379141
+    ],
+    "pending": false,
+    "main_evaluated": true,
+    "request_seq": 12089,
+    "completed": true,
+    "nonce": "b52d256d943e4db3b12be29442f2bee9"
+  }
+}

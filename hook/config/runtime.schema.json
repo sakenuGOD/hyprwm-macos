@@ -1,0 +1,624 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "time_scale": {
+      "type": "number",
+      "minimum": 0.1,
+      "maximum": 4
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "overview_hidden_windows": {
+          "type": "boolean",
+          "default": false
+        },
+        "window_resize_mode": {
+          "type": "string",
+          "enum": ["native", "buffer"],
+          "default": "native",
+          "description": "native preserves live content scale and crops edges; buffer opts into live surface scaling. Neither enables per-frame AppKit configure."
+        },
+        "prehide": {
+          "type": "boolean"
+        },
+        "hold_max_ms": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2000
+        },
+        "capture_sampling": {
+          "type": "boolean"
+        },
+        "pointer_focus_pause_ms": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2000
+        }
+      }
+    },
+    "curves": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+      },
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "spring"
+              },
+              "mass": {
+                "type": "number",
+                "minimum": 0.001,
+                "maximum": 100
+              },
+              "stiffness": {
+                "type": "number",
+                "minimum": 0.001,
+                "maximum": 100000
+              },
+              "damping": {
+                "type": "number",
+                "minimum": 0.001,
+                "maximum": 10000
+              },
+              "dampening": {
+                "type": "number",
+                "minimum": 0.001,
+                "maximum": 10000
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "not": {
+              "required": [
+                "damping",
+                "dampening"
+              ]
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "const": "bezier"
+              },
+              "points": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "items": {
+                  "type": "array",
+                  "prefixItems": [
+                    {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    {
+                      "type": "number",
+                      "minimum": -10,
+                      "maximum": 10
+                    }
+                  ],
+                  "minItems": 2,
+                  "maxItems": 2
+                }
+              }
+            },
+            "required": [
+              "type",
+              "points"
+            ]
+          }
+        ]
+      }
+    },
+    "animations": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "border": {
+          "$ref": "#/$defs/animation"
+        },
+        "borderangle": {
+          "$ref": "#/$defs/animation"
+        },
+        "fade": {
+          "$ref": "#/$defs/animation"
+        },
+        "fadeDim": {
+          "$ref": "#/$defs/animation"
+        },
+        "fadeDpms": {
+          "$ref": "#/$defs/animation"
+        },
+        "fadeGlow": {
+          "$ref": "#/$defs/animation"
+        },
+        "fadeIn": {
+          "$ref": "#/$defs/animation"
+        },
+        "fadeLayers": {
+          "$ref": "#/$defs/animation"
+        },
+        "fadeLayersIn": {
+          "$ref": "#/$defs/animation"
+        },
+        "fadeLayersOut": {
+          "$ref": "#/$defs/animation"
+        },
+        "fadeOut": {
+          "$ref": "#/$defs/animation"
+        },
+        "fadePopups": {
+          "$ref": "#/$defs/animation"
+        },
+        "fadePopupsIn": {
+          "$ref": "#/$defs/animation"
+        },
+        "fadePopupsOut": {
+          "$ref": "#/$defs/animation"
+        },
+        "fadeShadow": {
+          "$ref": "#/$defs/animation"
+        },
+        "fadeSwitch": {
+          "$ref": "#/$defs/animation"
+        },
+        "global": {
+          "$ref": "#/$defs/animation"
+        },
+        "glowangle": {
+          "$ref": "#/$defs/animation"
+        },
+        "layers": {
+          "$ref": "#/$defs/animation"
+        },
+        "layersIn": {
+          "$ref": "#/$defs/animation"
+        },
+        "layersOut": {
+          "$ref": "#/$defs/animation"
+        },
+        "monitorAdded": {
+          "$ref": "#/$defs/animation"
+        },
+        "shadowangle": {
+          "$ref": "#/$defs/animation"
+        },
+        "specialWorkspace": {
+          "$ref": "#/$defs/animation"
+        },
+        "specialWorkspaceIn": {
+          "$ref": "#/$defs/animation"
+        },
+        "specialWorkspaceOut": {
+          "$ref": "#/$defs/animation"
+        },
+        "windows": {
+          "$ref": "#/$defs/animation"
+        },
+        "windowsIn": {
+          "$ref": "#/$defs/animation"
+        },
+        "windowsMove": {
+          "$ref": "#/$defs/animation"
+        },
+        "windowsOut": {
+          "$ref": "#/$defs/animation"
+        },
+        "workspaces": {
+          "$ref": "#/$defs/animation"
+        },
+        "workspacesIn": {
+          "$ref": "#/$defs/animation"
+        },
+        "workspacesOut": {
+          "$ref": "#/$defs/animation"
+        },
+        "zoomFactor": {
+          "$ref": "#/$defs/animation"
+        }
+      }
+    },
+    "layout": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gaps_in": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "gaps_out": {
+          "oneOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 200
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "top": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 200
+                },
+                "right": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 200
+                },
+                "bottom": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 200
+                },
+                "left": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 200
+                }
+              }
+            }
+          ]
+        },
+        "minimum_policy": {
+          "enum": [
+            "native",
+            "ratio"
+          ]
+        },
+        "default_split_ratio": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 1.9
+        },
+        "split_width_multiplier": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 10
+        }
+      }
+    },
+    "appearance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rounding": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "rounding_power": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "active_opacity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "inactive_opacity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "fullscreen_opacity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "border": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "size": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 20
+            },
+            "inactive": {
+              "type": "string",
+              "pattern": "^(rgb\\([0-9a-fA-F]{6}\\)|rgba\\([0-9a-fA-F]{8}\\)|0x[0-9a-fA-F]{8})$"
+            },
+            "active": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "colors": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^(rgb\\([0-9a-fA-F]{6}\\)|rgba\\([0-9a-fA-F]{8}\\)|0x[0-9a-fA-F]{8})$"
+                  },
+                  "minItems": 1,
+                  "maxItems": 8
+                },
+                "angle": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 90
+                }
+              }
+            }
+          }
+        },
+        "shadow": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "range": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "render_power": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4
+            },
+            "scale": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "offset": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "minimum": -2000,
+                "maximum": 2000
+              },
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "color": {
+              "type": "string",
+              "pattern": "^(rgb\\([0-9a-fA-F]{6}\\)|rgba\\([0-9a-fA-F]{8}\\)|0x[0-9a-fA-F]{8})$"
+            },
+            "color_inactive": {
+              "type": "string",
+              "pattern": "^(rgb\\([0-9a-fA-F]{6}\\)|rgba\\([0-9a-fA-F]{8}\\)|0x[0-9a-fA-F]{8})$"
+            }
+          }
+        },
+        "glow": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "range": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 200
+            },
+            "render_power": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 10
+            },
+            "color": {
+              "type": "string",
+              "pattern": "^(rgb\\([0-9a-fA-F]{6}\\)|rgba\\([0-9a-fA-F]{8}\\)|0x[0-9a-fA-F]{8})$"
+            },
+            "color_inactive": {
+              "type": "string",
+              "pattern": "^(rgb\\([0-9a-fA-F]{6}\\)|rgba\\([0-9a-fA-F]{8}\\)|0x[0-9a-fA-F]{8})$"
+            }
+          }
+        }
+      }
+    },
+    "focus": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "follow_mouse": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "focus_on_close": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "no_focus_fallback": {
+          "type": "boolean"
+        }
+      }
+    },
+    "drag": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "throw_distance_pt": {
+          "type": "number",
+          "minimum": 8,
+          "maximum": 400
+        },
+        "direction_ratio": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "mode": {
+          "enum": [
+            "swap",
+            "insert"
+          ]
+        }
+      }
+    },
+    "window_rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "match": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "class": {
+                "type": "string",
+                "maxLength": 512
+              },
+              "title": {
+                "type": "string",
+                "maxLength": 512
+              },
+              "role": {
+                "type": "string",
+                "maxLength": 512
+              },
+              "subrole": {
+                "type": "string",
+                "maxLength": 512
+              }
+            },
+            "minProperties": 1
+          },
+          "float": {
+            "type": "boolean"
+          },
+          "no_anim": {
+            "type": "boolean"
+          },
+          "no_follow_mouse": {
+            "type": "boolean"
+          },
+          "opacity": {
+            "oneOf": [
+              {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "ignore": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "match"
+        ]
+      },
+      "maxItems": 128
+    },
+    "$schema": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "description": "Optional editor metadata; does not change runtime behavior."
+    },
+    "hotkeys": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4095
+          },
+          "keycode": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 127
+          },
+          "modifiers": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "command": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 32,
+            "items": {
+              "type": "string",
+              "maxLength": 512
+            }
+          }
+        },
+        "required": [
+          "id",
+          "keycode",
+          "modifiers"
+        ]
+      }
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HyprWM runtime preferences v1",
+  "description": "Editor shape validation. runtimecfg.py --check is authoritative for curve inheritance, regexes, style support, opacity strings and native curve capacity.",
+  "$defs": {
+    "animation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "curve": {
+          "type": "string"
+        },
+        "duration_ms": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "style": {
+          "type": "string",
+          "pattern": "^(|fade|(popin|slidefade|slidefadevert) (100|[1-9]?[0-9])%?)$"
+        },
+        "time_scale": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 4
+        }
+      }
+    }
+  }
+}

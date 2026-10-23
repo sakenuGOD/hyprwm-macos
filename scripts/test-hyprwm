@@ -1,0 +1,6 @@
+#!/bin/sh
+# Generate the ignored reference fixture before running the Swift suite.
+set -eu
+HYPRWM_PROJECT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+python3 "$HYPRWM_PROJECT/hook/swift/tools/gen_fixtures.py" --wm-only
+exec swift test --package-path "$HYPRWM_PROJECT/hook/swift" "$@"

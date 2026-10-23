@@ -1,0 +1,974 @@
+{
+  "generated_from": [
+    "SettingsModel.swift",
+    "SettingsViews.swift",
+    "SettingsPreviews.swift",
+    "SettingsRulesHotkeys.swift",
+    "runtime.schema.json"
+  ],
+  "controls": [
+    {
+      "path": "runtime.window_resize_mode",
+      "label": "Изменение размера",
+      "section": "animations",
+      "control": "choice",
+      "editable": true,
+      "effective_mapping": "runtime.window_resize_mode",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "NativeRuntimeConfig / Channel.configure buffer bit25 / live native buffer projection"
+    },
+    {
+      "path": "time_scale",
+      "label": "Общая длительность",
+      "section": "animations",
+      "control": "number",
+      "editable": true,
+      "effective_mapping": "time_scale",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "NativeRuntimeConfig.build / runtimecfg.build_config"
+    },
+    {
+      "path": "animations.enabled",
+      "label": "Анимации окон",
+      "section": "animations",
+      "control": "toggle",
+      "editable": true,
+      "effective_mapping": "config.animations.enabled",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "HyprConfig.animation / engine.py anim"
+    },
+    {
+      "path": "layout.gaps_in",
+      "label": "Между окнами",
+      "section": "layout",
+      "control": "number",
+      "editable": true,
+      "effective_mapping": "config.general.gaps_in",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "HyprConfig.makeDwindle / WM.tile / Python WM.configured"
+    },
+    {
+      "path": "layout.gaps_out.top",
+      "label": "Сверху",
+      "section": "layout",
+      "control": "number",
+      "editable": true,
+      "effective_mapping": "config.general.gaps_out.top",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "HyprConfig.makeDwindle / WM.tile / Python WM.configured"
+    },
+    {
+      "path": "layout.gaps_out.right",
+      "label": "Справа",
+      "section": "layout",
+      "control": "number",
+      "editable": true,
+      "effective_mapping": "config.general.gaps_out.right",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "HyprConfig.makeDwindle / WM.tile / Python WM.configured"
+    },
+    {
+      "path": "layout.gaps_out.bottom",
+      "label": "Снизу",
+      "section": "layout",
+      "control": "number",
+      "editable": true,
+      "effective_mapping": "config.general.gaps_out.bottom",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "HyprConfig.makeDwindle / WM.tile / Python WM.configured"
+    },
+    {
+      "path": "layout.gaps_out.left",
+      "label": "Слева",
+      "section": "layout",
+      "control": "number",
+      "editable": true,
+      "effective_mapping": "config.general.gaps_out.left",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "HyprConfig.makeDwindle / WM.tile / Python WM.configured"
+    },
+    {
+      "path": "layout.default_split_ratio",
+      "label": "Пропорция деления",
+      "section": "layout",
+      "control": "number",
+      "editable": true,
+      "effective_mapping": "config.dwindle.default_split_ratio",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "HyprConfig.makeDwindle / WM.tile / Python WM.configured"
+    },
+    {
+      "path": "layout.split_width_multiplier",
+      "label": "Предпочтение широких плиток",
+      "section": "layout",
+      "control": "number",
+      "editable": true,
+      "effective_mapping": "config.dwindle.split_width_multiplier",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "HyprConfig.makeDwindle / WM.tile / Python WM.configured"
+    },
+    {
+      "path": "layout.minimum_policy",
+      "label": "Минимальный размер",
+      "section": "layout",
+      "control": "choice",
+      "editable": true,
+      "effective_mapping": "config.dwindle.minimum_policy",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "HyprConfig.makeDwindle / WM.tile / Python WM.configured"
+    },
+    {
+      "path": "appearance.border.size",
+      "label": "Толщина рамки",
+      "section": "appearance",
+      "control": "number",
+      "editable": true,
+      "effective_mapping": "config.general.border_size",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "Appearance.swift / Deco.swift / engine.py / native effects receiver"
+    },
+    {
+      "path": "appearance.border.active.angle",
+      "label": "Угол градиента",
+      "section": "appearance",
+      "control": "number",
+      "editable": true,
+      "effective_mapping": "config.general.col.active_border.angle",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "Appearance.swift / Deco.swift / engine.py / native effects receiver"
+    },
+    {
+      "path": "appearance.border.inactive",
+      "label": "Неактивная рамка",
+      "section": "appearance",
+      "control": "color",
+      "editable": true,
+      "effective_mapping": "config.general.col.inactive_border",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "Appearance.swift / Deco.swift / engine.py / native effects receiver"
+    },
+    {
+      "path": "appearance.rounding",
+      "label": "Скругление углов",
+      "section": "appearance",
+      "control": "number",
+      "editable": true,
+      "effective_mapping": "config.decoration.rounding",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "Appearance.swift / Deco.swift / engine.py / native effects receiver"
+    },
+    {
+      "path": "appearance.rounding_power",
+      "label": "Форма скругления",
+      "section": "appearance",
+      "control": "number",
+      "editable": true,
+      "effective_mapping": "config.decoration.rounding_power",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "Appearance.swift / Deco.swift / engine.py / native effects receiver"
+    },
+    {
+      "path": "appearance.shadow.enabled",
+      "label": "Тень",
+      "section": "appearance",
+      "control": "toggle",
+      "editable": true,
+      "effective_mapping": "config.decoration.shadow.enabled",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "Appearance.swift / Deco.swift / engine.py / native effects receiver"
+    },
+    {
+      "path": "appearance.shadow.range",
+      "label": "Размер тени",
+      "section": "appearance",
+      "control": "number",
+      "editable": true,
+      "effective_mapping": "config.decoration.shadow.range",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "Appearance.swift / Deco.swift / engine.py / native effects receiver"
+    },
+    {
+      "path": "appearance.shadow.render_power",
+      "label": "Мягкость тени",
+      "section": "appearance",
+      "control": "number",
+      "editable": true,
+      "effective_mapping": "config.decoration.shadow.render_power",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "Appearance.swift / Deco.swift / engine.py / native effects receiver"
+    },
+    {
+      "path": "appearance.shadow.scale",
+      "label": "Масштаб тени",
+      "section": "appearance",
+      "control": "number",
+      "editable": true,
+      "effective_mapping": "config.decoration.shadow.scale",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "Appearance.swift / Deco.swift / engine.py / native effects receiver"
+    },
+    {
+      "path": "appearance.shadow.offset.0",
+      "label": "Смещение по горизонтали",
+      "section": "appearance",
+      "control": "number",
+      "editable": true,
+      "effective_mapping": "config.decoration.shadow.offset.0",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "Appearance.swift / Deco.swift / engine.py / native effects receiver"
+    },
+    {
+      "path": "appearance.shadow.offset.1",
+      "label": "Смещение по вертикали",
+      "section": "appearance",
+      "control": "number",
+      "editable": true,
+      "effective_mapping": "config.decoration.shadow.offset.1",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "Appearance.swift / Deco.swift / engine.py / native effects receiver"
+    },
+    {
+      "path": "appearance.shadow.color",
+      "label": "Активная тень",
+      "section": "appearance",
+      "control": "color",
+      "editable": true,
+      "effective_mapping": "config.decoration.shadow.color",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "Appearance.swift / Deco.swift / engine.py / native effects receiver"
+    },
+    {
+      "path": "appearance.shadow.color_inactive",
+      "label": "Неактивная тень",
+      "section": "appearance",
+      "control": "color",
+      "editable": true,
+      "effective_mapping": "config.decoration.shadow.color_inactive",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "Appearance.swift / Deco.swift / engine.py / native effects receiver"
+    },
+    {
+      "path": "appearance.glow.enabled",
+      "label": "Внутреннее свечение",
+      "section": "appearance",
+      "control": "toggle",
+      "editable": true,
+      "effective_mapping": "config.decoration.glow.enabled",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "Appearance.swift / Deco.swift / engine.py / native effects receiver"
+    },
+    {
+      "path": "appearance.glow.range",
+      "label": "Размер свечения",
+      "section": "appearance",
+      "control": "number",
+      "editable": true,
+      "effective_mapping": "config.decoration.glow.range",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "Appearance.swift / Deco.swift / engine.py / native effects receiver"
+    },
+    {
+      "path": "appearance.glow.render_power",
+      "label": "Рассеивание",
+      "section": "appearance",
+      "control": "number",
+      "editable": true,
+      "effective_mapping": "config.decoration.glow.render_power",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "Appearance.swift / Deco.swift / engine.py / native effects receiver"
+    },
+    {
+      "path": "appearance.glow.color",
+      "label": "Активное свечение",
+      "section": "appearance",
+      "control": "color",
+      "editable": true,
+      "effective_mapping": "config.decoration.glow.color",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "Appearance.swift / Deco.swift / engine.py / native effects receiver"
+    },
+    {
+      "path": "appearance.glow.color_inactive",
+      "label": "Неактивное свечение",
+      "section": "appearance",
+      "control": "color",
+      "editable": true,
+      "effective_mapping": "config.decoration.glow.color_inactive",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "Appearance.swift / Deco.swift / engine.py / native effects receiver"
+    },
+    {
+      "path": "focus.follow_mouse",
+      "label": "Фокус следует за мышью",
+      "section": "focus",
+      "control": "choice",
+      "editable": true,
+      "effective_mapping": "config.input.follow_mouse",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "WM focus consumers / Python WM focus selection"
+    },
+    {
+      "path": "focus.focus_on_close",
+      "label": "После закрытия окна",
+      "section": "focus",
+      "control": "choice",
+      "editable": true,
+      "effective_mapping": "config.input.focus_on_close",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "WM focus consumers / Python WM focus selection"
+    },
+    {
+      "path": "focus.no_focus_fallback",
+      "label": "Сохранять фокус без соседа",
+      "section": "focus",
+      "control": "toggle",
+      "editable": true,
+      "effective_mapping": "config.general.no_focus_fallback",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "WM focus consumers / Python WM focus selection"
+    },
+    {
+      "path": "drag.mode",
+      "label": "Перетаскивание плитки",
+      "section": "focus",
+      "control": "choice",
+      "editable": true,
+      "effective_mapping": "config.input.drag_mode",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "RuntimeOptions / WM drag / Python configured input"
+    },
+    {
+      "path": "drag.throw_distance_pt",
+      "label": "Порог перемещения",
+      "section": "focus",
+      "control": "number",
+      "editable": true,
+      "effective_mapping": "config.input.drag_throw_distance",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "RuntimeOptions / WM drag / Python configured input"
+    },
+    {
+      "path": "drag.direction_ratio",
+      "label": "Точность направления",
+      "section": "focus",
+      "control": "number",
+      "editable": true,
+      "effective_mapping": "config.input.drag_direction_ratio",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "RuntimeOptions / WM drag / Python configured input"
+    },
+    {
+      "path": "runtime.pointer_focus_pause_ms",
+      "label": "Пауза фокуса за мышью",
+      "section": "focus",
+      "control": "number",
+      "editable": true,
+      "effective_mapping": "runtime.pointer_focus_pause_ms",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "LiveEngine / engine.py runtime_settings"
+    },
+    {
+      "path": "runtime.overview_hidden_windows",
+      "label": "Скрытые окна в Mission Control · Бета",
+      "section": "advanced",
+      "control": "toggle",
+      "editable": true,
+      "effective_mapping": "runtime.overview_hidden_windows",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "RuntimeOptions.overviewHiddenWindows / OverviewBridge confirmed empty pool / OverviewEntryBarrier"
+    },
+    {
+      "path": "runtime.prehide",
+      "label": "Подготовка новых окон",
+      "section": "advanced",
+      "control": "toggle",
+      "editable": true,
+      "effective_mapping": "runtime.prehide",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "LiveEngine / engine.py runtime_settings"
+    },
+    {
+      "path": "runtime.hold_max_ms",
+      "label": "Ожидание первого кадра",
+      "section": "advanced",
+      "control": "number",
+      "editable": true,
+      "effective_mapping": "runtime.hold_max_ms",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "LiveEngine / engine.py runtime_settings"
+    },
+    {
+      "path": "runtime.capture_sampling",
+      "label": "Подбирать цвет краёв окна",
+      "section": "advanced",
+      "control": "toggle",
+      "editable": true,
+      "effective_mapping": "runtime.capture_sampling",
+      "validator": "native JSONSchema + NativeRuntimeConfig.build",
+      "consumer": "LiveEngine / engine.py runtime_settings"
+    },
+    {
+      "path": "appearance.border.active.colors[*]",
+      "section": "appearance",
+      "control": "ColorPicker + add/remove",
+      "editable": true,
+      "effective_mapping": "config.general.col.active_border.colors",
+      "consumer": "native border renderer",
+      "validator": "1..8 valid runtime colors"
+    },
+    {
+      "path": "animations.windowsMove.enabled",
+      "section": "animations",
+      "control": "Toggle",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": ""
+    },
+    {
+      "path": "animations.windowsMove.curve",
+      "section": "animations",
+      "control": "Picker",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": "duration_ms only for bezier; border/fadeShadow only bezier"
+    },
+    {
+      "path": "animations.windowsMove.time_scale",
+      "section": "animations",
+      "control": "Slider + numeric field",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": ""
+    },
+    {
+      "path": "animations.windowsMove.duration_ms",
+      "section": "animations",
+      "control": "Slider + numeric field",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": "duration_ms only for bezier; border/fadeShadow only bezier"
+    },
+    {
+      "path": "animations.windowsIn.enabled",
+      "section": "animations",
+      "control": "Toggle",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": ""
+    },
+    {
+      "path": "animations.windowsIn.curve",
+      "section": "animations",
+      "control": "Picker",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": "duration_ms only for bezier; border/fadeShadow only bezier"
+    },
+    {
+      "path": "animations.windowsIn.time_scale",
+      "section": "animations",
+      "control": "Slider + numeric field",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": ""
+    },
+    {
+      "path": "animations.windowsIn.duration_ms",
+      "section": "animations",
+      "control": "Slider + numeric field",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": "duration_ms only for bezier; border/fadeShadow only bezier"
+    },
+    {
+      "path": "animations.windowsIn.style",
+      "section": "animations",
+      "control": "Picker",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": ""
+    },
+    {
+      "path": "animations.windowsOut.enabled",
+      "section": "animations",
+      "control": "Toggle",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": ""
+    },
+    {
+      "path": "animations.windowsOut.curve",
+      "section": "animations",
+      "control": "Picker",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": "duration_ms only for bezier; border/fadeShadow only bezier"
+    },
+    {
+      "path": "animations.windowsOut.time_scale",
+      "section": "animations",
+      "control": "Slider + numeric field",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": ""
+    },
+    {
+      "path": "animations.windowsOut.duration_ms",
+      "section": "animations",
+      "control": "Slider + numeric field",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": "duration_ms only for bezier; border/fadeShadow only bezier"
+    },
+    {
+      "path": "animations.windowsOut.style",
+      "section": "animations",
+      "control": "Picker",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": ""
+    },
+    {
+      "path": "animations.fadeIn.enabled",
+      "section": "animations",
+      "control": "Toggle",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": ""
+    },
+    {
+      "path": "animations.fadeIn.curve",
+      "section": "animations",
+      "control": "Picker",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": "duration_ms only for bezier; border/fadeShadow only bezier"
+    },
+    {
+      "path": "animations.fadeIn.time_scale",
+      "section": "animations",
+      "control": "Slider + numeric field",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": ""
+    },
+    {
+      "path": "animations.fadeIn.duration_ms",
+      "section": "animations",
+      "control": "Slider + numeric field",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": "duration_ms only for bezier; border/fadeShadow only bezier"
+    },
+    {
+      "path": "animations.fadeOut.enabled",
+      "section": "animations",
+      "control": "Toggle",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": ""
+    },
+    {
+      "path": "animations.fadeOut.curve",
+      "section": "animations",
+      "control": "Picker",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": "duration_ms only for bezier; border/fadeShadow only bezier"
+    },
+    {
+      "path": "animations.fadeOut.time_scale",
+      "section": "animations",
+      "control": "Slider + numeric field",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": ""
+    },
+    {
+      "path": "animations.fadeOut.duration_ms",
+      "section": "animations",
+      "control": "Slider + numeric field",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": "duration_ms only for bezier; border/fadeShadow only bezier"
+    },
+    {
+      "path": "animations.fadeSwitch.enabled",
+      "section": "animations",
+      "control": "Toggle",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": ""
+    },
+    {
+      "path": "animations.fadeSwitch.curve",
+      "section": "animations",
+      "control": "Picker",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": "duration_ms only for bezier; border/fadeShadow only bezier"
+    },
+    {
+      "path": "animations.fadeSwitch.time_scale",
+      "section": "animations",
+      "control": "Slider + numeric field",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": ""
+    },
+    {
+      "path": "animations.fadeSwitch.duration_ms",
+      "section": "animations",
+      "control": "Slider + numeric field",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": "duration_ms only for bezier; border/fadeShadow only bezier"
+    },
+    {
+      "path": "animations.border.enabled",
+      "section": "animations",
+      "control": "Toggle",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": ""
+    },
+    {
+      "path": "animations.border.curve",
+      "section": "animations",
+      "control": "Picker",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": "duration_ms only for bezier; border/fadeShadow only bezier"
+    },
+    {
+      "path": "animations.border.time_scale",
+      "section": "animations",
+      "control": "Slider + numeric field",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": ""
+    },
+    {
+      "path": "animations.border.duration_ms",
+      "section": "animations",
+      "control": "Slider + numeric field",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": "duration_ms only for bezier; border/fadeShadow only bezier"
+    },
+    {
+      "path": "animations.fadeShadow.enabled",
+      "section": "animations",
+      "control": "Toggle",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": ""
+    },
+    {
+      "path": "animations.fadeShadow.curve",
+      "section": "animations",
+      "control": "Picker",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": "duration_ms only for bezier; border/fadeShadow only bezier"
+    },
+    {
+      "path": "animations.fadeShadow.time_scale",
+      "section": "animations",
+      "control": "Slider + numeric field",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": ""
+    },
+    {
+      "path": "animations.fadeShadow.duration_ms",
+      "section": "animations",
+      "control": "Slider + numeric field",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": "duration_ms only for bezier; border/fadeShadow only bezier"
+    },
+    {
+      "path": "animations.fadeGlow.enabled",
+      "section": "animations",
+      "control": "Toggle",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": ""
+    },
+    {
+      "path": "animations.fadeGlow.curve",
+      "section": "animations",
+      "control": "Picker",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": "duration_ms only for bezier; border/fadeShadow only bezier"
+    },
+    {
+      "path": "animations.fadeGlow.time_scale",
+      "section": "animations",
+      "control": "Slider + numeric field",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": ""
+    },
+    {
+      "path": "animations.fadeGlow.duration_ms",
+      "section": "animations",
+      "control": "Slider + numeric field",
+      "editable": true,
+      "consumer": "HyprConfig.animation / native engine / Python engine",
+      "condition": "duration_ms only for bezier; border/fadeShadow only bezier"
+    },
+    {
+      "path": "curves.<name>.type",
+      "section": "animations",
+      "control": "new curve type Picker: bezier/spring",
+      "editable": true,
+      "consumer": "native curve slots / engine curve sampling"
+    },
+    {
+      "path": "curves.<name>.mass",
+      "section": "animations",
+      "control": "Slider + numeric field",
+      "editable": true,
+      "consumer": "native curve slots / engine curve sampling"
+    },
+    {
+      "path": "curves.<name>.stiffness",
+      "section": "animations",
+      "control": "Slider + numeric field",
+      "editable": true,
+      "consumer": "native curve slots / engine curve sampling"
+    },
+    {
+      "path": "curves.<name>.damping",
+      "section": "animations",
+      "control": "Slider + numeric field",
+      "editable": true,
+      "consumer": "native curve slots / engine curve sampling"
+    },
+    {
+      "path": "curves.<name>.points",
+      "section": "animations",
+      "control": "direct draggable graph + X/Y fields",
+      "editable": true,
+      "consumer": "native curve slots / engine curve sampling"
+    },
+    {
+      "path": "window_rules[*].match.class",
+      "section": "rules",
+      "control": "TextField with validated regex",
+      "editable": true,
+      "consumer": "windowrules.ignore_decision / native WM exclusion / float/window policies"
+    },
+    {
+      "path": "window_rules[*].match.title",
+      "section": "rules",
+      "control": "TextField with validated regex",
+      "editable": true,
+      "consumer": "windowrules.ignore_decision / native WM exclusion / float/window policies"
+    },
+    {
+      "path": "window_rules[*].name",
+      "section": "rules",
+      "control": "TextField",
+      "editable": true,
+      "consumer": "windowrules.ignore_decision / native WM exclusion / float/window policies"
+    },
+    {
+      "path": "window_rules[*].enabled",
+      "section": "rules",
+      "control": "Toggle",
+      "editable": true,
+      "consumer": "windowrules.ignore_decision / native WM exclusion / float/window policies"
+    },
+    {
+      "path": "window_rules[*].float",
+      "section": "rules",
+      "control": "Tile/Float/Ignore Picker",
+      "editable": true,
+      "consumer": "windowrules.ignore_decision / native WM exclusion / float/window policies"
+    },
+    {
+      "path": "window_rules[*].ignore",
+      "section": "rules",
+      "control": "Tile/Float/Ignore Picker",
+      "editable": true,
+      "consumer": "windowrules.ignore_decision / native WM exclusion / float/window policies"
+    },
+    {
+      "path": "window_rules[*].no_anim",
+      "section": "rules",
+      "control": "Toggle",
+      "editable": true,
+      "consumer": "windowrules.ignore_decision / native WM exclusion / float/window policies"
+    },
+    {
+      "path": "window_rules[*].no_follow_mouse",
+      "section": "rules",
+      "control": "Toggle",
+      "editable": true,
+      "consumer": "windowrules.ignore_decision / native WM exclusion / float/window policies"
+    },
+    {
+      "path": "window_rules[*].opacity",
+      "section": "rules",
+      "control": "Slider",
+      "editable": true,
+      "consumer": "windowrules.ignore_decision / native WM exclusion / float/window policies"
+    },
+    {
+      "path": "hotkeys[*].keycode",
+      "section": "hotkeys",
+      "control": "native click-to-record NSButton",
+      "editable": true,
+      "consumer": "keys/binds.py -> atomic /tmp/hyprkeys.json -> native hot-reload"
+    },
+    {
+      "path": "hotkeys[*].modifiers",
+      "section": "hotkeys",
+      "control": "native click-to-record NSButton",
+      "editable": true,
+      "consumer": "keys/binds.py -> atomic /tmp/hyprkeys.json -> native hot-reload"
+    },
+    {
+      "path": "hotkeys[*].enabled",
+      "section": "hotkeys",
+      "control": "Toggle",
+      "editable": true,
+      "consumer": "keys/binds.py -> atomic /tmp/hyprkeys.json -> native hot-reload"
+    },
+    {
+      "path": "hotkeys[*].id",
+      "section": "hotkeys",
+      "control": "baseline selector (not user editable)",
+      "editable": false,
+      "consumer": "keys/binds.py -> atomic /tmp/hyprkeys.json -> native hot-reload"
+    },
+    {
+      "path": "hotkeys[*].command",
+      "section": "hotkeys",
+      "control": "action identity selector (not executable override)",
+      "editable": false,
+      "consumer": "keys/binds.py -> atomic /tmp/hyprkeys.json -> native hot-reload"
+    }
+  ],
+  "hidden_compatibility_fields": [
+    {
+      "path": "appearance.active_opacity",
+      "reason": "Window opacity is unfinished; no general opacity UI or blur promise."
+    },
+    {
+      "path": "appearance.inactive_opacity",
+      "reason": "Window opacity is unfinished; no general opacity UI or blur promise."
+    },
+    {
+      "path": "appearance.fullscreen_opacity",
+      "reason": "Window opacity is unfinished; no general opacity UI or blur promise."
+    },
+    {
+      "path": "animations.borderangle",
+      "reason": "Compatibility/inheritance node or absent native renderer; no fake action control."
+    },
+    {
+      "path": "animations.fade",
+      "reason": "Compatibility/inheritance node or absent native renderer; no fake action control."
+    },
+    {
+      "path": "animations.fadeDim",
+      "reason": "Compatibility/inheritance node or absent native renderer; no fake action control."
+    },
+    {
+      "path": "animations.fadeDpms",
+      "reason": "Compatibility/inheritance node or absent native renderer; no fake action control."
+    },
+    {
+      "path": "animations.fadeLayers",
+      "reason": "Compatibility/inheritance node or absent native renderer; no fake action control."
+    },
+    {
+      "path": "animations.fadeLayersIn",
+      "reason": "Compatibility/inheritance node or absent native renderer; no fake action control."
+    },
+    {
+      "path": "animations.fadeLayersOut",
+      "reason": "Compatibility/inheritance node or absent native renderer; no fake action control."
+    },
+    {
+      "path": "animations.fadePopups",
+      "reason": "Compatibility/inheritance node or absent native renderer; no fake action control."
+    },
+    {
+      "path": "animations.fadePopupsIn",
+      "reason": "Compatibility/inheritance node or absent native renderer; no fake action control."
+    },
+    {
+      "path": "animations.fadePopupsOut",
+      "reason": "Compatibility/inheritance node or absent native renderer; no fake action control."
+    },
+    {
+      "path": "animations.global",
+      "reason": "Compatibility/inheritance node or absent native renderer; no fake action control."
+    },
+    {
+      "path": "animations.glowangle",
+      "reason": "Compatibility/inheritance node or absent native renderer; no fake action control."
+    },
+    {
+      "path": "animations.layers",
+      "reason": "Compatibility/inheritance node or absent native renderer; no fake action control."
+    },
+    {
+      "path": "animations.layersIn",
+      "reason": "Compatibility/inheritance node or absent native renderer; no fake action control."
+    },
+    {
+      "path": "animations.layersOut",
+      "reason": "Compatibility/inheritance node or absent native renderer; no fake action control."
+    },
+    {
+      "path": "animations.monitorAdded",
+      "reason": "Compatibility/inheritance node or absent native renderer; no fake action control."
+    },
+    {
+      "path": "animations.shadowangle",
+      "reason": "Compatibility/inheritance node or absent native renderer; no fake action control."
+    },
+    {
+      "path": "animations.specialWorkspace",
+      "reason": "Compatibility/inheritance node or absent native renderer; no fake action control."
+    },
+    {
+      "path": "animations.specialWorkspaceIn",
+      "reason": "Compatibility/inheritance node or absent native renderer; no fake action control."
+    },
+    {
+      "path": "animations.specialWorkspaceOut",
+      "reason": "Compatibility/inheritance node or absent native renderer; no fake action control."
+    },
+    {
+      "path": "animations.windows",
+      "reason": "Compatibility/inheritance node or absent native renderer; no fake action control."
+    },
+    {
+      "path": "animations.workspaces",
+      "reason": "Compatibility/inheritance node or absent native renderer; no fake action control."
+    },
+    {
+      "path": "animations.workspacesIn",
+      "reason": "Compatibility/inheritance node or absent native renderer; no fake action control."
+    },
+    {
+      "path": "animations.workspacesOut",
+      "reason": "Compatibility/inheritance node or absent native renderer; no fake action control."
+    },
+    {
+      "path": "animations.zoomFactor",
+      "reason": "Compatibility/inheritance node or absent native renderer; no fake action control."
+    }
+  ],
+  "validation": "Native full-document schema validation and runtime resolution before atomic write; invalid/unknown keys leave disk unchanged. Existing unrelated fields merge from latest disk; concurrent disk change aborts write.",
+  "preview_safety": "--ui-preview bypasses persistence and control mutations, does not set onboarding completion.",
+  "runtime_scope": "Lua keys with no runtime override/confirmed consumer are not advertised. External environment overrides retain precedence."
+}

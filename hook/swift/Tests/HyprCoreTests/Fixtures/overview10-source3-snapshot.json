@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "result": {
+    "code": 0,
+    "snapshot": {
+      "dock_birth": [
+        81148,
+        501,
+        1791946947,
+        121489
+      ],
+      "commits": [],
+      "snapshot_counter": 320,
+      "supported_modes": [
+        1,
+        2
+      ],
+      "original_dispatch_restored": false,
+      "sampled_monotonic_time": 229375.0731296667,
+      "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "controller_observed": true,
+      "expired": true,
+      "overview_active": false,
+      "records": [],
+      "schema": 1,
+      "enabled": true,
+      "body_pixels_ready": false,
+      "sampled_wall_us": 1792001342379642,
+      "mission_control_active": false,
+      "pool_generation": 15,
+      "conflict": false,
+      "mode": 0,
+      "raw_mode": 0,
+      "lease_seconds": 30
+    },
+    "native_completion_proven": false,
+    "original_dispatch_restored": false,
+    "native_request_submitted": false
+  },
+  "operation": "snapshot",
+  "generation": [
+    81148,
+    501,
+    1791946947,
+    121489
+  ],
+  "pending": false,
+  "main_evaluated": true,
+  "request_seq": 321,
+  "completed": true,
+  "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
