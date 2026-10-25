@@ -540,6 +540,32 @@ static void layers_commit(struct ctx *c, void *tx) {
     if (transaction) ((void (*)(void *, void *))c->msg)(transaction, c->sel("flush"));
 }
 
+// Explicit OWN transactions must close even when an Objective-C/C++ setter
+// unwinds into the native boundary. Cleanup never flushes an enclosing scope.
+struct rgba_layer_scope {struct ctx *c; _Alignas(16) u64 tx[4]; unsigned active;};
+static void rgba_layer_scope_cleanup(struct rgba_layer_scope *scope) {
+    if(scope->active){scope->active=0;scope->c->tx_dtor(scope->tx);}
+}
+static void rgba_layer_scope_begin(struct rgba_layer_scope *scope,struct ctx *c) {
+    scope->c=c;c->tx_ctor(scope->tx,1);scope->active=1;
+}
+static void rgba_layer_scope_commit(struct rgba_layer_scope *scope) {
+    scope->active=0;layers_commit(scope->c,scope->tx);
+}
+static void rgba_layer_scope_end(struct rgba_layer_scope *scope) {
+    scope->active=0;scope->c->tx_dtor(scope->tx);
+}
+#define RGBA_LAYER_SCOPE(c,name) \
+    struct rgba_layer_scope name##_scope __attribute__((cleanup(rgba_layer_scope_cleanup)))={0}; \
+    rgba_layer_scope_begin(&name##_scope,c);u64 *name=name##_scope.tx
+#define RGBA_LAYER_COMMIT(name) rgba_layer_scope_commit(&name##_scope)
+#define RGBA_LAYER_END(name) rgba_layer_scope_end(&name##_scope)
+struct rgba_callback_scope {struct ctx *c;u32 previous;};
+static void rgba_callback_scope_cleanup(struct rgba_callback_scope *scope) {scope->c->in_cb=scope->previous;}
+#define RGBA_CALLBACK_SCOPE(c) \
+    struct rgba_callback_scope callback_scope __attribute__((cleanup(rgba_callback_scope_cleanup)))={c,c->in_cb}; \
+    c->in_cb=1
+
 static void decoration_damage(struct ctx *c, void *win) {
     if (!win) return;
     // The gradient extends outside the application's content/dirty region.
@@ -609,8 +635,7 @@ static void put_mask(struct ctx *c, struct ch_win *w, void *win, int on, double 
     if (on && !(hb.h >= 1 && finite(hb.h) && finite(hb.y))) { ch->h.mask_errs++; return; }
     if (on && w->mask && dabs(cw - w->mrect[0]) < 0.25 && dabs(chh - w->mrect[1]) < 0.25 &&
         dabs(hb.y - w->mhost[0]) < 0.25 && dabs(hb.h - w->mhost[1]) < 0.25) return;
-    unsigned long long tx[4] = {0, 0, 0, 0};                     // {CFArray*, disableActions, began}: 16 bytes
-    c->tx_ctor(tx, 1);                                           // bit0: disableActions
+    RGBA_LAYER_SCOPE(c,tx);
     c->tx_add(tx, cactx);
     if (on) {
         void *M = (void *)w->mask;
@@ -649,7 +674,7 @@ static void put_mask(struct ctx *c, struct ch_win *w, void *win, int on, double 
         ((msg0_t)c->msg)((void *)w->mask, c->s_release);
         w->mask = 0; w->mrect[0] = w->mrect[1] = 0;
     }
-    layers_commit(c, tx);                                       // publish this context, including implicit outer scope
+    RGBA_LAYER_COMMIT(tx);                                     // publish this context, including implicit outer scope
     if (c->sched_win) c->sched_win(0, win);
 }
 

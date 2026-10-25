@@ -162,11 +162,11 @@ public final class Dwindle {
         let (x, y, w, h) = (box.x, box.y, box.w, box.h)
         let r = n.ratio ?? 0.5
         let ratioOnly = minimumPolicy == "ratio" || n.manualRatio
-        let (aw, ah) = need(n.a,learned:!constrainFrames || !ratioOnly), (bw, bh) = need(n.b,learned:!constrainFrames || !ratioOnly)
-        if ratioOnly && !constrainFrames {
+        if minimumPolicy == "ratio" || ratioOnly && !constrainFrames {
             if n.split == "v" { return (Rect(x, y, w*r, h), Rect(x+w*r, y, w*(1-r), h)) }
             return (Rect(x, y, w, h*r), Rect(x, y+h*r, w, h*(1-r)))
         }
+        let (aw, ah) = need(n.a,learned:!constrainFrames || !ratioOnly), (bw, bh) = need(n.b,learned:!constrainFrames || !ratioOnly)
         if n.split == "v" {
             let wa = aw + bw <= w ? min(max(w * r, aw), max(w - bw, 0)) : w * aw / (aw + bw)
             return (Rect(x, y, wa, h), Rect(x + wa, y, w - wa, h))

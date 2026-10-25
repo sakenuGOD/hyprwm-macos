@@ -6,6 +6,7 @@ enum {
     AXWM_WINDOW = 1u << 0, AXWM_STANDARD = 1u << 1, AXWM_RESIZABLE = 1u << 2,
     AXWM_MODAL = 1u << 3, AXWM_SHEET = 1u << 4, AXWM_DIALOG = 1u << 5,
     AXWM_TRANSIENT = 1u << 6, AXWM_TILEABLE = 1u << 7,
+    AXWM_MEDIA = 1u << 8,
 };
 enum {
     AXWM_FOCUS_MENU = 1u << 0, AXWM_FOCUS_TRANSIENT = 1u << 1,

@@ -5,12 +5,17 @@ struct CloseFocusRetry {
     var fresh=0,queued=false,retryAt=0.0
 }
 extension WM {
+    public func floatingWindow(_ window:WinInfo)->Bool {
+        if floating.contains(window.wid) {return true}
+        if let bound=staticFloats[window.wid],bound.0==window.pid,sys.processBirth(window.pid)==bound.1 {return true}
+        return info[window.pid]?[window.wid]?.type=="other"
+    }
     func primaryCommandWindow(_ window:WinInfo,space:Int) -> Bool {
         guard space>0,sys.activeSpace()==UInt64(space),!sys.sessionLocked(),!sys.interactionOverlay(),
               window.on,window.space==space,window.layer==0,window.alpha>=0.05,!window.nativeFullscreen,
               !hidden.contains(where:{$0.wid==window.wid}),!closing.contains(window.wid),
               !sys.protectedProcess(window.pid),!ignored(window),let birth=sys.processBirth(window.pid),
-              sys.winPidLevel(window.wid).pid==window.pid,sys.axTileable(window.pid,window.wid)==1 else{return false}
+              sys.winPidLevel(window.wid).pid==window.pid,sys.axPrimaryWindow(window.pid,window.wid) else{return false}
         if let prior=nativeFocusedIdentities[window.wid],prior.pid != window.pid || prior.birth != birth {return false}
         return sys.processBirth(window.pid)==birth && sys.winPidLevel(window.wid).pid==window.pid && sys.activeSpace()==UInt64(space)
     }

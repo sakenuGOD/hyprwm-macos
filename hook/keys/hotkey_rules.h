@@ -8,6 +8,13 @@ static BOOL hotkeyModifiersDisabled(unsigned mods) {
 static NSSet *disabledHotkeyModifiers(void) {
     NSMutableSet *disabled=[NSMutableSet set];
     for(NSDictionary *rule in gHotkeyAppRules) {
+        NSArray *frontmost=rule[@"while_frontmost"];
+        if(frontmost) {
+            NSRunningApplication *app=NSWorkspace.sharedWorkspace.frontmostApplication;
+            if(app && !app.terminated && app.bundleIdentifier && [frontmost containsObject:app.bundleIdentifier])
+                [disabled addObject:rule[@"modifiers"]];
+            continue;
+        }
         for(NSString *bundle in rule[@"while_running"]) {
             BOOL running=NO;
             for(NSRunningApplication *app in [NSRunningApplication runningApplicationsWithBundleIdentifier:bundle])
@@ -38,13 +45,15 @@ static BOOL installHotkeyApplicationRules(void) {
         if(![rule isKindOfClass:NSDictionary.class])return NO;
         NSInteger mods;
         if(!repeatInteger(rule[@"modifiers"],-1,65535,&mods) || mods<0 || (mods&~0x1b00))return NO;
-        id bundles=rule[@"while_running"];
+        if((rule[@"while_running"]!=nil)==(rule[@"while_frontmost"]!=nil))return NO;
+        id bundles=rule[@"while_frontmost"]?:rule[@"while_running"];
         if(![bundles isKindOfClass:NSArray.class] || ![bundles count] || [bundles count]>16)return NO;
         for(id bundle in bundles)if(![bundle isKindOfClass:NSString.class] || ![bundle length] || [bundle length]>255)return NO;
     }
     gHotkeyAppRules=rules;gDisabledHotkeyModifiers=disabledHotkeyModifiers();
     NSMutableArray *observers=[NSMutableArray array];
-    for(NSString *name in @[NSWorkspaceDidLaunchApplicationNotification,NSWorkspaceDidTerminateApplicationNotification]) {
+    for(NSString *name in @[NSWorkspaceDidLaunchApplicationNotification,NSWorkspaceDidTerminateApplicationNotification,
+                            NSWorkspaceDidActivateApplicationNotification]) {
         id observer=[NSWorkspace.sharedWorkspace.notificationCenter addObserverForName:name object:nil
             queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note){(void)note;refreshHotkeyApplications();}];
         if(observer)[observers addObject:observer];

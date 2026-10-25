@@ -55,11 +55,19 @@ extension WM {
               let slot=eng.c.wins().first(where:{$0.wid==wid}),slot.geo != 0,!slot.posActive,!slot.sizeActive,!slot.held,
               slot.visible.maxDiff(plan.rect)<=TOL,slot.real.maxDiff(actual)<=TOL,
               let native=sys.winBounds(wid),native.maxDiff(actual)<=TOL,sys.winPidLevel(wid).pid==pid,sys.processBirth(pid)==plan.birth else{return false}
-        hidden.removeAll{$0.wid==wid};restorePending[wid]=nil;restoreChecks[wid]=nil;restoring.remove(wid);restoreFrom[wid]=nil
-        cfgQ.removeAll{$0.wid==wid};state.tree=Node.from(plan.tree);state.focus=wid;state.presel=plan.presel;target[wid]=plan.rect
-        let fade=eng.anim("fadeIn"),animated=fade.on && !windowPolicy(window).noAnimation
-        eng.c.alpha(wid,windowOpacity(window,request.space),animated ? fade.curve:16,animated ? fade.dur:0,frm:0)
-        // The actor already owns its final B. Existing neighbors alone animate.
+        hidden.removeAll{$0.wid==wid};restorePending[wid]=nil;restoreChecks[wid]=nil
+        cfgQ.removeAll{$0.wid==wid};state.tree=Node.from(plan.tree);state.focus=wid;state.presel=plan.presel
+        if eng.c.ordinaryPrepareSupported {
+            restoring.insert(wid);restoreFrom[wid]=Rect(request.record.rect) ?? plan.rect;target[wid]=nil
+            // A already owns its accepted final size. The qualified ordinary
+            // renderer publishes returning B and neighbors in one layout batch.
+        } else {
+            // Older engines have no accepted-frame ownership barrier. Preserve
+            // their landed actor and fade rather than replaying stale pixels.
+            restoring.remove(wid);restoreFrom[wid]=nil;target[wid]=plan.rect
+            let fade=eng.anim("fadeIn"),animated=fade.on && !windowPolicy(window).noAnimation
+            eng.c.alpha(wid,windowOpacity(window,request.space),animated ? fade.curve:16,animated ? fade.dur:0,frm:0)
+        }
         apply(area,request.space,windows);eng.c.commit();save()
         // Explicit restore owns keyboard intent only after final placement is
         // accepted. The focus worker waits for reveal and preserves modal/menu

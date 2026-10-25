@@ -5,7 +5,7 @@ import CChan
 import Foundation
 
 public enum ChannelCapabilities {
-    public static let mask=UInt32(CH_CAP_EFFECTS)|UInt32(CH_CAP_SHADOW)|UInt32(CH_CAP_SNAPSHOT)|UInt32(CH_CAP_SNAPSHOT_COVER)|UInt32(CH_CAP_TERMINAL_MOVE)|UInt32(CH_CAP_BIRTH)
+    public static let mask=UInt32(CH_CAP_EFFECTS)|UInt32(CH_CAP_SHADOW)|UInt32(CH_CAP_SNAPSHOT)|UInt32(CH_CAP_SNAPSHOT_COVER)|UInt32(CH_CAP_TERMINAL_MOVE)|UInt32(CH_CAP_BIRTH)|UInt32(CH_CAP_ORDINARY_PREPARE)
     public static func abi(_ version:UInt32) -> UInt32 { version & ~mask }
 }
 
@@ -102,6 +102,10 @@ public final class LiveChannel: ChannelAPI {
     }
 
     // Commands
+    public var ordinaryPrepareSupported:Bool {hdr.pointee.version & UInt32(CH_CAP_ORDINARY_PREPARE) != 0}
+    public func ordinaryPrepare(_ wid:Int,nonce:UInt64,to:Rect,prepare:Bool) -> Bool {
+        hs_ordinary_prepare(UInt32(wid),nonce,prepare ? 1:0,to.x,to.y,to.w,to.h)==0
+    }
     public var terminalGeometrySupported:Bool {hdr.pointee.version & UInt32(CH_CAP_TERMINAL_MOVE) != 0}
     public func geomTerminal(_ wid:Int,to:Rect,curves:(Int,Int),durations:(Double,Double),from:Rect?) -> Bool {
         guard terminalGeometrySupported else{return false}
@@ -144,6 +148,7 @@ public final class LiveChannel: ChannelAPI {
     public func space(_ wid: Int, _ sid: Int) { if ch_space(UInt32(wid), UInt64(sid)) != 0 { full() } }
     public func under(_ wid: Int, _ under: Int) { _ = ch_under(UInt32(wid), UInt32(under)) }
     public func forget(_ wid: Int) { _ = ch_forget(UInt32(wid)) }
+    public func raise(_ wid:Int) { if ch_raise(UInt32(wid),0) != 0 {full()} }
     public func commit() { ch_commit() }
 
     // Curves

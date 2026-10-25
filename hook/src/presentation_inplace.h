@@ -24,9 +24,10 @@ struct rgba_inplace {
     void *surface,*patch[3],*ring_in,*ring_act,*shadow;
     u64 legacy[4],style_hash;double focus,radius;
     u32 pixel_w,pixel_h,retiring_pixel_w,retiring_pixel_h;
-    u32 presenting,padding_motion;u64 displayed_texture;double motion_started,settle_started,last_used;u64 displayed_bytes;
+    u32 presenting,padding_motion; // padding_motion: bounded native fallback until geometry settles (same ABI).
+    u64 displayed_texture;double motion_started,settle_started,last_used;u64 displayed_bytes;
     struct rgba_retained_frame accepted;
-    u32 opening,padding_opening;
+    u32 opening,native_opaque; // Per-field 2 bits: 1=NULL, 2=empty, 3=nonempty; A then CWC.
     double logical_alpha;
     void *color,*retiring_color;
 };
@@ -41,6 +42,10 @@ static void rgba_inplace_regions_at(struct rgba_inplace *m,rect pose,rect box[4]
     double w=pose.w,h=pose.h,sw=m->source_w,sh=m->source_h;
     double cw=w<sw?w:sw,ch=h<sh?h:sh,dx=w-cw,dy=h-ch;
     double px=1.0/m->pixel_w,py=1.0/m->pixel_h;
+    // Direct Metal contents invert V when Core Animation binds the image.
+    // Its top rows therefore occupy the high end of contentsRect; the bottom
+    // texel occupies y=0. Keep the titlebar when cropping, and extend only the
+    // actual bottom row into the empty band.
     box[0]=(rect){0,dy,cw,ch};uv[0]=(rect){0,1-ch/sh,cw/sw,ch/sh};
     box[1]=(rect){cw,dy,dx,ch};uv[1]=(rect){1-px,1-ch/sh,px,ch/sh};
     box[2]=(rect){0,0,cw,dy};uv[2]=(rect){0,0,cw/sw,py};
@@ -116,16 +121,19 @@ static void rgba_inplace_legacy(struct ctx *c,struct rgba_inplace *m,struct ch_w
 }
 static int rgba_inplace_drop_slot(struct rgba_capture *g,struct rgba_inplace *m) {
     if(!m)return 1;
+    if(!rgba_carrier_drop_slot(g,m))return 0;
+    rgba_begin_forget(g,m);
     struct ctx *c=g->pc.engine;
     char *win=c->by_id(m->wid);
     if(win && (win!=m->window || *(u64 *)(win+0x30)!=m->creator || !m->creator ||
        *(u64 *)((char *)m->creator+0x268)!=m->pid_version))win=0;
     char *cwc=win?*(char **)(win+0x18):0;
     void *host=cwc?*(void **)(cwc+0x98):0,*context=cwc?*(void **)(cwc+0x38):0;
-    u64 tx[4]={0};c->tx_ctor(tx,1);if(context && context==m->context)c->tx_add(tx,context);
+    RGBA_LAYER_SCOPE(c,tx);if(context && context==m->context)c->tx_add(tx,context);
     struct ch_win *w=win?slot(c->ch,m->wid,0):0;
     u32 was_presenting=m->presenting;
-    if(w && m->ordinary && was_presenting)rgba_inplace_legacy(c,m,w,0);
+    if(w && m->ordinary && (was_presenting || m->padding_motion || m->legacy[0] ||
+       m->legacy[1] || m->legacy[2] || m->legacy[3]))rgba_inplace_legacy(c,m,w,0);
     if(m->on && was_presenting && host && host==m->host && context==m->context &&
        ((float (*)(void *,void *))c->msg)(host,c->sel("opacity"))==0)
         ((void (*)(void *,void *,float))c->msg)(host,c->sel("setOpacity:"),(float)m->host_opacity);
@@ -134,7 +142,8 @@ static int rgba_inplace_drop_slot(struct rgba_capture *g,struct rgba_inplace *m)
     if(win && m->ordinary && was_presenting && w) {
         c->set_alpha(0,win,(float)w->cur_alpha,0);put_plain(c,w,win);w->settling=1;w->fkey[0]=-1;
     }
-    layers_commit(c,tx);
+    RGBA_LAYER_COMMIT(tx);
+    m->presenting=0;rgba_draw_forget(g,m);
     for(unsigned i=0;i<4;i++)if(rgba_inplace_part(m,i))g->pc.release_obj(rgba_inplace_part(m,i));
     if(m->surface)g->pc.release_obj(m->surface);
     if(m->ring_in)g->pc.release_obj(m->ring_in);if(m->ring_act)g->pc.release_obj(m->ring_act);
@@ -147,7 +156,8 @@ static int rgba_inplace_drop_slot(struct rgba_capture *g,struct rgba_inplace *m)
     if(m->accepted.color)g->api.geometry.release_cf(m->accepted.color);m->accepted=(struct rgba_retained_frame){0};
     if(m->color)g->api.geometry.release_cf(m->color);m->color=0;
     if(m->retiring_color)g->api.geometry.release_cf(m->retiring_color);m->retiring_color=0;
-    m->body=m->root=m->texture=0;m->on=m->presenting=0;m->displayed_texture=m->displayed_bytes=0;
+    m->body=m->root=m->texture=0;m->on=m->presenting=m->padding_motion=0;m->displayed_texture=m->displayed_bytes=0;
+    m->motion_started=m->settle_started=0;
     if(cwc && context==m->context)decoration_damage(c,win);
     return 1;
 }
@@ -203,6 +213,9 @@ static int rgba_inplace_mount_slot(struct rgba_capture *g,struct rgba_inplace *m
         rgba_view_object(c,L,"setContentsGravity:",rgba_view_string(c,"resize"));
         rgba_view_object(c,L,"setContentsScaling:",rgba_view_string(c,"stretch"));
         rgba_view_bounds(c,L,"setContentsCenter:",(rect){0,0,1,1});
+        // Each repeated edge belongs only to its disjoint empty band. The
+        // enclosing surface clips R; it cannot clip an edge against the body.
+        rgba_view_bool(c,L,"setMasksToBounds:",1);
         rgba_view_bool(c,L,"setOpaque:",0);rgba_view_bool(c,L,"setContentsOpaque:",0);
         rgba_view_object(c,L,"setMinificationFilter:",rgba_view_string(c,"nearest"));
         rgba_view_object(c,L,"setMagnificationFilter:",rgba_view_string(c,"nearest"));
@@ -266,13 +279,18 @@ static void rgba_inplace_observe_slot(struct rgba_capture *g,struct rgba_inplace
     char *win=rgba_inplace_source(g,m),*cwc=win?*(char **)(win+0x18):0;
     if(!cwc || win!=m->window || *(void **)(cwc+0x38)!=m->context ||
        *(void **)(cwc+0x98)!=m->host || *(void **)(cwc+0x80)!=m->server_root)return;
+    struct rgba_view *carrier=rgba_carrier_view(g,m);
+    int carrier_excluded=carrier?rgba_carrier_source_excluded(g,m,prepared):0;
+    unsigned consumer_wid=carrier?carrier->wid:m->wid;
+    void *context=carrier?rgba_view_get(g->pc.engine,carrier->context,"renderContext"):*(void **)(cwc+0x30);
+    if(!context)return;
     char *source=0;unsigned count=0;
     for(char *s=prepared;s && count++<256;s=*(char **)(s+8))
-        if(*(u32 *)(s+0x180)==10 && *(u32 *)(s+0x268)==m->wid){if(source)return;source=s;}
+        if(*(u32 *)(s+0x180)==10 && *(u32 *)(s+0x268)==consumer_wid){if(source)return;source=s;}
     if(!source || count>=256)return;
     char *meta=*(char **)(source+0x48),*update=meta?*(char **)(meta+0x10):0;
-    void *context=*(void **)(cwc+0x30);u32 sequence=0;
-    if(!meta || *(void **)meta!=win || *(void **)(meta+8) || !update ||
+    u32 sequence=0;
+    if(!meta || *(void **)meta!=(carrier?carrier->window:win) || *(void **)(meta+8) || !update ||
        *(void **)(source+0x28)!=update || *(void **)(source+0x30)!=update ||
        !rgba_included(update,context,&sequence))return;
     m->client_included=rgba_included(update,*(void **)(cwc+0x48),&m->client_sequence);
@@ -281,17 +299,22 @@ static void rgba_inplace_observe_slot(struct rgba_capture *g,struct rgba_inplace
         m->client_current=*(u32 *)((char *)client+0x40);g->api.unlock_context(client);
     }
     struct rgba_view *v=(void *)((char *)g+RGBA_VIEW_OFFSET);
-    u64 root_id=v->api.layer_id(m->root),body_id=v->api.layer_id(m->body),host_id=v->api.layer_id(m->host);
+    u64 root_id=v->api.layer_id(m->root),body_id=v->api.layer_id(m->body),host_id=carrier?0:v->api.layer_id(m->host);
+    u64 server_id=v->api.layer_id(m->server_root);
+    // Native identity lookup must precede Render::ContextLock.
+    int preclaim=rgba_draw_pending(g,m);
     u64 surface_id=v->api.layer_id(m->surface),part_id[4]={body_id,0,0,0};
     for(unsigned i=1;i<4;i++)part_id[i]=v->api.layer_id(m->patch[i-1]);
-    if(!root_id || !body_id || !host_id || !surface_id || g->api.lock_context(context)!=0)return;
+    if(!root_id || !body_id || (!carrier && !host_id) || !surface_id || g->api.lock_context(context)!=0)return;
     void *rh=v->api.lookup_handle(context,root_id,0,0,0),*bh=v->api.lookup_handle(context,body_id,0,0,0),
-         *hh=v->api.lookup_handle(context,host_id,0,0,0);
+         *hh=host_id?v->api.lookup_handle(context,host_id,0,0,0):0;
     void *surface_handle=v->api.lookup_handle(context,surface_id,0,0,0),*part_handle[4];
+    void *server_handle=server_id && *(u64 *)((char *)context+0x110)==server_id?
+        v->api.lookup_handle(context,server_id,0,0,0):0;
     part_handle[0]=bh;
     for(unsigned i=1;i<4;i++)part_handle[i]=v->api.lookup_handle(context,part_id[i],0,0,0);
     char *parts[4]={0},*actual_surface=0;
-    m->reason=100;int adopted=0;
+    m->reason=100;int adopted=0,placement_proven=0;
     char *roots[64],*next[64],*prev[64],*parent[64],*seen[512];
     unsigned depth=1,n=0;char *actual_root=0,*actual_body=0,*actual_host=0;
     roots[0]=update+0xd8;next[0]=*(char **)roots[0];prev[0]=roots[0];parent[0]=0;
@@ -340,11 +363,11 @@ static void rgba_inplace_observe_slot(struct rgba_capture *g,struct rgba_inplace
         if(!rgba_inplace_region_matches(m,local,i,parts[i]))failed|=64U<<i;
         if(boxes[i].w>0 && boxes[i].h>0 && !rgba_inplace_render_child(actual_surface,parts[i]))failed|=1024U<<i;
     }
-    int excluded=actual_host && actual_host[0x24]==0;
+    int excluded=carrier?carrier_excluded:actual_host && actual_host[0x24]==0;
     // A zero-opacity Hosting can be absent from optimized LayerNodes. Only a
     // Render layer from the exact server-context commit included in THIS
     // Update can supply that exclusion witness. A newer current commit cannot.
-    if(!actual_host && *(u32 *)((char *)context+0x40)==sequence && hh &&
+    if(!carrier && !actual_host && *(u32 *)((char *)context+0x40)==sequence && hh &&
        *(void **)((char *)hh+0x18)==context) {
         char *hosting=*(char **)((char *)hh+0x10);
         if(hosting && *(void **)(hosting+0x98)==hh && hosting[0x24]==0) {
@@ -355,9 +378,11 @@ static void rgba_inplace_observe_slot(struct rgba_capture *g,struct rgba_inplace
     if(!failed) {
         m->adoptions++;m->adopted_sequence=sequence;m->adopted_texture=(u64)m->texture;m->reason=0;
         adopted=1;
+        if(preclaim)placement_proven=rgba_draw_model_adopted(g,m,context,sequence,rh,surface_handle,server_handle,actual_surface);
     }else m->reason=0x10000|failed;
 done:
     g->api.unlock_context(context);
+    if(adopted)rgba_draw_adopted(g,m,sequence,placement_proven);
     if(adopted && m->accepted.texture!=m->texture) {
         void *texture=g->pc.retain_obj(m->texture);
         if(texture) {

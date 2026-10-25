@@ -30,15 +30,17 @@ static struct rgba_ordinary *rgba_ordinary_control(struct rgba_capture *g) {
 static struct rgba_inplace *rgba_ordinary_slots(struct rgba_capture *g) {return (void *)((char *)g+RGBA_ORDINARY_SLOTS);}
 static int rgba_ordinary_drop(struct rgba_capture *g) {
     struct rgba_ordinary *o=rgba_ordinary_control(g);if(!o)return 1;o->enabled=0;
+    g->pc.engine->ch->h.version&=~CH_CAP_ORDINARY_PREPARE;
     int closed=rgba_close_drop(g);
     if(o->candidate_color){g->api.geometry.release_cf(o->candidate_color);o->candidate_color=0;}
     struct rgba_inplace *slots=rgba_ordinary_slots(g);
-    for(unsigned i=0;i<CH_NW;i++)if(slots[i].on || slots[i].texture || slots[i].root)rgba_inplace_drop_slot(g,&slots[i]);
-    return closed;
+    for(unsigned i=0;i<CH_NW;i++)if(slots[i].on || slots[i].texture || slots[i].root)
+        if(!rgba_inplace_drop_slot(g,&slots[i]))closed=0;
+    if(closed)rgba_carrier_finish_drop(g);return closed;
 }
 static int rgba_ordinary_capture_budget(struct rgba_capture *g) {
     struct rgba_ordinary *o=rgba_ordinary_control(g);if(!o || !o->enabled)return 1;
-    u64 bytes=g->domain.pixel_width*g->domain.pixel_height*4+rgba_close_bytes(g);
+    u64 bytes=g->domain.pixel_width*g->domain.pixel_height*4+rgba_close_bytes(g)+rgba_carrier_bytes(g);
     struct rgba_inplace *slots=rgba_ordinary_slots(g);
     for(unsigned i=0;i<=CH_NW;i++) {
         struct rgba_inplace *m=i==CH_NW?rgba_inplace_control(g):&slots[i];if(!m)continue;
@@ -102,6 +104,7 @@ static int rgba_ordinary_reset(struct rgba_capture *g) {
 // retarget. Read only the published command batch before that baseline tick;
 // an explicit ordinary 1:1 command must not inherit an earlier opening mode.
 static void rgba_ordinary_before_tick(struct ctx *c) {
+    rgba_normal_draw_commands(c);
     struct rgba_capture *g=*(void **)((char *)c+PC_CONTROL_PTR);
     if(!rgba_valid(g) || g->pc.engine!=c || !pc_main(&g->pc) || c->in_cb || c->dead || !c->ch ||
        c->ch->h.magic!=CH_MAGIC || c->ch->h.size!=sizeof(struct ch) || c->ch->h.stop)return;
@@ -119,7 +122,42 @@ static void rgba_ordinary_before_tick(struct ctx *c) {
         if(count==1 && !(intent&(F_STRETCH|F_NATIVE|F_SNAPSHOT)))w->stretch=0;
     }
 }
+// A refused OWN transfer must leave the real application visible. The saved
+// baseline tick can otherwise keep projecting/clipping its newly resized frame
+// and drawing a fill while no qualified OWN surface is actually presenting.
+static int rgba_ordinary_native_fallback(struct rgba_capture *g,struct rgba_inplace *m,
+                                       struct ch_win *w,void *win) {
+    struct ctx *c=g->pc.engine;
+    double position[2]={w->pos.g[0],w->pos.g[1]},size[2]={w->size.g[0],w->size.g[1]};
+    if(!finite(position[0]) || !finite(position[1]) || !finite(size[0]) || !finite(size[1]) ||
+       size[0]<1 || size[1]<1 || m->presenting)return 1;
+    int active=!w->held && !w->wait && (w->pos.active || w->size.active);
+    // Minimum-size/grid mismatch can keep settling set indefinitely. Once A is
+    // stable, retain the original tick's idle crop and allow the next motion.
+    int ready=!w->held && !w->wait && !active && !w->alpha.active && w->stable>=2;
+    RGBA_LAYER_SCOPE(c,tx);c->tx_add(tx,m->context);
+    if(ready) {
+        rgba_inplace_legacy(c,m,w,0);m->padding_motion=0;m->motion_started=0;
+    } else {
+        live_edge_client(c,w,0);put_plain(c,w,win);
+        // Cancel only this unpresentable geometry motion. Alpha, native input,
+        // the pending client configure and the freshness gate remain intact.
+        if(active) {
+            double dx=position[0]-w->ax,dy=position[1]-w->ay;
+            if(w->geo==4)w->geo=1;
+            if(c->move && (dabs(dx)>=.01 || dabs(dy)>=.01)) {
+                unsigned wid=w->wid;c->move(0,&wid,1,0,(float)dx,(float)dy);
+                if(!actual(c,w,&win) || rgba_inplace_source(g,m)!=win){RGBA_LAYER_COMMIT(tx);return 0;}
+            }
+            warp(&w->pos,2,position);warp(&w->size,2,size);
+            w->settling=1;
+        }
+        rgba_inplace_legacy(c,m,w,1);m->padding_motion=1;
+    }
+    RGBA_LAYER_COMMIT(tx);decoration_damage(c,win);return 1;
+}
 static int rgba_ordinary_pose(struct rgba_capture *g,struct rgba_inplace *m,struct ch_win *w) {
+    if(rgba_carrier_active(g))return rgba_carrier_pose(g,m,w);
     struct ctx *c=g->pc.engine;char *win=rgba_inplace_source(g,m),*cwc=win?*(char **)(win+0x18):0;
     if(!w || !w->used || w->wid!=m->wid || !w->geo || w->geo==2 || !cwc ||
        *(void **)(cwc+0x38)!=m->context || *(void **)(cwc+0x98)!=m->host ||
@@ -128,21 +166,31 @@ static int rgba_ordinary_pose(struct rgba_capture *g,struct rgba_inplace *m,stru
     m->logical_alpha=m->presenting && (w->held || w->wait)?m->alpha:w->cur_alpha;
     // Configure holds freeze R(t), not its already adopted pixels. Revealing
     // native H here can expose an unfinished resized frame for one display.
-    int moving=(m->presenting && (w->held || w->wait)) ||
+    int preparing=rgba_draw_pending(g,m);
+    int moving=preparing || (m->presenting && (w->held || w->wait)) ||
+        (rgba_begin_active(g) && !m->opening && w->held && !w->wait) ||
         (!w->held && !w->wait && (w->pos.active || w->size.active || w->alpha.active));
+    if(m->padding_motion || (!rgba_begin_active(g) && !m->presenting && !m->opening && w->held))
+        return rgba_ordinary_native_fallback(g,m,w,win);
     // A source texture never replaces the live application between animations.
     // In particular, native image-queue presentation feedback remains native.
-    if(moving)m->settle_started=0;
+    if(moving && m->presenting)m->settle_started=0;
     if(moving && !m->presenting) {
+        if(!m->motion_started){m->motion_started=c->ch->h.now;m->settle_started=0;}
         struct rgba_ordinary *o=rgba_ordinary_control(g);unsigned index=m-rgba_ordinary_slots(g);
         // Never replace a newer native frame with an older idle cache. This
         // fences the entire owning normal cohort, including hosted producers.
         if(!o || index>=CH_NW || !finite(o->good_time[index]) || !finite(o->native_time[index]) ||
            o->good_time[index]<=0 || o->native_time[index]<=0 ||
            o->good_time[index]<o->native_time[index] ||
+           !rgba_begin_takeover_ready(g,m,o->good_time[index]) ||
            m->good_client_context!=(u64)*(void **)(cwc+0x48) || m->good_client_id!=*(u32 *)(cwc+0x50)) {
             if(o)o->next_capture=0;
-            return 1;
+            // No real geometry has been released for this intent. Waiting
+            // cannot park A, advance clocks, or enter the native fallback.
+            if(preparing)return 1;
+            if(rgba_begin_wait(g,m,w,win))return 1;
+            return rgba_ordinary_native_fallback(g,m,w,win);
         }
     }
     if(!moving && m->presenting && !w->held && !w->wait) {
@@ -153,8 +201,15 @@ static int rgba_ordinary_pose(struct rgba_capture *g,struct rgba_inplace *m,stru
         if(!native_ready && c->ch->h.now-m->settle_started<.15)moving=1;
     }
     if(!moving) {
-        if(!m->presenting)return 1;
-        u64 tx[4]={0};c->tx_ctor(tx,1);c->tx_add(tx,m->context);
+        if(!m->presenting) {
+            if(m->motion_started) {
+                RGBA_LAYER_SCOPE(c,tx);c->tx_add(tx,m->context);
+                rgba_inplace_legacy(c,m,w,0);m->motion_started=0;
+                RGBA_LAYER_COMMIT(tx);decoration_damage(c,win);
+            }
+            return 1;
+        }
+        RGBA_LAYER_SCOPE(c,tx);c->tx_add(tx,m->context);
         ((msgf_t)c->msg)(m->root,c->s_opacity,0);
         ((msgf_t)c->msg)(m->host,c->s_opacity,(float)m->host_opacity);
         rgba_inplace_legacy(c,m,w,0);
@@ -164,15 +219,32 @@ static int rgba_ordinary_pose(struct rgba_capture *g,struct rgba_inplace *m,stru
         // Hidden cached layers must not retain an extra displayed texture.
         for(unsigned i=0;i<4;i++)rgba_view_object(c,rgba_inplace_part(m,i),"setContents:",0);
         m->displayed_texture=m->displayed_bytes=0;
-        m->presenting=0;m->mutations++;w->settling=1;w->fkey[0]=-1;
-        layers_commit(c,tx);decoration_damage(c,win);return 1;
+        m->motion_started=0;m->mutations++;w->settling=1;w->fkey[0]=-1;
+        RGBA_LAYER_COMMIT(tx);m->presenting=0;rgba_draw_forget(g,m);decoration_damage(c,win);return 1;
     }
     rect target={w->pos.v[0],w->pos.v[1],w->size.v[0],w->size.v[1]};
     double alpha=m->presenting && (w->held || w->wait)?m->alpha:w->cur_alpha;
     if(!rgba_view_rect(target) || !finite(alpha) || alpha<0 || alpha>1)return 0;
+    if(rgba_draw_active(g) && !rgba_draw_prepare(g,m,w,target))return 0;
+    if(rgba_draw_active(g) && !rgba_draw_ready(g,m,target,1))return 1;
     struct rect4 hb=((msgb_t)c->msg)(m->host,c->s_bounds);
     struct rect4 local={hb.x,c->ch->h.mask_flip?hb.y+hb.h-target.h:hb.y,target.w,target.h};
     struct rect4 fr=((msgcv_t)c->msg)(m->host,c->s_convert,local,m->server_root);
+    if(rgba_draw_active(g)) {
+        // A may already be at its final native position (F_MOVE_END). Keep
+        // its input transform intact and place only our graphic tree at R.
+        double *matrix=(double *)(win+0x498);
+        for(unsigned j=0;j<16;j++) {
+            if(!finite(matrix[j]))return 0;
+            if(j!=12 && j!=13 && dabs(matrix[j]-(j%5==0?1:0))>1e-6)return 0;
+        }
+        if(dabs(w->m[0]-1)>1e-6 || dabs(w->m[1]-1)>1e-6 ||
+           *(float *)(win+0x1d8)!=1 || *(float *)(win+0x1e4)!=1)return 0;
+        // Native screen_rect_from_rect uses the negative translation for
+        // this unit matrix. Read it exactly, without CGRegion rounding.
+        fr.x+=target.x+matrix[12];
+        fr.y+=(c->ch->h.mask_flip?-1:1)*(target.y+matrix[13]);
+    }
     // The client's native size remains final. Translation is always 1:1;
     // crop/clamp comes solely from the accepted texture extent below.
     int native=w->clipped || w->mask || dabs(w->m[0]-1)>1e-6 || dabs(w->m[1]-1)>1e-6 ||
@@ -190,13 +262,12 @@ static int rgba_ordinary_pose(struct rgba_capture *g,struct rgba_inplace *m,stru
         !((unsigned char (*)(void *,void *))c->msg)((void *)layers[i],c->sel("isHidden"))))legacy=1;
     if(!changed && !style && hidden && !legacy && !native &&
        !(w->under && w->ualpha!=0))return 1;
-    u64 tx[4]={0};c->tx_ctor(tx,1);c->tx_add(tx,m->context);
-    if(native) {
+    RGBA_LAYER_SCOPE(c,tx);c->tx_add(tx,m->context);
+    if(native && !rgba_draw_active(g)) {
         put_xform(c,w,1,1,w->ax-target.x,w->ay-target.y);
         put_clip(c,w,win,0,0,0,0,0);put_mask(c,w,win,0,0,0);
         if(*(float *)(win+0x1d8)!=1 || *(float *)(win+0x1e4)!=1)c->set_alpha(0,win,1,0);
     }
-    if(!hidden)((msgf_t)c->msg)(m->host,c->s_opacity,0);
     if(changed || style) {
         m->current=m->target=target;m->alpha=alpha;m->radius=w->radius;
         rgba_view_bounds(c,m->root,"setBounds:",(rect){0,0,target.w,target.h});
@@ -208,13 +279,16 @@ static int rgba_ordinary_pose(struct rgba_capture *g,struct rgba_inplace *m,stru
         m->displayed_texture=(u64)m->texture;m->displayed_bytes=(u64)m->pixel_w*m->pixel_h*4;rgba_inplace_border(c,m,w);
         ((msgf_t)c->msg)(m->root,c->s_opacity,(float)alpha);
     }
+    // Complete B before hiding H. A throwing layer/style setter must never
+    // leave a partially populated surface as the only visible presenter.
+    if(!hidden)((msgf_t)c->msg)(m->host,c->s_opacity,0);
     if(!m->presenting)m->motion_started=c->ch->h.now;
     m->presenting=1;m->last_used=c->ch->h.now;rgba_inplace_legacy(c,m,w,1);
     // The qualified texture covers all of R, including transparent pixels.
     // Keeping a separate B-A fill beneath it changes those pixels until the
     // following adoption observation. Publish its removal with B and H0.
     put_under(c,w,0,0,0,0,0,0,0,0);
-    layers_commit(c,tx);m->mutations++;decoration_damage(c,win);
+    RGBA_LAYER_COMMIT(tx);m->mutations++;rgba_draw_damage(g,m);decoration_damage(c,win);
     return 1;
 }
 static int rgba_ordinary_publish(struct rgba_capture *g,struct rgba_inplace *m) {
@@ -263,9 +337,9 @@ static void rgba_ordinary_rollback(struct rgba_capture *g,struct rgba_inplace *m
     m->pixel_w=m->retiring_pixel_w;m->pixel_h=m->retiring_pixel_h;
     m->good_client_context=m->retiring_client_context;m->good_client_id=m->retiring_client_id;
     m->good_client_sequence=m->retiring_client_sequence;m->adopted_texture=0;
-    u64 tx[4]={0};c->tx_ctor(tx,1);c->tx_add(tx,m->context);
+    RGBA_LAYER_SCOPE(c,tx);c->tx_add(tx,m->context);
     rgba_inplace_pixels(c,m,1);
-    layers_commit(c,tx);m->mutations++;c->sched_win(0,m->window);
+    RGBA_LAYER_COMMIT(tx);m->mutations++;c->sched_win(0,m->window);
 }
 static void rgba_ordinary_observe(struct rgba_capture *g,void *head,void *prepared) {
     struct rgba_ordinary *o=rgba_ordinary_control(g);if(!o || !o->enabled)return;
@@ -286,7 +360,10 @@ static void rgba_ordinary_observe(struct rgba_capture *g,void *head,void *prepar
             rgba_inplace_source(g,&all[i])==win && time>o->native_time[i])o->native_time[i]=time;
     }
     struct rgba_inplace *slots=rgba_ordinary_slots(g);
-    for(unsigned i=0;i<CH_NW;i++)if(slots[i].on && slots[i].presenting && slots[i].adopted_texture!=(u64)slots[i].texture)rgba_inplace_observe_slot(g,&slots[i],head,prepared);
+    for(unsigned i=0;i<CH_NW;i++)if(slots[i].on && !slots[i].presenting)rgba_carrier_observe_idle(g,&slots[i],prepared);
+    for(unsigned i=0;i<CH_NW;i++)if(slots[i].on && slots[i].presenting &&
+        (slots[i].adopted_texture!=(u64)slots[i].texture || rgba_draw_pending(g,&slots[i])))
+        rgba_inplace_observe_slot(g,&slots[i],head,prepared);
 }
 // Publication is shared by the regular tick and the completion callback. This
 // function never destroys/resets a renderer, advances R(t), or arms new work.
@@ -301,15 +378,17 @@ static int rgba_ordinary_accept(struct rgba_capture *g,double now) {
        (m->opening && (dabs(g->domain.mapped.w-w->size.g[0])>c->ch->h.settle_px ||
         dabs(g->domain.mapped.h-w->size.g[1])>c->ch->h.settle_px)))return 0;
     if(m->texture==p->texture_ref)return 1;
+    if(!rgba_carrier_can_publish(g,m))return 0;
     m->target=p->capture_rect;
     int moving=(!w->held && !w->wait && (w->pos.active || w->size.active || w->alpha.active)) || m->presenting;
     char *cwc=*(char **)((char *)p->source+0x18);void *context=cwc?*(void **)(cwc+0x38):0;
     if(!context)return 0;
-    u64 scope[4]={0};if(moving){c->tx_ctor(scope,1);c->tx_add(scope,context);}
+    struct rgba_layer_scope scope __attribute__((cleanup(rgba_layer_scope_cleanup)))={0};
+    if(moving && !rgba_carrier_active(g)){rgba_layer_scope_begin(&scope,c);c->tx_add(scope.tx,context);}
     int published=rgba_ordinary_publish(g,m);
-    if(published)o->good_time[o->candidate]=o->capture_time;
+    if(published){o->good_time[o->candidate]=o->capture_time;rgba_begin_promoted(g,m);}
     int posed=published?rgba_ordinary_pose(g,m,w):0;
-    if(moving)layers_commit(c,scope);
+    if(scope.active)rgba_layer_scope_commit(&scope);
     if(!published)return 0;
     o->promoted++;m->ordinary=1;m->opening=0;
     if(!posed){rgba_inplace_drop_slot(g,m);return 0;}
@@ -319,6 +398,7 @@ static void rgba_ordinary_completion(struct rgba_capture *g,double now) {
     struct rgba_ordinary *o=rgba_ordinary_control(g);if(!o)return;
     o->completion_queued=0;
     struct rgba_normal_binding *n=rgba_normal_binding(g);struct ctx *c=g->pc.engine;
+    if(rgba_carrier_control(g) && !rgba_carrier_timer_allowed(g))return;
     if(!o->enabled || now>=o->expires || __atomic_load_n(&o->command,__ATOMIC_ACQUIRE)==2 ||
        !rgba_normal_valid(n) || !pc_main(&g->pc) || n->inflight ||
        c->in_cb || c->dead || !c->ch || c->ch->h.stop || g->quarantined || g->locked_client ||
@@ -403,6 +483,16 @@ static void rgba_ordinary_tick(struct rgba_capture *g,double now) {
     }
     if(now<o->next_capture || p->active_command)return;
     if(p->stage!=PC_EMPTY && !rgba_ordinary_reset(g))return;
+    // Leave an empty producer available to this active source's owning prepare.
+    // Idle/bootstrap captures retain the existing timer admission below.
+    if(g->sel.read_bytes && g->texture_class && g->pass_class && p->status_selector &&
+       __atomic_load_n(&p->command_sequence,__ATOMIC_ACQUIRE)==p->command_ack && !p->command)
+        for(unsigned i=0;i<CH_NW;i++) {
+            struct rgba_inplace *m=&slots[i];struct ch_win *w=m->on?slot(c->ch,m->wid,0):0;
+            if(w && w->used && w->geo && w->geo!=2 && (!w->held || rgba_begin_active(g)) && !w->wait &&
+               !m->opening && !m->padding_motion && (w->pos.active || w->size.active || w->alpha.active) &&
+               cover_index(c,w->wid,1)<0 && !birth_holds(c,w->wid) && rgba_inplace_source(g,m))return;
+        }
     for(unsigned n=0;n<CH_NW;n++) {
         unsigned i=(o->cursor+n)%CH_NW;struct ch_win *w=&c->ch->win[i];struct rgba_inplace *m=0;
         if(now-o->seen[i]>.1)continue;
@@ -424,7 +514,7 @@ static void rgba_ordinary_tick(struct rgba_capture *g,double now) {
             slots[j].pid_version==*(u64 *)(creator+0x268)){m=&slots[j];break;}
         if(!m)for(unsigned j=0;j<CH_NW;j++)if(!slots[j].on && !slots[j].root && !slots[j].texture && !slots[j].opening){m=&slots[j];break;}
         if(!m)continue;
-        if(m->on && m->good_client_sequence==commit && m->good_client_context==(u64)client &&
+        if(m->on && !rgba_draw_pending(g,m) && m->good_client_sequence==commit && m->good_client_context==(u64)client &&
            m->good_client_id==*(u32 *)(cwc+0x50) && !m->presenting &&
            !w->pos.active && !w->size.active && !w->alpha.active)continue;
         if(!m->on && (m->wid!=w->wid || m->window!=win || m->creator!=(u64)creator ||

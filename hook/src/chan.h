@@ -27,6 +27,11 @@ enum { OP_GEOM = 1, OP_ALPHA = 2, OP_FORGET = 3, OP_WARP = 4, OP_UNDER = 5, OP_S
 #define CH_CAP_SNAPSHOT_COVER 0x10000000u // Full frozen cover + typed acquisition/configure/handoff receipts.
 #define CH_CAP_TERMINAL_MOVE 0x08000000u // Live geometry transfers native origin at its final WS frame.
 #define CH_CAP_BIRTH 0x04000000u // Native first-order custody; absent until its consumer is installed.
+#define CH_CAP_ORDINARY_PREPARE 0x02000000u // Actual old-R OWN adoption before a geometry batch.
+// Versioned OP_EDGE extension. Old consumers reject flags>2 without mutation.
+#define CH_ORDINARY_PREPARE 0x4f574e50u
+// pad0/pad1: UInt64 request nonce; cpos: 1 prepare, 0 cancel; xywh: future goal.
+// EV_ORDINARY: x/y nonce halves; w: 1 adopted, 2 restored, 3 refused; h: version1.
 // BIRTH preserves the channel ABI. pad0/pad1 are the exact low/high token halves.
 // ARM uses that pair as policy epoch and x as heartbeat lifetime. Other per-window
 // commands use the native birth token. CLAIM carries geometry AND alpha together.
@@ -52,7 +57,7 @@ struct ch_cfgmsg { u32 magic, wid; double x, y, w, h; double t0; };   // payload
    // SPACE: move window to desktop (k.x = desktop id) inside WS; client SLSMoveWindowsToManagedSpace cannot move foreign windows
 enum { F_FROM = 1, F_MOVE = 2, F_STRETCH = 4, F_WAIT = 8, F_HOLD = 16, F_NATIVE = 32, F_STREAM = 64, F_EDGE = 128, F_SNAPSHOT = 256, F_MOVE_END = 512 }; // MOVE_END: keep native origin until live visual geometry completes.
    // STRETCH: stretch content to B (opening, like m_animatingIn); OP_GEOM / OP_ALPHA flags
-enum { EV_GONE = 1, EV_SETTLED = 2, EV_DONE = 3, EV_NEW = 4, EV_MOVED = 5, EV_REL = 6, EV_CLONE = 7, EV_ERROR = 8, EV_SNAPSHOT = 9, EV_BIRTH = 10 };
+enum { EV_GONE = 1, EV_SETTLED = 2, EV_DONE = 3, EV_NEW = 4, EV_MOVED = 5, EV_REL = 6, EV_CLONE = 7, EV_ERROR = 8, EV_SNAPSHOT = 9, EV_BIRTH = 10, EV_ORDINARY = 11 };
 // BIRTH: x/y exact UInt32 token halves, w creator PID, h BIRTH_* state. The
 // native pending table remains authoritative; retry publication until state ACK.
 enum { SNAP_ACQUIRED=1, SNAP_DEFERRED=2, SNAP_REVEALED=3, SNAP_CANCELLED=4, SNAP_CONFIGURED=5 };

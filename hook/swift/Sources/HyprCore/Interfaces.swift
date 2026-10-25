@@ -101,6 +101,8 @@ public struct EngStats {
 
 /// Daemon -> engine channel (chan.py Chan).
 public protocol ChannelAPI: AnyObject {
+    var ordinaryPrepareSupported:Bool {get}
+    func ordinaryPrepare(_ wid:Int,nonce:UInt64,to:Rect,prepare:Bool) -> Bool
     var birthSupported:Bool {get}
     /// True means enqueued, not that the native lease has accepted the command.
     func birth(_ command:BirthCommand) -> Bool
@@ -129,6 +131,8 @@ public protocol ChannelAPI: AnyObject {
 }
 
 public extension ChannelAPI {
+    var ordinaryPrepareSupported:Bool {false}
+    func ordinaryPrepare(_ wid:Int,nonce:UInt64,to:Rect,prepare:Bool) -> Bool {false}
     var birthSupported:Bool {false}
     func birth(_ command:BirthCommand) -> Bool {false}
     var terminalGeometrySupported:Bool {false}
@@ -199,12 +203,14 @@ public protocol SysAPI: AnyObject {
     func mouseDown() -> Bool
     // AX (axlib.c)
     func axTileable(_ pid: Int, _ wid: Int) -> Int
+    func axPrimaryWindow(_ pid:Int,_ wid:Int) -> Bool
     func axFrame(_ pid: Int, _ wid: Int, _ r: Rect) -> Int
     func axSize(_ pid:Int,_ wid:Int,_ width:Double,_ height:Double) -> Int
     func axGetFrame(_ pid: Int, _ wid: Int) -> Rect?
     func axForget(_ wid: Int)
     func axFocus(_ pid: Int, _ wid: Int, raise: Bool) -> Int
     func preserveAppFloats(_ tile:WinInfo,space:Int,windows:[WinInfo])
+    func preserveFloatingWindows(_ windows:[WinInfo],space:Int)
     func axMenuPress(_ pid: Int, _ title: String) -> Int
     // winsnap.m
     func wsClose(_ pid: Int, _ wid: Int) -> Int
@@ -249,8 +255,10 @@ public protocol SysAPI: AnyObject {
 }
 
 public extension SysAPI {
+    func axPrimaryWindow(_ pid:Int,_ wid:Int) -> Bool {axTileable(pid,wid)==1}
     func windowOnSpace(_ pid:Int,_ wid:Int,_ space:Int) -> Bool {false}
     func preserveAppFloats(_ tile:WinInfo,space:Int,windows:[WinInfo]) {}
+    func preserveFloatingWindows(_ windows:[WinInfo],space:Int) {}
     func windowPresence(_ pid:Int,_ wid:Int) -> Int {-1}
     func windowOrderedIn(_ pid:Int,_ wid:Int) -> Bool? {nil}
     func invalidateWindowPresence(_ wid:Int) {}

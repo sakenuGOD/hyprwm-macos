@@ -252,6 +252,16 @@ if env["HYPRWM_NO_DECO"] == "1" {
 do { try EngineStatePreflight.check(stateDir + "/hyprwm.state.json") } catch { die("Engine state: \(error)") }
 let wm = WM(sys: sys, eng: eng, deco: deco, cfg: cfg, statePath: stateDir + "/hyprwm.state.json",
             minsizePath: stateDir + "/minsize_app.json")
+sys.raiseFloatingWindows = { [weak wm,weak eng] windows in
+    guard let wm,wm.enabled,let channel=eng?.ch,channel.magicOK,channel.sizeOK,channel.raw.pointee.stop==0,
+          let fresh=try? sys.snapshot(),fresh.stable,!fresh.locked,fresh.spaceType==0 else{return}
+    for wid in windows {
+        guard let window=fresh.windows.first(where:{$0.wid==wid && $0.space==fresh.space && $0.on && $0.layer==0 && $0.alpha>=0.05 && !$0.nativeFullscreen}),
+              wm.floatingWindow(window),!wm.hidden.contains(where:{$0.wid==wid}),!wm.closing.contains(wid) else{continue}
+        channel.raise(wid)
+    }
+    channel.commit()
+}
 wm.startupCompatibility=startupQualification
 wm.buildCommit = String(cString: hs_build_revision())
 wm.buildSourceDirty = hs_build_source_dirty() != 0

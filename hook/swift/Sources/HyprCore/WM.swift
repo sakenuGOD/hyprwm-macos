@@ -129,6 +129,7 @@ public final class WM {
     var propertyOverrides: [Int: PropertyBinding] = [:]
     var staticFloats: [Int: (Int,String)] = [:]
     var nativeResizeSeen: [String:UInt64] = [:]
+    var pendingDragSession:DragSession?
     var launcherSequence:UInt64=0
     var launcherIntent:LauncherIntent?
     var launcherObserved:LauncherIntent?
@@ -165,6 +166,9 @@ public final class WM {
     var workspaceHistoryPrevious:Int?
     var workspaceHistoryGeneration:JSON?
     var snapshotConfigures:[Int:SnapshotConfigure]=[:]
+    var ordinaryBatch:OrdinaryBatch?
+    var ordinaryNonce:UInt64=0
+    var ordinaryFallback=Set<Int>()
     var liveBufferShrinks:[Int:LiveBufferShrink]=[:]
     // Current-window presentation ceilings, never persisted as per-app constraints.
     var acceptedCeilings:[Int:(pid:Int,birth:String,width:Double,height:Double)]=[:]
@@ -457,6 +461,7 @@ public final class WM {
         let rects = layout(area, s)
         var cur: [Int: WinInfo] = [:]
         for w in wins { cur[w.wid] = w }
+        let opening=ordinaryOpenings(opening,space:space,wins:wins,rects:rects)
         let real = eng.real()
         let c = eng.c
         let (mvC, mvD, mvOn) = eng.anim("windowsMove")
@@ -466,13 +471,16 @@ public final class WM {
         var posted: [Int] = [], jobs: [CfgJob] = []
         var engW: [Int: EngWin] = [:]
         for w in c.wins() { engW[w.wid] = w }
-        // Unsupported first-order clients may already be visible. Place those
-        // directly, without a second reveal or a flight from AppKit's origin.
+        // Unsupported first-order clients may already be visible. Keep their
+        // displayed frame as the beginning of their arrival, without hiding
+        // them or replaying a pop-in after the native first display.
         // Admitted clients are concealed at their final tile before ordering.
         let presentedOpenings=Set(opening.filter {wid in
             guard options.production,let window=cur[wid] else{return false}
             return (sys.winAlpha(wid) ?? window.alpha)>0.001 && (engW[wid]?.curAlpha ?? 1)>0.001
         })
+        if prepareOrdinaryBatch(space,wins,rects:rects,real:real,engine:engW,opening:opening,force:force,motion:mvOn) {return}
+        defer {ordinaryFallback.removeAll()}
         if !opening.isEmpty && inOn { // Concealed openings remain invisible until their size is ready.
             for wid in opening where !restoring.contains(wid) && !presentedOpenings.contains(wid) {
                 c.alpha(wid, 0.0, 0, 0.0, frm: 0.0)
@@ -494,7 +502,7 @@ public final class WM {
             } else if !force && target[wid] == to {continue}
             let supersededConfigure=options.production && (liveBufferShrinks[wid] != nil || cfgSink?.busy(wid)==true)
             if options.production,liveBufferShrinks.removeValue(forKey:wid) != nil {cfgSink?.cancel(wid)}
-            let noAnimation = options.production && windowPolicy(cw).noAnimation
+            let noAnimation = options.production && (windowPolicy(cw).noAnimation || ordinaryFallback.contains(wid))
             let presentedOpening=presentedOpenings.contains(wid) && inOn && !noAnimation && !restoring.contains(wid)
             let motionCurve=presentedOpening ? inC:mvC,motionDuration=presentedOpening ? inD:mvD
             let motionOn=presentedOpening || mvOn
@@ -543,7 +551,9 @@ public final class WM {
                         }
                     }
                     if !capturedSnapshot {
-                        if presentedOpening {c.geom(wid,to,16,16,dpos:0,dsize:0,frm:to,move:true,warp:true)}
+                        if presentedOpening {
+                            c.geom(wid,to,motionCurve,motionCurve,dpos:motionDuration,dsize:motionDuration,frm:frm,move:false,warp:false,stretch:false)
+                        }
                         else if nativeFrames {c.geometry(wid,to:to,curves:(mvC,mvC),durations:(mvD,mvD),from:frm,warp:!mvOn || noAnimation,
                             stretch:false,native:true,wait:false,hold:false)}
                         else if motionOn && !noAnimation && !opening.contains(wid) && dragSession==nil &&
@@ -1135,7 +1145,9 @@ public final class WM {
     public func hide(_ area: Rect, _ space: Int, _ wins: [WinInfo], _ wid0: Int? = nil) -> String {
         let w = (wid0 != nil && wid0 != 0) ? wins.first { $0.wid == wid0 } : front(wins, space)
         guard let w else { return "no window" }
-        if options.production && (sys.protectedProcess(w.pid) || wmInfo(w.pid, w.wid)?.type != "primary" || sys.processBirth(w.pid) == nil) { return "protected or unverified window" }
+        if options.production && (sys.protectedProcess(w.pid) ||
+            (wmInfo(w.pid,w.wid)?.type != "primary" && !sys.axPrimaryWindow(w.pid,w.wid)) ||
+            sys.processBirth(w.pid) == nil) { return "protected or unverified window" }
         let birth=options.production ? sys.processBirth(w.pid):nil
         let parts=birth?.split(separator:":").compactMap{Int($0)} ?? []
         if options.production && (parts.count != 3 || parts[0] != w.pid || parts[1]<=0 || !(0..<1_000_000).contains(parts[2])) {return "hide refused: exact native birth unavailable"}
@@ -1530,8 +1542,14 @@ public final class WM {
         let s = sp(space)
         let tiled = Set(Dwindle.leaves(s.tree).map { $0.wid! })
         let hid = Set(hidden.map(\.wid))
+        let pointerHit=options.production ? sys.pointerHit():nil
+        if options.production,pointerHit==nil,let receiver=wins.first(where:{$0.on && ($0.space==space || $0.space==0) && $0.alpha>=0.05 &&
+            $0.x<=p.0 && p.0<$0.x+$0.w && $0.y<=p.1 && p.1<$0.y+$0.h}),
+           receiver.layer != 0 || receiver.space==0 || sys.protectedProcess(receiver.pid) {
+            pointerFocusRetryPoint=nil;return
+        }
         let top:WinInfo?
-        if options.production,let hint=sys.pointerHit() {
+        if options.production,let hint=pointerHit {
             top=wins.first{$0.wid==hint.wid && $0.on && $0.space==space && (hint.pid==nil || hint.pid==$0.pid) &&
                 sys.winPidLevel($0.wid).pid==$0.pid && !hid.contains($0.wid) && closeRequests[$0.wid]==nil}
         }else{
@@ -1542,7 +1560,8 @@ public final class WM {
             log("cursor", "(\(pyFloat(p.0)), \(pyFloat(p.1)))", "top", top.map { String($0.wid) } ?? "None",
                 "front", frontW.map { String($0.wid) } ?? "None", "tiles", tiled.sorted())
         }
-        guard let top, tiled.contains(top.wid) else {
+        guard let top, tiled.contains(top.wid) || options.production &&
+            floatingWindow(top) else {
             // A move can arrive before its receiver enters the fresh census.
             // Keep that pointer intent briefly instead of consuming it forever.
             if options.production,top==nil,sys.now()-pointerMovedAt<pointerPause+0.3 {
@@ -1597,6 +1616,7 @@ public final class WM {
     public func handleEvents(_ evs: [EngEvent]) -> Bool {
         var drifted = false
         for ev in evs {
+            if options.production && ev.type==11 {observeOrdinary(ev);drifted=true;continue}
             if options.production && ev.type==9 { observeSnapshot(ev);continue }
             if ev.type == Ev.new {
                 newbies[ev.wid] = sys.now()
@@ -1767,6 +1787,12 @@ public final class WM {
             if !launcherTransfers.isEmpty || !silentSpaceMoves.isEmpty {admission?.suspend();return} // No source surgery before actual native ACK.
         }
         followMouse(space, wins)
+        if options.production {
+            let hiddenIDs=Set(hidden.map(\.wid))
+            sys.preserveFloatingWindows(wins.filter{floatingWindow($0) &&
+                !sys.protectedProcess($0.pid) && !ignored($0) && $0.on && $0.space==space &&
+                $0.layer==0 && $0.alpha>=0.05 && !$0.nativeFullscreen && !hiddenIDs.contains($0.wid) && !closing.contains($0.wid)},space:space)
+        }
         for w in wins { owner[w.wid] = w.owner }
         hideNewbies(space, wins)
         if sys.now() - sampled > 2.0 && (!options.production || cfg.raw["runtime"]?["capture_sampling"]?.truthy == true) { // sampling is explicitly opted in
@@ -1788,6 +1814,7 @@ public final class WM {
                 beginInteraction(area,space,wins,native:native)
                 if dragSession != nil { nativeResizeSeen[native.birth]=native.epoch }
             } else if md && !wasDown && dragSession == nil { beginInteraction(area,space,wins) }
+            else if md && dragSession==nil {resumePendingInteraction(area,space)}
             if let native=nativeResize, native.phase == 4, dragSession?.nativeEpoch == native.epoch { dragSession=nil }
             else if let native=nativeResize, native.phase == 3, dragSession?.nativeEpoch == native.epoch { nativeLayoutChanged=endInteraction(area,space,wins) || nativeLayoutChanged }
             else if md { sampleInteractionMotion();updateSharedResize(area,space,wins) }
@@ -1795,10 +1822,11 @@ public final class WM {
         // Tab publication can change independently of window geometry. Read its
         // guarded envelope immediately without repeating the entire census.
         var (changed, opened) = sync(area, space, wins, refreshTabs: need || tabChanged)
-        changed = changed || drifted || nativeLayoutChanged || overviewRetilePending || (options.production && spaceChanged)
+        changed = changed || drifted || nativeLayoutChanged || overviewRetilePending || ordinaryBatch != nil || (options.production && spaceChanged)
         let cf = configured()                                     // window rejected size: retarget immediately
         changed = changed || cf
         if wasDown && !md {                                       // button released: a window may have been dragged
+            pendingDragSession=nil
             let interaction = options.production && endInteraction(area, space, wins)
             let ra = interaction || realign(area, space, wins)
             changed = changed || ra

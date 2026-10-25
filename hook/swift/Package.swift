@@ -17,7 +17,7 @@ let package = Package(
         .target(name: "CAX", path: "Sources/CAX",
                 cSettings: [.unsafeFlags(["-Wno-deprecated-declarations"])],
                 linkerSettings: sky + [.linkedFramework("ApplicationServices"), .linkedFramework("CoreGraphics"),
-                                       .linkedFramework("CoreFoundation")]),
+                                       .linkedFramework("CoreFoundation"), .linkedFramework("CoreServices")]),
         // window snapshot from hook/src/winsnap.m (ARC)
         .target(name: "CSnap", path: "Sources/CSnap",
                 cSettings: [.unsafeFlags(["-fobjc-arc", "-Wno-deprecated-declarations"])],

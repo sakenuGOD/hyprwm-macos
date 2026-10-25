@@ -191,7 +191,7 @@ static int rgba_view_committed(struct rgba_view *v) {
 }
 static void rgba_view_layers(struct rgba_view *v) {
     struct ctx *c=v->capture->pc.engine;rect local={0,0,v->target.w,v->target.h};
-    u64 scope[2]={0};c->tx_ctor(scope,1);c->tx_add(scope,v->context);
+    RGBA_LAYER_SCOPE(c,scope);c->tx_add(scope,v->context);
     rgba_view_bounds(c,v->root,"setBounds:",local);rgba_view_point(c,v->root,"setPosition:",0,0);
     rgba_view_bounds(c,v->body,"setBounds:",local);rgba_view_point(c,v->body,"setPosition:",0,0);
     rgba_view_object(c,v->body,"setContents:",v->suspended?0:v->texture);
@@ -206,7 +206,7 @@ static void rgba_view_layers(struct rgba_view *v) {
     // once, including the wrapper above this local context.
     ((void (*)(void *,void *,float))c->msg)(v->root,c->sel("setOpacity:"),1.0f);
     ((void (*)(void *,void *,float))c->msg)(v->body,c->sel("setOpacity:"),1.0f);
-    c->tx_dtor(scope);v->current=v->target;v->current_alpha=v->alpha;v->mutations++;
+    RGBA_LAYER_END(scope);v->current=v->target;v->current_alpha=v->alpha;v->mutations++;
 }
 // Capture a CURRENT per-display consumer witness only in a real serialized
 // metalCallbacks frame. Never retain a borrowed Display/M/QC pointer.
@@ -249,7 +249,8 @@ static int rgba_view_create_image(struct rgba_view *v,void *image,double width,d
     if(!__builtin_isfinite(v->scale) || v->scale<=0 || v->scale>8 ||
        !rgba_view_rect((rect){0,0,v->source_w,v->source_h}))return -1;
     void *region=c->rgn(v->target);if(!region)return -1;
-    u32 was=c->in_cb;c->in_cb=1;
+    RGBA_CALLBACK_SCOPE(c);
+    struct rgba_layer_scope scope_scope __attribute__((cleanup(rgba_layer_scope_cleanup)))={0};
     v->window=v->api.create(0,5,region,0x1801);c->release(region);
     if(!v->window)goto failed;
     v->wid=c->get_id(v->window);if(!rgba_view_owned(v))goto failed;
@@ -278,7 +279,7 @@ static int rgba_view_create_image(struct rgba_view *v,void *image,double width,d
         v->body,c->sel("respondsToSelector:"),c->sel("setContentsScaling:"));
     if(!supports)goto failed;
     v->texture=p->retain_obj(image);if(!v->texture)goto failed;
-    u64 scope[2]={0};c->tx_ctor(scope,1);c->tx_add(scope,v->context);
+    rgba_layer_scope_begin(&scope_scope,c);u64 *scope=scope_scope.tx;c->tx_add(scope,v->context);
     rgba_view_point(c,v->root,"setAnchorPoint:",0,0);rgba_view_bool(c,v->root,"setMasksToBounds:",1);
     rgba_view_bool(c,v->root,"setOpaque:",0);rgba_view_object(c,v->root,"setBackgroundColor:",0);
     rgba_view_point(c,v->body,"setAnchorPoint:",0,0);rgba_view_bool(c,v->body,"setOpaque:",0);
@@ -294,10 +295,10 @@ static int rgba_view_create_image(struct rgba_view *v,void *image,double width,d
     if(!color){owned_color=g->api.geometry.display_rgb();color=owned_color;}
     if(color)rgba_view_object(c,v->context,"setColorSpace:",color);
     if(owned_color)c->release(owned_color);
-    c->tx_dtor(scope);
-    rgba_view_layers(v);v->prepared=1;v->qualified=0;c->sched_win(0,v->window);c->in_cb=was;return 0;
+    RGBA_LAYER_END(scope);
+    rgba_view_layers(v);v->prepared=1;v->qualified=0;c->sched_win(0,v->window);return 0;
 failed:
-    c->in_cb=was;v->reason=401;return -1;
+    v->reason=401;return -1;
 }
 static int rgba_view_create(struct rgba_view *v) {
     if(!rgba_view_pixels(v))return -1;
@@ -424,22 +425,22 @@ static int rgba_view_retire(struct rgba_view *v) {
     struct pc_capture *p=&v->capture->pc;struct ctx *c=p->engine;
     // The exact allocation remains ours even if its bind postcondition failed.
     if(v->window && !rgba_view_allocation(v))return 0;
-    u32 was=c->in_cb;c->in_cb=1;
-    if(v->window && v->api.order(0,v->wid,0,0)!=0){c->in_cb=was;return 0;}
+    RGBA_CALLBACK_SCOPE(c);
+    if(v->window && v->api.order(0,v->wid,0,0)!=0){return 0;}
     if(v->context) {
-        u64 scope[2]={0};c->tx_ctor(scope,1);c->tx_add(scope,v->context);
+        RGBA_LAYER_SCOPE(c,scope);c->tx_add(scope,v->context);
         if(v->body)rgba_view_object(c,v->body,"setContents:",0);
-        rgba_view_object(c,v->context,"setLayer:",0);c->tx_dtor(scope);
+        rgba_view_object(c,v->context,"setLayer:",0);RGBA_LAYER_END(scope);
     }
     if(v->window) {
         u32 wid=v->wid;c->rel_win(0,v->window);
-        if(c->by_id(wid)){c->in_cb=was;return 0;}
+        if(c->by_id(wid)){return 0;}
         v->window=0;
     }
     if(v->context)((void (*)(void *,void *))c->msg)(v->context,c->sel("invalidate"));
     if(v->body)p->release_obj(v->body);if(v->root)p->release_obj(v->root);
     if(v->context)p->release_obj(v->context);if(v->texture)p->release_obj(v->texture);
-    v->body=v->root=v->context=v->texture=0;v->shown=v->qualified=0;v->retired=1;c->in_cb=was;return 1;
+    v->body=v->root=v->context=v->texture=0;v->shown=v->qualified=0;v->retired=1;return 1;
 }
 void anim_rgba_present_frame(void *mctx,void *display,void *third,struct rgba_capture *g) {
     anim_rgba_frame(mctx,display,third,g);if(!rgba_valid(g))return;

@@ -40,11 +40,15 @@ public struct FocusRequest {
         guard pointer != nil,point.0.isFinite,point.1.isFinite,let target=target(in:snapshot) else{return false}
         if let hint {return hint.wid==wid && hint.pid==pid}
         func contains(_ rect:Rect)->Bool {rect.arr.allSatisfy(\.isFinite) && rect.w>0 && rect.h>0 && point.0>=rect.x && point.0<rect.x+rect.w && point.1>=rect.y && point.1<rect.y+rect.h}
+        // System panels can have no Space membership. They still own the
+        // pointer above a tile, including after the last native hit expires.
+        if let receiver=snapshot.windows.first(where:{$0.on && ($0.space==space || $0.space==0) && $0.alpha>=0.05 && contains($0.rect)}),
+           receiver.layer != 0 || receiver.space==0 {return false}
         // A real popup/notification is a barrier; never fall through it to a
         // tiled target. Unknown native hit data is accepted only with both
         // current bounds and the first visible census receiver in agreement.
         guard let nativeBounds,contains(nativeBounds),contains(target.rect),
-              let front=snapshot.windows.first(where:{$0.on && $0.space==space && $0.alpha>=0.05 && contains($0.rect)}) else{return false}
+              let front=snapshot.windows.first(where:{$0.on && ($0.space==space || $0.space==0) && $0.alpha>=0.05 && contains($0.rect)}) else{return false}
         return front.wid==wid && front.pid==pid
     }
     public func sourceAllows(_ context:(wid:Int?,flags:Int),snapshot:Snapshot,sourcePrimary:Bool) -> Bool {

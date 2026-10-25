@@ -3,6 +3,30 @@
 // from the frozen pc_capture/RGBA v4 ABI and is inert until explicitly armed.
 #define RGBA_NORMAL_OFFSET 12288
 #define RGBA_NORMAL_MAGIC 0x314c414d524f4e52ULL
+struct rgba_inplace;
+struct rgba_carrier;
+static struct rgba_carrier *rgba_carrier_control(struct rgba_capture *);
+static void rgba_begin_forget(struct rgba_capture *,struct rgba_inplace *);
+static int rgba_carrier_drop_slot(struct rgba_capture *,struct rgba_inplace *);
+static struct rgba_view *rgba_carrier_view(struct rgba_capture *,struct rgba_inplace *);
+static int rgba_carrier_source_excluded(struct rgba_capture *,struct rgba_inplace *,void *);
+static int rgba_draw_active(struct rgba_capture *);
+static int rgba_draw_frame_fits(struct rgba_capture *,struct rgba_inplace *);
+static int rgba_draw_prepare(struct rgba_capture *,struct rgba_inplace *,struct ch_win *,rect);
+static int rgba_draw_ready(struct rgba_capture *,struct rgba_inplace *,rect,int);
+static void rgba_draw_damage(struct rgba_capture *,struct rgba_inplace *);
+static void rgba_draw_forget(struct rgba_capture *,struct rgba_inplace *);
+static void rgba_draw_finish_drop(struct rgba_capture *);
+static void rgba_draw_scene_before(struct rgba_capture *);
+static void rgba_draw_recover_at(struct rgba_capture *,unsigned);
+static int rgba_draw_pending(struct rgba_capture *,struct rgba_inplace *);
+static void rgba_draw_commands(struct ctx *);
+static int rgba_draw_revoke(struct rgba_capture *,struct rgba_inplace *);
+void rgba_normal_draw_commands(void *);
+void rgba_normal_close_gate(void *,void **,unsigned,int);
+static void rgba_draw_claim_commit(struct rgba_capture *,struct rgba_inplace *,u32);
+static void rgba_draw_adopted(struct rgba_capture *,struct rgba_inplace *,u32,int);
+static int rgba_draw_model_adopted(struct rgba_capture *,struct rgba_inplace *,void *,u32,void *,void *,void *,void *);
 #include "presentation_inplace.h"
 struct rgba_normal_binding {
     u64 magic;u32 size,version;
@@ -22,7 +46,7 @@ static int rgba_normal_valid(struct rgba_normal_binding *n) {
         !__atomic_load_n(&n->dead,__ATOMIC_ACQUIRE) && rgba_valid(n->capture) &&
         n->capture->content_mode==RGBA_CLIENT_DOMAIN_MODE && !n->capture->destroyed && !n->capture->quarantined;
 }
-static int rgba_normal_owner(struct pc_capture *p,const void *raw) {
+static int rgba_normal_frame_owner(struct pc_capture *p,const void *raw,int retained_display) {
     const struct rgba_normal_scope *s=raw;
     if(!pc_main(p) || !s || !p->thread_self || !p->stack_top || !p->stack_size)return 0;
     void *thread=p->thread_self();u64 top=(u64)p->stack_top(thread),size=p->stack_size(thread);
@@ -30,7 +54,11 @@ static int rgba_normal_owner(struct pc_capture *p,const void *raw) {
     u64 bottom=top-size,address=(u64)s;
     if(address<bottom || address>top-sizeof(*s))return 0;
     struct rgba_normal_binding *n=s->binding;
-    if(!rgba_normal_valid(n) || &n->capture->pc!=p || n->inflight!=1 ||
+    int valid=retained_display?
+        n && n->magic==RGBA_NORMAL_MAGIC && n->size==sizeof(*n) && n->version==1 &&
+            rgba_valid(n->capture) && n->capture->content_mode==RGBA_CLIENT_DOMAIN_MODE && !n->capture->destroyed:
+        rgba_normal_valid(n);
+    if(!valid || &n->capture->pc!=p || n->inflight!=1 ||
        s->generation!=n->calls || !s->compositor || !s->head || !s->destination || !s->shape)return 0;
     u64 fp=(u64)__builtin_frame_address(0);int current=0;
     for(unsigned i=0;i<32;i++) {
@@ -57,6 +85,7 @@ static int rgba_normal_owner(struct pc_capture *p,const void *raw) {
        *(void **)(update-0xb88)!=s->head || *(void **)(update-0xb40)!=s->compositor)return 0;
     return *(void **)((char *)s->compositor+0x10)!=0;
 }
+static int rgba_normal_owner(struct pc_capture *p,const void *raw) {return rgba_normal_frame_owner(p,raw,0);}
 int anim_rgba_normal_arm(struct rgba_normal_binding *n) {
     if(!rgba_normal_valid(n))return 0;
     struct rgba_capture *g=n->capture;struct pc_capture *p=&g->pc;
@@ -82,8 +111,25 @@ static struct rgba_normal_binding *rgba_normal_binding(struct rgba_capture *g);
 static int rgba_normal_retry(struct rgba_capture *g);
 static int rgba_close_drop(struct rgba_capture *g);
 static u64 rgba_close_bytes(struct rgba_capture *g);
+static int rgba_begin_active(struct rgba_capture *);
+static int rgba_begin_wait(struct rgba_capture *,struct rgba_inplace *,struct ch_win *,void *);
+static int rgba_begin_takeover_ready(struct rgba_capture *,struct rgba_inplace *,double);
+static void rgba_begin_promoted(struct rgba_capture *,struct rgba_inplace *);
+static int rgba_carrier_active(struct rgba_capture *);
+static int rgba_carrier_pose(struct rgba_capture *,struct rgba_inplace *,struct ch_win *);
+static int rgba_carrier_outside(struct rgba_capture *);
+static int rgba_carrier_timer_allowed(struct rgba_capture *);
+static u64 rgba_carrier_bytes(struct rgba_capture *);
+static void rgba_carrier_finish_drop(struct rgba_capture *);
+static int rgba_carrier_can_publish(struct rgba_capture *,struct rgba_inplace *);
+static void rgba_carrier_observe_idle(struct rgba_capture *,struct rgba_inplace *,void *);
+static void rgba_carrier_before_window(struct rgba_capture *,void *,unsigned,u64,u64 *);
+extern void anim_rgba_carrier_recover(struct rgba_capture *,struct rgba_inplace *);
 #include "presentation_ordinary.h"
 #include "presentation_close.h"
+#include "presentation_begin.h"
+#include "presentation_carrier.h"
+#include "presentation_drawing.h"
 // Original links (+0/+10) and prepared links (+8) have different ownership.
 // Reject duplicate target leaves, malformed lists and grouped targets rather
 // than publishing a partial window as a complete accepted frame.
@@ -123,6 +169,7 @@ static void rgba_normal_encode(struct rgba_normal_scope *scope,char *selected,ch
         p->reason=234;return;
     }
     struct rgba_ordinary *control=rgba_ordinary_control(g);if(control){control->capture_generation=scope->generation;control->capture_time=a->get_time((void *)p->update);}
+    rgba_begin_captured(g,(void *)p->update);
     if(!rgba_ordinary_capture_budget(g)){p->reason=250;goto done;}
     if(!rgba_resources_owned(g,shared_renderer,0,1)){p->reason=203;goto done;}
     char *normal=scope->destination;float scale=*(float *)(normal+0x68);if(scale==0)scale=1;
@@ -145,6 +192,50 @@ done:
     if(destination)a->release_destination(destination);
     rgba_seal(g);
 }
+// An active source that is already prepared need not wait for the timer to
+// request another native frame. Reserve only empty, preinitialized OWN custody;
+// allocation and encoding still use the existing owning-scope checks below.
+static void rgba_normal_arm_active(struct rgba_normal_scope *scope) {
+    struct rgba_capture *g=scope->binding->capture;struct pc_capture *p=&g->pc;
+    struct rgba_ordinary *o=rgba_ordinary_control(g);struct ctx *c=p->engine;
+    if(!o || !o->enabled || c->ch->h.now>=o->expires || c->ch->h.now<o->next_capture || o->candidate!=CH_NW ||
+       __atomic_load_n(&o->sequence,__ATOMIC_ACQUIRE)!=o->ack || o->command ||
+       __atomic_load_n(&p->command_sequence,__ATOMIC_ACQUIRE)!=p->command_ack || p->command ||
+       !rgba_api_ready(&g->api) || !g->client_api.transform_set ||
+       p->stage!=PC_EMPTY || p->active_command || p->gpu_pending || p->clone || p->capture ||
+       p->texture_ref || p->command_buffer || g->clear_buffer || g->update || g->root ||
+       g->sealed || g->locked_client || g->quarantined || !g->sel.read_bytes ||
+       !g->texture_class || !g->pass_class || !p->status_selector ||
+       !p->width_selector || !p->height_selector || !p->format_selector || !p->type_selector ||
+       (g->renderer && (!g->metal || !g->queue || !g->device || !rgba_flush_allowed(g))))return;
+    struct rgba_inplace *slots=rgba_ordinary_slots(g);
+    for(unsigned pass=0;pass<2;pass++) {
+        unsigned count=0,best=CH_NW,distance=CH_NW;
+        for(char *s=scope->prepared;s && count++<256;s=*(char **)(s+8)) {
+            if(*(u32 *)(s+0x180)!=10)continue;
+            unsigned wid=*(u32 *)(s+0x268);struct ch_win *w=slot(c->ch,wid,0);
+        if(!w || !w->used || !w->geo || w->geo==2 || (w->held && !rgba_begin_active(g)) || w->wait ||
+               cover_index(c,wid,1)>=0 || birth_holds(c,wid))continue;
+            for(unsigned i=0;i<CH_NW;i++) {
+                struct rgba_inplace *m=&slots[i];unsigned d=(i+CH_NW-o->cursor)%CH_NW;
+                if(d>=distance || !m->on || m->opening || m->padding_motion ||
+                   m->wid!=wid || !!m->presenting!=pass || !rgba_inplace_source(g,m))continue;
+                if(!(w->pos.active || w->size.active || w->alpha.active || rgba_draw_pending(g,m)))continue;
+                rect r={w->pos.v[0],w->pos.v[1],w->size.v[0],w->size.v[1]};
+                if(rgba_view_rect(r)){best=i;distance=d;}
+            }
+        }
+        if(best==CH_NW)continue;
+        struct rgba_inplace *m=&slots[best];struct ch_win *w=slot(c->ch,m->wid,0);
+        p->source=(u64)m->window;p->creator=m->creator;p->pid_version=m->pid_version;p->wid=m->wid;
+        p->capture_rect=(rect){w->pos.v[0],w->pos.v[1],w->size.v[0],w->size.v[1]};
+        if(!pc_source(p))continue;
+        struct rgba_view *v=(void *)((char *)g+RGBA_VIEW_OFFSET);
+        v->source_wid=p->wid;v->source_creator=p->creator;v->source_pid_version=p->pid_version;
+        o->candidate=best;o->cursor=(best+1)%CH_NW;o->started=c->ch->h.now;
+        o->capture_generation=0;o->capture_time=0;p->stage=PC_ARMED;return;
+    }
+}
 // Called by the exception boundary with the native original already returned.
 void anim_rgba_normal_capture(void *compositor,void *head,void *destination,void **shape,
                              struct rgba_normal_binding *n,void *prepared,u64 entry_frame) {
@@ -162,6 +253,7 @@ void anim_rgba_normal_capture(void *compositor,void *head,void *destination,void
     if(mount && mount->on)rgba_inplace_observe(g,head,prepared);
     if(ordinary && ordinary->enabled)rgba_ordinary_observe(g,head,prepared);
     if(ordinary && ordinary->enabled)rgba_close_observe(g,prepared);
+    rgba_normal_arm_active(&scope);
     if(p->stage!=PC_ARMED || p->gpu_pending){n->reason=0;goto finish;}
     char *win=pc_source(p),*cwc=win?*(char **)(win+0x18):0;
     n->reason=2;if(!cwc)goto finish;
@@ -248,16 +340,25 @@ static int rgba_normal_before_destroy(struct rgba_capture *g) {
     struct rgba_normal_binding *n=rgba_normal_binding(g);
     if(!n || n->inflight)return 0;
     __atomic_store_n(&n->dead,1,__ATOMIC_RELEASE);
+    struct rgba_begin_binding *b=rgba_begin_control(g);
+    if(b)__atomic_store_n(&b->dead,1,__ATOMIC_RELEASE);
     if(!rgba_ordinary_drop(g))return 0;
     if(!rgba_inplace_drop(g))return 0;
     return rgba_view_before_capture_destroy(g);
 }
 void anim_rgba_normal_present_dispatch(struct ctx *c,double now) {
+    struct rgba_capture *before=*(void **)((char *)c+PC_CONTROL_PTR);
+    if(rgba_valid(before) && rgba_carrier_control(before) && !rgba_carrier_timer_allowed(before)) {
+        void (*original)(struct ctx *,double)=*(void (**)(struct ctx *,double))((char *)c+PC_ORIGINAL_TICK);
+        if(original)original(c,now);return;
+    }
     rgba_ordinary_before_tick(c);
     rgba_present_dispatch_control(c,now,rgba_normal_prepare_capture,rgba_normal_before_destroy);
     struct rgba_capture *g=*(void **)((char *)c+PC_CONTROL_PTR);
     if(rgba_valid(g) && !g->destroyed && !g->pc.dead && !g->pc.active_command)rgba_inplace_tick(g);
-    if(rgba_valid(g) && !g->destroyed && !g->pc.dead && !g->pc.active_command)rgba_close_tick(g,now);
+    if(rgba_valid(g) && !g->destroyed && !g->pc.dead && !g->pc.active_command) {
+        if(rgba_carrier_active(g))anim_rgba_carrier_close(g,now);else rgba_close_tick(g,now);
+    }
     if(rgba_valid(g) && !g->destroyed && !g->pc.dead && !g->pc.active_command)rgba_ordinary_tick(g,now);
 }
 void anim_rgba_normal_present_frame(void *mctx,void *display,void *third,struct rgba_capture *g) {

@@ -1,8 +1,9 @@
 // Fast application configure: window position+size in one synchronous call (~1-10 ms),
 // plus tiling attributes (standard window, resizable). Elements are cached by wid.
 // The WindowServer engine handles visible animation; this receives only final/intermediate frames.
-// Build: clang -O2 -dynamiclib -framework ApplicationServices src/axlib.c -o build/libax.dylib
+// Build: clang -O2 -dynamiclib -framework ApplicationServices -framework CoreServices src/axlib.c -o build/libax.dylib
 #include <ApplicationServices/ApplicationServices.h>
+#include <CoreServices/CoreServices.h>
 #include <pthread.h>
 #include "axpolicy.h"
 #include "launcher_intent.h"
@@ -204,6 +205,23 @@ static unsigned element_flags(AXUIElementRef el, int include_resize) {
     Boolean settable = false;
     if (include_resize && AXUIElementIsAttributeSettable(el, kAXSizeAttribute, &settable) == kAXErrorSuccess && settable)
         flags |= AXWM_RESIZABLE;
+    if (include_resize && (flags & (AXWM_WINDOW|AXWM_STANDARD)) == (AXWM_WINDOW|AXWM_STANDARD)) {
+        CFTypeRef document=copy_attr(el,kAXDocumentAttribute);
+        if (document && CFGetTypeID(document)==CFStringGetTypeID()) {
+            CFURLRef url=CFURLCreateWithString(NULL,(CFStringRef)document,NULL);
+            CFStringRef scheme=url ? CFURLCopyScheme(url):NULL;
+            if (scheme && CFEqual(scheme,CFSTR("file"))) {
+                CFStringRef extension=CFURLCopyPathExtension(url);
+                CFStringRef type=extension ? UTTypeCreatePreferredIdentifierForTag(kUTTagClassFilenameExtension,extension,NULL):NULL;
+                if (type && UTTypeConformsTo(type,kUTTypeAudiovisualContent)) flags |= AXWM_MEDIA;
+                if (type) CFRelease(type);
+                if (extension) CFRelease(extension);
+            }
+            if (scheme) CFRelease(scheme);
+            if (url) CFRelease(url);
+        }
+        if (document) CFRelease(document);
+    }
     unsigned required = AXWM_WINDOW | AXWM_STANDARD | AXWM_RESIZABLE;
     if ((flags & required) == required && !(flags & AXWM_TRANSIENT)) flags |= AXWM_TILEABLE;
     return flags;
@@ -230,7 +248,7 @@ int ax_window_flags(int pid, unsigned wid) {
 // 1 — confirmed ordinary resizable top-level window; 0 — protected; -1 — not yet exposed by AX.
 int ax_tileable(int pid, unsigned wid) {
     int flags = ax_window_flags(pid, wid);
-    return flags < 0 ? flags : !!(flags & AXWM_TILEABLE);
+    return flags < 0 ? flags : !!(flags & AXWM_TILEABLE) && !(flags & AXWM_MEDIA);
 }
 
 // Read-only evidence for automatic focus. A modal viewer/menu must retain keyboard focus even

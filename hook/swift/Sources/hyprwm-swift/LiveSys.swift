@@ -40,6 +40,7 @@ final class LiveSys: SysAPI {
     private var presenceSequence:UInt64=0
     private var focusSequence=0,focusWorkers=0
     private var floatRestackPending=false,floatRestackAt=0.0
+    var raiseFloatingWindows:(([Int])->Void)?
     private var focusCovers:[Int:FocusCoverStamp]=[:]
     func setFocusCover(_ value:FocusCoverStamp?,wid:Int) {focusLock.lock();focusCovers[wid]=value;focusLock.unlock()}
     private func focusCover(_ request:FocusRequest) -> FocusCoverStamp? {
@@ -121,6 +122,49 @@ final class LiveSys: SysAPI {
             }
         }
     }
+    func preserveFloatingWindows(_ windows:[WinInfo],space:Int) {
+        guard !windows.isEmpty,space>0,let front=frontPid(),let frontBirth=processBirth(front),
+              !sessionLocked(),!interactionOverlay(),!mouseDown() else{return}
+        let owners=windows.compactMap{window -> (Int,Int,String)? in
+            guard !protectedProcess(window.pid),let birth=processBirth(window.pid),winPidLevel(window.wid).pid==window.pid else{return nil}
+            return(window.wid,window.pid,birth)
+        }
+        guard !owners.isEmpty else{return}
+        focusLock.lock()
+        guard !floatRestackPending,now()-floatRestackAt>=0.1 else{focusLock.unlock();return}
+        floatRestackPending=true;floatRestackAt=now();let sequence=focusSequence;focusLock.unlock()
+        focusQueue.async{[weak self] in
+            guard let self else{return}
+            defer{self.focusLock.lock();self.floatRestackPending=false;self.focusLock.unlock()}
+            func valid()->Bool {
+                self.focusLock.lock();let current=self.focusSequence==sequence;self.focusLock.unlock()
+                return current && self.activeSpace()==UInt64(space) && !self.sessionLocked() && !self.interactionOverlay() &&
+                    !self.mouseDown() && self.frontPid()==front && self.processBirth(front)==frontBirth
+            }
+            guard valid(),let fresh=try? self.focusSnapshot(),fresh.stable,!fresh.locked,fresh.spaceType==0,fresh.space==space else{return}
+            let context=self.nativeFocusContext(front)
+            guard context.flags & (NativeFocusFlags.positive|NativeFocusFlags.unknown)==0 else{return}
+            // AppKit can keep an inactive application's AXRaise below the
+            // active app. Use the engine's existing same-level order command,
+            // on its sole writer, without changing native key/main selection.
+            var ordered:[Int]=[]
+            for window in fresh.windows.reversed() where window.on && window.space==space && window.layer==0 && window.alpha>=0.05 && !window.nativeFullscreen {
+                guard let owner=owners.first(where:{$0.0==window.wid && $0.1==window.pid}) else{continue}
+                guard valid(),self.winPidLevel(window.wid).pid==owner.1,self.processBirth(owner.1)==owner.2 else{return}
+                let current=self.nativeFocusContext(front)
+                guard current.wid==context.wid,current.flags==context.flags else{return}
+                ordered.append(owner.0)
+            }
+            guard !ordered.isEmpty else{return}
+            DispatchQueue.main.async {
+                guard valid() else{return}
+                let current=self.nativeFocusContext(front)
+                guard current.wid==context.wid,current.flags==context.flags,
+                      ordered.allSatisfy({wid in owners.contains{owner in owner.0==wid && self.winPidLevel(wid).pid==owner.1 && self.processBirth(owner.1)==owner.2}}) else{return}
+                self.raiseFloatingWindows?(ordered)
+            }
+        }
+    }
     private func redirectTargetModal(_ request:FocusRequest,context:(wid:Int?,flags:Int),source:Int?,allowed:()->Bool) throws {
         guard request.reason == .keyboard,context.flags & (NativeFocusFlags.menu|NativeFocusFlags.unknown|NativeFocusFlags.fullscreen)==0,
               context.flags & (NativeFocusFlags.modal|NativeFocusFlags.child) != 0,let wid=context.wid,wid != request.wid,
@@ -155,13 +199,13 @@ final class LiveSys: SysAPI {
                 guard request.sourceMatches(source) else{return}
                 let context:(wid:Int?,flags:Int)=source.map(self.nativeFocusContext) ?? (nil,NativeFocusFlags.noKey)
                 guard context.flags&NativeFocusFlags.positive==0 else{return}
-                let sourcePrimary=context.wid.map{key in source.map{self.axTileable($0,key)==1} ?? false} ?? true
+                let sourcePrimary=context.wid.map{key in source.map{self.axPrimaryWindow($0,key)} ?? false} ?? true
                 let targetContext=source==request.pid ? context:self.nativeFocusContext(request.pid)
                 guard request.targetAllows(targetContext) else {
                     try self.redirectTargetModal(request,context:targetContext,source:source,allowed:allowed)
                     return
                 }
-                guard self.axTileable(request.pid,request.wid)==1,allowed() else{return}
+                guard self.axPrimaryWindow(request.pid,request.wid),allowed() else{return}
                 var first=try self.focusSnapshot(),cover=self.focusCover(request)
                 // A close fallback may be queued just before its final-layout
                 // snapshot ACQUIRED receipt. Wait briefly for real authority.
@@ -397,16 +441,24 @@ final class LiveSys: SysAPI {
 
     func mouseDown() -> Bool { hs_mouse_down() != 0 }
 
-    func axTileable(_ pid: Int, _ wid: Int) -> Int {
+    private func windowFlags(_ pid:Int,_ wid:Int)->Int {
         // Focus workers still require fresh native evidence at their commit boundary.
-        guard Thread.isMainThread else{return Int(ax_tileable(Int32(pid),UInt32(wid)))}
+        guard Thread.isMainThread else{return Int(ax_window_flags(Int32(pid),UInt32(wid)))}
         guard wid>0,wid<=Int(UInt32.max),let birth=processBirth(pid) else{return -1}
         return windowClassification.read(pid:pid,wid:wid,birth:birth) { [weak self] in
             guard let self,self.processBirth(pid)==birth,self.winPidLevel(wid).pid==pid else{return -1}
-            let result=Int(ax_tileable(Int32(pid),UInt32(wid)))
+            let result=Int(ax_window_flags(Int32(pid),UInt32(wid)))
             guard self.processBirth(pid)==birth,self.winPidLevel(wid).pid==pid else{return -1}
             return result
         }
+    }
+    func axTileable(_ pid:Int,_ wid:Int)->Int {
+        let flags=windowFlags(pid,wid)
+        return flags<0 ? flags:flags & (1<<7) != 0 && flags & (1<<8)==0 ? 1:0
+    }
+    func axPrimaryWindow(_ pid:Int,_ wid:Int)->Bool {
+        let flags=windowFlags(pid,wid)
+        return flags>=0 && flags & (1<<7) != 0
     }
     func axFrame(_ pid: Int, _ wid: Int, _ r: Rect) -> Int { Int(ax_frame(Int32(pid), UInt32(wid), r.x, r.y, r.w, r.h)) }
     func axSize(_ pid:Int,_ wid:Int,_ width:Double,_ height:Double) -> Int {Int(ax_size(Int32(pid),UInt32(wid),width,height))}

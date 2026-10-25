@@ -256,6 +256,7 @@ extension WM {
 
     func beginInteraction(_ area: Rect, _ space: Int, _ wins: [WinInfo], native: NativeResizeContext? = nil) {
         dragSession = nil
+        pendingDragSession=nil
         guard sp(space).full == nil else { return }
         let context = sys.frontPid().map(sys.focusContext)
         if let context, context.flags & (1 | 2 | 4 | 8 | 16) != 0 { return }
@@ -271,11 +272,9 @@ extension WM {
         }
         guard let window=actor,rects.contains(window.wid), !sys.protectedProcess(window.pid), tileable(window),
             sys.winPidLevel(window.wid).pid == window.pid,
-            !eng.c.wins().contains(where: { slot in
-                slot.wid == window.wid && (slot.posActive || slot.sizeActive || slot.held ||
-                    (slot.settling && slot.visible.maxDiff(slot.real)>TOL))
-            }),
             let birth = sys.processBirth(window.pid) else { return }
+        let settling=eng.c.wins().contains{slot in slot.wid==window.wid &&
+            (slot.posActive || slot.sizeActive || slot.held || (slot.settling && slot.visible.maxDiff(slot.real)>TOL))}
         if let native, native.birth != birth || native.phase > 2 || native.epoch == 0 { return }
         let frame = native?.frame ?? sys.winBounds(window.wid) ?? window.rect
         var path: [(Node, Rect, Bool, [Bool])] = []
@@ -317,7 +316,29 @@ extension WM {
         }
         dragSession = DragSession(wid: window.wid, pid: window.pid, space: space, frame:frame,birth:birth,owners:owners,point:point,cuts:cuts,area:area,tree:sp(space).tree?.json ?? .null,nativeEpoch:native?.epoch)
         dragSession?.motion=[(sys.now(),point.0,point.1)]
+        if settling {
+            if cuts.isEmpty && native==nil {pendingDragSession=dragSession}
+            dragSession=nil;return
+        }
         if !cuts.isEmpty { cfgSink?.cancel(window.wid) }
+    }
+
+    func resumePendingInteraction(_ area:Rect,_ space:Int) {
+        guard let drag=pendingDragSession else{return}
+        guard enabled,drag.space==space,drag.area==area,drag.tree==sp(space).tree?.json,
+              sys.activeSpace()==UInt64(space),!sys.sessionLocked(),!sys.interactionOverlay(),
+              sys.winPidLevel(drag.wid).pid==drag.pid,sys.processBirth(drag.pid)==drag.birth,
+              !hidden.contains(where:{$0.wid==drag.wid}),!floating.contains(drag.wid),
+              let start=drag.motion.first,sys.now()-start.time<1 else{pendingDragSession=nil;return}
+        guard !eng.c.wins().contains(where:{$0.wid==drag.wid && ($0.posActive || $0.sizeActive || $0.held ||
+            ($0.settling && $0.visible.maxDiff($0.real)>TOL))}) else{return}
+        guard let actual=sys.winBounds(drag.wid) else{pendingDragSession=nil;return}
+        let point=sys.mouse(),dx=point.0-drag.point.0,dy=point.1-drag.point.1
+        // Only the actor selected at mouse-down can resume. Its native motion
+        // must agree with the pointer; an animation landing is not a drag.
+        guard abs(actual.w-drag.frame.w)<=TOL,abs(actual.h-drag.frame.h)<=TOL,
+              abs(actual.x-drag.frame.x-dx)<=TOL,abs(actual.y-drag.frame.y-dy)<=TOL else{pendingDragSession=nil;return}
+        dragSession=drag;pendingDragSession=nil;sampleInteractionMotion()
     }
 
     func sampleInteractionMotion() {
@@ -433,7 +454,7 @@ extension WM {
             if let peer = dropped {
                 state.tree = Dwindle.remove(state.tree, drag.wid)
                 state.tree = insert(state, drag.wid, peer, area, point: cursor)
-            } else if options.dragMode == "insert" {
+            } else if Dwindle.neighbour(rects,drag.wid,direction) != nil {
                 moveDir(state, area, drag.wid, direction, rects)
             } else { return false }
             state.focus = drag.wid; target[drag.wid] = nil

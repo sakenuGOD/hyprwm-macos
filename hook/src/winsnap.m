@@ -30,8 +30,8 @@ int ws_menu_tracking(void) {
     return menuTracking;
 }
 
-// Spotlight's accessory panel owns keyboard input while NSWorkspace still reports
-// the previously active app. Query only window metadata, never pixels or AX.
+// Accessory panels can own input without changing the frontmost application.
+// Query window metadata only; the ordinary Dock and its tooltips are not panels.
 int ws_input_overlay(void) {
     @autoreleasepool {
         CFArrayRef windows = CGWindowListCopyWindowInfo(
@@ -39,12 +39,19 @@ int ws_input_overlay(void) {
         if (!windows) return 1;  // Do not steal focus while native ownership is unknown.
         BOOL active = NO;
         for (NSDictionary *window in (__bridge NSArray *)windows) {
-            if ([window[(id)kCGWindowOwnerName] isEqualToString:@"Spotlight"] &&
-                [window[(id)kCGWindowLayer] intValue] > 0 &&
+            if ([window[(id)kCGWindowLayer] intValue] > 0 &&
                 [window[(id)kCGWindowIsOnscreen] boolValue] &&
                 [window[(id)kCGWindowAlpha] doubleValue] > .001) {
-                active = YES;
-                break;
+                NSRunningApplication *app=[NSRunningApplication runningApplicationWithProcessIdentifier:
+                    [window[(id)kCGWindowOwnerPID] intValue]];
+                BOOL spotlight=[app.bundleIdentifier isEqualToString:@"com.apple.Spotlight"];
+                CGRect bounds=CGRectZero;
+                NSDictionary *raw=window[(id)kCGWindowBounds];
+                if (raw) CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)raw,&bounds);
+                BOOL dockPanel=[app.bundleIdentifier isEqualToString:@"com.apple.dock"] &&
+                    [app.executableURL.path isEqualToString:@"/System/Library/CoreServices/Dock.app/Contents/MacOS/Dock"] &&
+                    bounds.size.width>200 && bounds.size.height>200;
+                if(spotlight || dockPanel) {active=YES;break;}
             }
         }
         CFRelease(windows);
