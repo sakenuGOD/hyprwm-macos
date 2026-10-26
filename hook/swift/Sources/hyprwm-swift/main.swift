@@ -3,7 +3,6 @@
 // HYPRWM_HOOK selects the source integration directory.
 // HYPRWM_STATE_DIR selects persistent state; HYPRWM_CTL selects the Unix socket.
 // HYPRWM_TIME_SCALE, HYPRWM_HOLD and HYPRWM_DEBUG override runtime behavior.
-// HYPRWM_NO_DECO=1 disables the optional decoration helper.
 import AppKit
 import CAX
 import Foundation
@@ -243,12 +242,8 @@ do {
     if startupCheckOnly{die(startupQualification.dumps())}
     StartupQualification.unverified(startupQualification,hook:hook,controlPath:ctl,statePath:stateDir + "/hyprwm.state.json",nativeWorkUnknown:true)
 }
-let deco: DecoAPI
-if env["HYPRWM_NO_DECO"] == "1" {
-    deco = NullDeco()
-} else {
-    do { deco = try Deco(hook: hook) } catch { log("decoration helper unavailable:", error); deco = NullDeco() }
-}
+// Native decoration owns the ring; solid helper windows must not fill B−A.
+let deco: DecoAPI = NullDeco()
 do { try EngineStatePreflight.check(stateDir + "/hyprwm.state.json") } catch { die("Engine state: \(error)") }
 let wm = WM(sys: sys, eng: eng, deco: deco, cfg: cfg, statePath: stateDir + "/hyprwm.state.json",
             minsizePath: stateDir + "/minsize_app.json")
@@ -267,6 +262,10 @@ wm.buildCommit = String(cString: hs_build_revision())
 wm.buildSourceDirty = hs_build_source_dirty() != 0
 do { wm.options = try RuntimeOptions.load(configDir: hook + "/config") } catch { die("Swift configuration: \(error)") }
 do { try wm.prepareStartupRecovery() } catch { die("startup recovery: \(error)") }
+// An authenticated manager handover can retain bindings from an older daemon,
+// including hidden sources. Retire them without changing client alpha or frame.
+for window in eng.c.wins() { eng.c.under(window.wid, 0) }
+eng.c.commit()
 let firstMapService:NativeAdmissionService?
 do {firstMapService=try NativeAdmissionService(sys:sys);wm.admission=firstMapService?.gateway}
 catch {log("first-map admission unavailable:",error);firstMapService=nil}
