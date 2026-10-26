@@ -92,3 +92,35 @@ not distributed by the source installer.
 
 The movement contract is in [MOTION.md](docs/MOTION.md); current implementation
 coverage is in [ANIMATION_AUDIT.md](docs/ANIMATION_AUDIT.md).
+
+## Application menus
+
+The optional application-menu policy hides the native application name and
+its menus on the left. The Apple menu, workspace panel and status items remain
+visible. It preserves application shortcuts and window title bars. Keep macOS
+menu-bar autohide disabled; this policy does not use autohide.
+
+On the qualified Apple Silicon installation, build and install it with the
+Command Line Tools installed:
+
+```sh
+zsh hook/active/build.sh
+sudo /Library/Developer/CommandLineTools/usr/bin/python3 -I -S \
+  hook/active/install-menu-policy.py install --uid "$(id -u)"
+```
+
+The root-owned helper follows the authenticated HyprWM daemon and discovers
+regular applications, including later launches. It loads a reversible menu-only
+module into each eligible user application. Existing debugger and client code
+loading permissions are required; a refused application keeps its native menus.
+Failed loads are bounded and are not repeatedly attached to. The helper restores
+menus when HyprWM is paused, stops responding, or the policy is uninstalled:
+
+```sh
+sudo /Library/Developer/CommandLineTools/usr/bin/python3 -I -S \
+  hook/active/install-menu-policy.py uninstall --uid "$(id -u)"
+```
+
+Uninstall disables the service and restores menu entries without restarting
+applications or unloading code from their processes. The installed recovery
+files remain in `/Library/Application Support/HyprWM/menu-policy-<uid>`.
