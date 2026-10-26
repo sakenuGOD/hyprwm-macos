@@ -1,7 +1,21 @@
 #!/usr/bin/env python3
 """Keep native application menus hidden while the HyprWM session is active."""
 from pathlib import Path
-import argparse,ctypes,fcntl,importlib.util,json,os,signal,socket,stat,struct,time
+import argparse,ctypes,fcntl,importlib.util,json,os,pwd,signal,socket,stat,struct,time
+
+def toolbar_menus(uid):
+    # The native companion opens the ORIGINAL application submenus. Its
+    # representation owner hides backing views while preserving that model.
+    path=Path(pwd.getpwuid(uid).pw_dir)/'.config/hyprwm-style/native-companion/settings.json'
+    try:
+        fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK)
+        try:
+            info=os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_uid!=uid or info.st_mode&0o022 or not 0<info.st_size<=65536:return False
+            value=json.loads(os.read(fd,65537))
+        finally:os.close(fd)
+        return isinstance(value,dict) and type(value.get('schema')) is int and value['schema']==1 and value.get('b15_menu_enabled') is True
+    except (OSError,ValueError):return False
 
 def regular_applications(regular_only=True):
     # Read LaunchServices' actual application policy, excluding agents and helpers.
@@ -58,6 +72,7 @@ def run(uid,control):
     except BlockingIOError:os.close(lock);return
     loader=modifier();admission=first_map_modifier()
     library=loader.notify();known={};ready=set();attempted=set();stopping=False
+    relocated=toolbar_menus(uid)
     admission_ready=set();admission_attempted=set();manager_generation=None
     def stop(*_):
         nonlocal stopping
@@ -86,7 +101,7 @@ def run(uid,control):
             if not fresh or any(fresh[k]!=actor[k] for k in ['pid','uid','seconds','micros','path']):known.pop(pid,None);continue
             key=(pid,actor['seconds'],actor['micros'],actor['path'])
             if not value or key in ready:
-                token=loader.request(library,pid,value);library.notify_cancel(token)
+                token=loader.request(library,pid,value and not relocated);library.notify_cancel(token)
             if admission and (not value or key in admission_ready):
                 token=admission.request(library,pid,value);library.notify_cancel(token)
     missing_since=None;was_enabled=None
@@ -113,6 +128,10 @@ def run(uid,control):
                     if stopping:break
                     pid=actor['pid']
                     key=(pid,actor['seconds'],actor['micros'],actor['path'])
+                    if relocated:
+                        if key not in ready:
+                            token=loader.request(library,pid,False);library.notify_cancel(token);ready.add(key)
+                        continue
                     if key in ready:continue
                     if key in attempted and loader.capability(library,pid)!=1:continue
                     attempted.add(key)

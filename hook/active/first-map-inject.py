@@ -133,7 +133,7 @@ def publish_grant(target,uid,control):
                 write_grant(directory/f'g{current["pid"]}',target,uid,user.pw_gid)
     write_grant(folder/'grants.json',target,uid,user.pw_gid)
 
-def image_entry(path,architecture):
+def image_entry(path,architecture,symbol='HAInstallCurrentGrant'):
     raw=path.read_bytes();assert len(raw)<=2**21
     if struct.unpack_from('>I',raw)[0]==0xcafebabe:
         count=struct.unpack_from('>I',raw,4)[0];assert 0<count<=8;matches=[]
@@ -164,7 +164,7 @@ def image_entry(path,architecture):
         index,kind,_,_,address=struct.unpack_from('<IBBHQ',raw,symoff+16*i)
         if not index or kind&0xe0 or kind&0xf!=0xf:continue
         assert index<strsize;end=raw.find(b'\0',stroff+index,stroff+strsize);assert end>=0
-        if raw[stroff+index:end]!=b'_HAInstallCurrentGrant':continue
+        if raw[stroff+index:end]!=('_'+symbol).encode():continue
         for start,size,offset in code_sections:
             if start<=address<address+16<=start+size:
                 entries.append(dict(uuid=identifier,offset=address-text[0],prefix=raw[offset+address-start:offset+address-start+16].hex()))
@@ -188,7 +188,8 @@ def load(pid,uid,seconds,micros,control='/tmp/hyprwm.ctl'):
         return dict(ok=True,pid=pid,admission=True,existing=True)
     source=Path(__file__).with_name('hypradmission.v2.dylib');assert source.is_file()
     user=pwd.getpwuid(uid);home=Path(user.pw_dir).resolve()
-    folder=home/'Library/Application Support/HyprWM/Client Modules';assert folder.is_dir() and folder.stat().st_uid==uid
+    folder=home/'Library/Application Support/HyprWM/Client Modules'
+    handle=owned_directory(folder,uid,user.pw_gid,create=True);os.close(handle)
     bundle=Path(expected['path'].split('.app/')[0]+'.app');bid=plistlib.loads((bundle/'Contents/Info.plist').read_bytes()).get('CFBundleIdentifier')
     if isinstance(bid,str) and bid and all(c.isalnum() or c in '._-' for c in bid):
         container=home/'Library/Containers'/bid/'Data'

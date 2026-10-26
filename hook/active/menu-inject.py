@@ -46,13 +46,13 @@ def protected_tool(name):
     assert resolved.is_file() and os.access(resolved,os.X_OK)
     return str(path)
 
-def loader_entry():
+def loader_entry(name='dlopen',library='/usr/lib/system/libdyld.dylib'):
     # Shared-cache code is callable only after the stopped target matches this image.
     class DlInfo(ctypes.Structure):
         _fields_=[('name',ctypes.c_char_p),('base',ctypes.c_void_p),('symbol',ctypes.c_char_p),('address',ctypes.c_void_p)]
-    dyld=ctypes.CDLL('/usr/lib/system/libdyld.dylib')
+    dyld=ctypes.CDLL(library)
     dyld.dladdr.argtypes=[ctypes.c_void_p,ctypes.POINTER(DlInfo)];dyld.dladdr.restype=ctypes.c_int
-    address=ctypes.cast(dyld.dlopen,ctypes.c_void_p).value;info=DlInfo()
+    address=ctypes.cast(getattr(dyld,name),ctypes.c_void_p).value;info=DlInfo()
     assert address and dyld.dladdr(address,ctypes.byref(info)) and info.base
     fields=struct.unpack('<8I',ctypes.string_at(info.base,32))
     assert fields[0]==0xfeedfacf and fields[4]<2048 and fields[5]<1048576

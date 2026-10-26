@@ -130,6 +130,12 @@ its menus on the left. The Apple menu, workspace panel and status items remain
 visible. It preserves application shortcuts and window title bars. Keep macOS
 menu-bar autohide disabled; this policy does not use autohide.
 
+An existing native toolbar with relocated application menus keeps ownership of
+their presentation. Its title button opens the original menu tree below the
+bar. The helper preserves those original menu items and delegates hiding to
+the toolbar's representation service; hiding the items themselves breaks that
+dropdown. The toolbar service retains its own pause and removal lifecycle.
+
 On the qualified Apple Silicon installation, build and install it with the
 Command Line Tools installed:
 
