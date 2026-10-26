@@ -58,6 +58,20 @@ and the unconsumed handover record, then restore the previous executable. Never
 recover an app update by restarting WindowServer, Dock, loginwindow or an
 application that owns user documents.
 
+## After a reboot or WindowServer replacement
+
+A new WindowServer invalidates the old native addresses, channel ownership and
+identity-bound workspace permissions. Keep the previous presentation module
+disabled until a fresh, qualified bootstrap has established a new channel and
+verified the new process. Reuse the accepted code image only with new runtime
+state; do not replay an old rollout receipt or copy its window IDs.
+
+If configured shortcut overrides use the legacy native watcher, generate its
+binding document before starting the daemon. The temporary document may be absent
+after a reboot, and the daemon applies overrides during startup. Starting the watcher
+first through the existing lifecycle helper supplies that baseline. The public
+source installer still does not provide the complete Engine bootstrap workflow.
+
 ## Native presentation updates
 
 Every new native image needs whole-image qualification and fresh process birth,
