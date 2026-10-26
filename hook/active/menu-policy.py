@@ -34,13 +34,21 @@ def modifier():
     loader=importlib.util.module_from_spec(spec);spec.loader.exec_module(loader)
     return loader
 
+def first_map_modifier():
+    source=Path(__file__).resolve().with_name('first-map-inject.py')
+    if not source.is_file():return None
+    spec=importlib.util.spec_from_file_location('first_map_inject',source)
+    value=importlib.util.module_from_spec(spec);spec.loader.exec_module(value);return value
+
 def restore_menus(uid):
     assert os.geteuid()==0 and uid>0
-    loader=modifier();library=loader.notify()
+    loader=modifier();library=loader.notify();admission=first_map_modifier()
     for pid in regular_applications(False):
         actor=loader.identity(pid)
         if actor and actor['uid']==uid and loader.capability(library,pid)==1:
             token=loader.request(library,pid,False);library.notify_cancel(token)
+        if admission and actor and actor['uid']==uid:
+            token=admission.request(library,pid,False);library.notify_cancel(token)
 
 def run(uid,control):
     assert os.geteuid()==0 and uid>0
@@ -48,13 +56,15 @@ def run(uid,control):
     info=os.fstat(lock);assert stat.S_ISREG(info.st_mode) and info.st_uid==0 and not info.st_mode&0o077
     try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
     except BlockingIOError:os.close(lock);return
-    loader=modifier()
+    loader=modifier();admission=first_map_modifier()
     library=loader.notify();known={};ready=set();attempted=set();stopping=False
+    admission_ready=set();admission_attempted=set();manager_generation=None
     def stop(*_):
         nonlocal stopping
         stopping=True
     signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
     def active():
+        nonlocal manager_generation
         try:
             with socket.socket(socket.AF_UNIX) as connection:
                 connection.settimeout(1);connection.connect(control)
@@ -67,6 +77,7 @@ def run(uid,control):
                     data.extend(block)
                 status=json.loads(data.split(b'\n',1)[0]);fresh=loader.identity(pid)
                 if not fresh or any(fresh[k]!=peer[k] for k in ['pid','uid','seconds','micros','path']) or status.get('daemon',{}).get('pid')!=pid:return None
+                manager_generation=(pid,peer['seconds'],peer['micros'],peer['path'])
                 return bool(status.get('enabled')) and status.get('compatibility',{}).get('verified') is True
         except (OSError,ValueError,KeyError):return None
     def set_existing(value):
@@ -74,8 +85,10 @@ def run(uid,control):
             fresh=loader.identity(pid)
             if not fresh or any(fresh[k]!=actor[k] for k in ['pid','uid','seconds','micros','path']):known.pop(pid,None);continue
             key=(pid,actor['seconds'],actor['micros'],actor['path'])
-            if value and key not in ready:continue
-            token=loader.request(library,pid,value);library.notify_cancel(token)
+            if not value or key in ready:
+                token=loader.request(library,pid,value);library.notify_cancel(token)
+            if admission and (not value or key in admission_ready):
+                token=admission.request(library,pid,value);library.notify_cancel(token)
     missing_since=None;was_enabled=None
     try:
         while not stopping:
@@ -112,6 +125,18 @@ def run(uid,control):
                         if fresh and all(fresh[k]==actor[k] for k in ['pid','uid','seconds','micros','path']):
                             token=loader.request(library,pid,False);library.notify_cancel(token)
                         print(json.dumps(dict(ok=False,pid=pid,error=str(error)[-600:])),flush=True)
+                if admission:
+                    for actor in actors:
+                        if stopping:break
+                        pid=actor['pid'];key=(pid,actor['seconds'],actor['micros'],actor['path'])
+                        attempt=(key,manager_generation)
+                        if attempt in admission_attempted:continue
+                        admission_attempted.add(attempt)
+                        try:
+                            result=admission.load(pid,uid,actor['seconds'],actor['micros'],control)
+                            admission_ready.add(key);print(json.dumps(result),flush=True)
+                        except Exception as error:
+                            print(json.dumps(dict(ok=False,pid=pid,admission=True,error=str(error)[-600:])),flush=True)
             for _ in range(10):
                 if stopping:break
                 time.sleep(.2)

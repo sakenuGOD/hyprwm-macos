@@ -6,4 +6,7 @@ clang -O2 -Wall -fobjc-arc -dynamiclib -arch arm64 -arch arm64e -framework AppKi
 codesign -f -s - hyprforce.dylib 2>/dev/null
 clang -O2 -Wall -fobjc-arc -dynamiclib -arch arm64 -arch arm64e -framework AppKit hyprmenus.m -o hyprmenus.dylib
 codesign -f -s - hyprmenus.dylib 2>/dev/null
+clang -O2 -Wall -Wextra -Werror -fobjc-arc -dynamiclib -arch arm64 -arch arm64e -framework AppKit \
+  ../admission/client.m ../admission/admission.m ../admission/grant.m -o hypradmission.v2.dylib
+codesign -f -s - hypradmission.v2.dylib 2>/dev/null
 echo "hyprforce.dylib собран"

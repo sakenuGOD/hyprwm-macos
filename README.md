@@ -70,7 +70,7 @@ can expose clipped controls; independent viewport panning is still unfinished.
 
 ## Current limits
 
-The native presentation path uses accepted client texture dimensions for 1:1 crop and edge extension. It retains working frames during transfer and falls back to the application when a source cannot be qualified. Generic first-display pop-in still needs an early positive primary-window admission; it is not complete. Native presentation and compatibility remain experimental, and a source build alone does not qualify a machine.
+The native presentation path uses accepted client texture dimensions for 1:1 crop and edge extension. It retains working frames during transfer and falls back to the application when a source cannot be qualified. The optional [application helper](DEPLOY.md#application-menus) enables first-map handoff for new ordinary AppKit windows. Cold-launch first windows can precede helper attachment; universal first-display, restore and retained-close coverage remain incomplete. Native presentation and compatibility remain experimental, and a source build alone does not qualify a machine.
 
 The current checkout ships the Engine runtime. Historical Lite behavior appears
 in the [animation comparison](docs/ANIMATION_AUDIT.md), with unavailable code

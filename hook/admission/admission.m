@@ -316,6 +316,7 @@ int hypradmission_uninstall(void) {
     return 0;
 }
 BOOL hypradmission_is_installed(void) {return installed && owns_source();}
+BOOL hypradmission_is_accepting(void) {return installed && owns_source() && !stopping;}
 
 #ifdef HYPRADMISSION_OWNED_DIAGNOSTICS
 int hypradmission_owned_set_logger(HAEventCallback logger) {

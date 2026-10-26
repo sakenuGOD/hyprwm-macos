@@ -140,11 +140,18 @@ sudo /Library/Developer/CommandLineTools/usr/bin/python3 -I -S \
 ```
 
 The root-owned helper follows the authenticated HyprWM daemon and discovers
-regular applications, including later launches. It loads a reversible menu-only
-module into each eligible user application. Existing debugger and client code
+regular applications, including later launches. It loads a reversible menu
+module and enables the first-map client in each eligible user application. The
+first-map client requests the tile before a new ordinary AppKit window is
+ordered on screen, then hands its temporary native visibility lease to HyprWM.
+Panels, sheets, modal windows and uncertain tab groups retain native handling.
+Already visible windows are preserved. A new application's first window can
+precede helper attachment; this does not guarantee every first frame or restore.
+Existing debugger and client code
 loading permissions are required; a refused application keeps its native menus.
 Failed loads are bounded and are not repeatedly attached to. The helper restores
-menus when HyprWM is paused, stops responding, or the policy is uninstalled:
+menus and releases first-map admission when HyprWM is paused, stops responding,
+or the policy is uninstalled:
 
 ```sh
 sudo /Library/Developer/CommandLineTools/usr/bin/python3 -I -S \
