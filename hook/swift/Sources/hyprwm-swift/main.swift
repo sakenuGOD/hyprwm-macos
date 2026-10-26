@@ -262,10 +262,6 @@ wm.buildCommit = String(cString: hs_build_revision())
 wm.buildSourceDirty = hs_build_source_dirty() != 0
 do { wm.options = try RuntimeOptions.load(configDir: hook + "/config") } catch { die("Swift configuration: \(error)") }
 do { try wm.prepareStartupRecovery() } catch { die("startup recovery: \(error)") }
-// An authenticated manager handover can retain bindings from an older daemon,
-// including hidden sources. Retire them without changing client alpha or frame.
-for window in eng.c.wins() { eng.c.under(window.wid, 0) }
-eng.c.commit()
 let firstMapService:NativeAdmissionService?
 do {firstMapService=try NativeAdmissionService(sys:sys);wm.admission=firstMapService?.gateway}
 catch {log("first-map admission unavailable:",error);firstMapService=nil}
@@ -345,6 +341,10 @@ wm.cfgSink = Configurer(sys: sys) { r in
     }
 }
 do { try eng.ensure(startup: true) } catch { die("engine: \(error)") }
+// An authenticated manager handover can retain bindings from an older daemon,
+// including hidden sources. Retire them without changing client alpha or frame.
+for window in eng.c.wins() { eng.c.under(window.wid, 0) }
+eng.c.commit()
 do {try NativeHotkeys.apply(configDir:hook+"/config")} catch {die("hotkeys: \(error)")}
 sys.startLauncher()
 do { wm.server = try CommandServer(path: ctl) } catch { die("socket: \(error)") }
