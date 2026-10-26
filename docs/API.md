@@ -1,6 +1,6 @@
 # HyprWM API
 
-Engine is the default runtime. Sections explicitly marked Lite describe the experimental alternative; see the [runtime limits](../README.md#current-limits).
+This launch branch is Engine-only. Sections explicitly describing Lite, its status fields or virtual workspaces document the separate experimental `lite/2026-10-16` implementation; they are unavailable in this branch. See [branch availability](../README.md#experimental-lite).
 
 HyprWM exposes local Unix sockets owned by the current user with mode `0600`.
 The command socket is `/tmp/hyprwm.ctl`; set `HYPRWM_CTL` in both the daemon and
@@ -82,6 +82,26 @@ fields are diagnostic and may change between releases.
 
 Production Engine status also exposes `configuration.submitted`, `configuration.running` and `configuration.pending` for the shared AX configuration queue. `submitted` is a process-local job sequence, not an AX setter-call count; `running` counts active jobs and `pending` counts queued jobs not yet taken. These read-only diagnostics can help distinguish an appearance reload from geometry work. They are null when that sink is unavailable.
 
+## Cropped content navigation
+
+With a compatible Engine, `pan left|right|up|down|reset` moves the selected
+tile's live content in 64-point steps. The tile and its neighbors keep their
+positions. `reset` returns to the top-left corner. The menu offers the same
+actions under **Pan Cropped Content**; arrows are enabled only where content
+extends beyond the tile. Application scrolling keeps its usual meaning.
+
+`status.viewport.supported` reports the native capability. Its optional `window`
+contains the selected window identity, current offsets, maximum offsets and
+`pending`. A queued reply confirms scheduling; offsets become accepted only
+after the native acknowledgement. An older engine reports the feature unavailable.
+The optional form `pan DIRECTION WID PID BIRTH SPACE` binds a menu action to the
+remembered selection and refuses a stale identity or selection.
+
+Panning is limited to idle tiled windows on the current native Space. Layout,
+hide, drag and Space changes reset it. The native lease also resets it if the
+manager stops renewing the request. It does not resize the application's content
+or move a window to another Space.
+
 ## Lite virtual workspace commands
 
 Lite workspace IDs are `1…10`. These commands require enabled tiling, completed recovery and no active mouse interaction or session lock. They do not create or switch Mission Control Spaces. Sending to the current workspace is a no-op.
@@ -158,7 +178,7 @@ After the source installer has bundled the base configuration:
 
 `--print-config` resolves and prints selected layout/curve/animation values; it does not start a daemon or prove live behavior. If the text config is absent, reading it may create a default file. `import FILE` applies supported settings and creates a sibling backup before replacing an existing configuration. Foreign input is never executed. It requires a regular UTF-8 file up to 256 KiB. Unsupported statements are reported by original line number; zero mapped settings is an error. Rectangle is detected but not converted.
 
-`scripts/hyprwm` is the developer wrapper for the source binary; its config-dependent modes additionally need the generated `hook/config/hypr_cfg.json`. The installed CLI uses the app’s bundled baseline instead. `HYPRWM_HOOK` locates a `hook` directory and its schema/base configuration. `HYPRWM_STATE_DIR` selects the persistent daemon-state directory (native default `/tmp/hyprwm-swift`). `HYPRWM_TIME_SCALE` overrides geometry timing in the range `0.1…4`. `HYPRWM_NO_DECO=1` disables the optional native decoration helper. Debug/experimental environment switches are implementation details, not stable API contracts.
+`scripts/hyprwm` is the developer wrapper for the source binary; its config-dependent modes additionally need the generated `hook/config/hypr_cfg.json`. The installed CLI uses the app’s bundled baseline instead. `HYPRWM_HOOK` locates a `hook` directory and its schema/base configuration. `HYPRWM_STATE_DIR` selects the persistent daemon-state directory (native default `/tmp/hyprwm-swift`). `HYPRWM_TIME_SCALE` overrides geometry timing in the range `0.1…4`. Production does not create solid backing windows; native clipping and decoration remain separate. Debug/experimental environment switches are implementation details, not stable API contracts.
 
 ## Recovery and diagnostics
 

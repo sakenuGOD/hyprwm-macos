@@ -22,6 +22,9 @@ static void rgba_draw_recover_at(struct rgba_capture *,unsigned);
 static int rgba_draw_pending(struct rgba_capture *,struct rgba_inplace *);
 static void rgba_draw_commands(struct ctx *);
 static int rgba_draw_revoke(struct rgba_capture *,struct rgba_inplace *);
+static int rgba_pan_active(struct rgba_capture *,unsigned);
+static int rgba_pan_drop(struct rgba_capture *);
+void rgba_normal_viewport_tick(void *);
 void rgba_normal_draw_commands(void *);
 void rgba_normal_close_gate(void *,void **,unsigned,int);
 static void rgba_draw_claim_commit(struct rgba_capture *,struct rgba_inplace *,u32);
@@ -130,6 +133,7 @@ extern void anim_rgba_carrier_recover(struct rgba_capture *,struct rgba_inplace 
 #include "presentation_begin.h"
 #include "presentation_carrier.h"
 #include "presentation_drawing.h"
+#include "presentation_viewport.h"
 // Original links (+0/+10) and prepared links (+8) have different ownership.
 // Reject duplicate target leaves, malformed lists and grouped targets rather
 // than publishing a partial window as a complete accepted frame.
@@ -347,6 +351,7 @@ static int rgba_normal_before_destroy(struct rgba_capture *g) {
     return rgba_view_before_capture_destroy(g);
 }
 void anim_rgba_normal_present_dispatch(struct ctx *c,double now) {
+    rgba_pan_record(c);
     struct rgba_capture *before=*(void **)((char *)c+PC_CONTROL_PTR);
     if(rgba_valid(before) && rgba_carrier_control(before) && !rgba_carrier_timer_allowed(before)) {
         void (*original)(struct ctx *,double)=*(void (**)(struct ctx *,double))((char *)c+PC_ORIGINAL_TICK);
@@ -360,6 +365,7 @@ void anim_rgba_normal_present_dispatch(struct ctx *c,double now) {
         if(rgba_carrier_active(g))anim_rgba_carrier_close(g,now);else rgba_close_tick(g,now);
     }
     if(rgba_valid(g) && !g->destroyed && !g->pc.dead && !g->pc.active_command)rgba_ordinary_tick(g,now);
+    if(rgba_valid(g) && !g->destroyed && !g->pc.dead && !g->pc.active_command)rgba_normal_viewport_tick(g);
 }
 void anim_rgba_normal_present_frame(void *mctx,void *display,void *third,struct rgba_capture *g) {
     if(third || !rgba_valid(g))return;

@@ -193,6 +193,8 @@ public final class WM {
 
     public var spaces = OrderedMap<String, SpaceState>()   // space -> {tree, focus, full, presel}
     public var floating = Set<Int>()
+    var viewportPans:[Int:ViewportPan]=[:]
+    var viewportNonce=UInt64.random(in:1..<UInt64.max)
     // owner -> [w, h]; JSON numbers retain int/float types so minsize_app.json matches Python byte for byte
     public var mins = OrderedMap<String, [JSON]>()
     var verifiedMinima: [Int: (pid:Int,birth:String,width:Double,height:Double)] = [:]
@@ -916,7 +918,7 @@ public final class WM {
         let nativeWindow=options.production && targetsWindow ? nativeCommandWindow(space,wins,rects,requiresTile:requiresTile):nil
         let cur = nativeWindow?.wid ?? wins.first { rects.contains($0.wid) && $0.on }?.wid
         if cmd == "status" {
-            let status = statusJSON(space, s, cur, rects)
+            let status = statusJSON(space, s, cur, rects).setting("viewport",viewportStatus(space,wins))
             return (options.production ? status.setting("toolbar_windows_by_space", toolbarSelectedWindows(wins))
                 .setting("tiling_order_by_space", toolbarTilingOrder(wins)) : status).dumps(ensureASCII: false)
         }
@@ -938,6 +940,7 @@ public final class WM {
         }
         if cmd == "handover" { return prepareHandover() }
         guard enabled else { return "paused: use resume" }
+        if options.production,cmd=="pan" {return try viewportCommand(a,space,wins,rects)}
         if options.production,["ws","workspace","wsstep"].contains(cmd) {return workspaceCommand(a,space)}
         if options.production,cmd=="sendws" {return try sendWindowToSpace(a,space)}
         if (cmd == "focus" || cmd == "move") && a.count > 1 {
@@ -1616,6 +1619,7 @@ public final class WM {
     public func handleEvents(_ evs: [EngEvent]) -> Bool {
         var drifted = false
         for ev in evs {
+            if options.production && ev.type==12 {observeViewport(ev);continue}
             if options.production && ev.type==11 {observeOrdinary(ev);drifted=true;continue}
             if options.production && ev.type==9 { observeSnapshot(ev);continue }
             if ev.type == Ev.new {
@@ -1787,6 +1791,7 @@ public final class WM {
             if !launcherTransfers.isEmpty || !silentSpaceMoves.isEmpty {admission?.suspend();return} // No source surgery before actual native ACK.
         }
         followMouse(space, wins)
+        if options.production {pollViewports(space,wins)}
         if options.production {
             let hiddenIDs=Set(hidden.map(\.wid))
             sys.preserveFloatingWindows(wins.filter{floatingWindow($0) &&

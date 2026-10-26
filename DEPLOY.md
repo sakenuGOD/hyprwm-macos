@@ -72,6 +72,15 @@ after a reboot, and the daemon applies overrides during startup. Starting the wa
 first through the existing lifecycle helper supplies that baseline. The public
 source installer still does not provide the complete Engine bootstrap workflow.
 
+## Cropped content navigation
+
+The native viewport extension provides `pan left|right|up|down|reset` and the
+**Pan Cropped Content** menu. It moves live content at its original scale inside
+the existing tile. The tile allocation and neighboring windows stay in place.
+It requires a qualified native image advertising the viewport capability;
+older engines refuse the command. The source installer does not bootstrap that
+native image. Reset/drop live viewports before stopping or replacing the engine.
+
 ## Native presentation updates
 
 Every new native image needs whole-image qualification and fresh process birth,

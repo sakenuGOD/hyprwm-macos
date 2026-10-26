@@ -13,6 +13,8 @@ final class MenuBarController:NSObject,NSMenuDelegate,NSWindowDelegate {
     private let configErrorItem=NSMenuItem(title:"",action:nil,keyEquivalent:"")
     private var enabled=true,connected=false,refreshing=false,unverified=false
     private var runtimeMode=""
+    private var viewportWindow:JSON?
+    private var viewportSupported=false
     private var window:NSWindow?
     private var onboardingWindow:NSWindow?
     private var poll:Timer?
@@ -45,7 +47,7 @@ final class MenuBarController:NSObject,NSMenuDelegate,NSWindowDelegate {
     private func refresh(){guard !refreshing else{return};refreshing=true;store.trusted=AXIsProcessTrusted();send("status"){[weak self]result in
         guard let self else{return};self.refreshing=false
         switch result {
-        case let .success(text):self.connected=true;if let json=try?JSON.parse(text){self.unverified=json["compatibility"]?["verified"] == .bool(false);self.enabled=json["enabled"]?.truthy ?? true;self.runtimeMode=json["mode"]?.string ?? json["daemon"]?["mode"]?.string ?? json["engine"]?["mode"]?.string ?? "engine";self.store.runtimeName=self.runtimeMode.capitalized+" · "+(json["daemon"]?["runtime"]?.string ?? "Swift");self.store.runtimeVersion=json["daemon"]?["version"]?.string ?? ""}
+        case let .success(text):self.connected=true;if let json=try?JSON.parse(text){self.unverified=json["compatibility"]?["verified"] == .bool(false);self.enabled=json["enabled"]?.truthy ?? true;self.runtimeMode=json["mode"]?.string ?? json["daemon"]?["mode"]?.string ?? json["engine"]?["mode"]?.string ?? "engine";self.store.runtimeName=self.runtimeMode.capitalized+" · "+(json["daemon"]?["runtime"]?.string ?? "Swift");self.store.runtimeVersion=json["daemon"]?["version"]?.string ?? "";self.viewportSupported=json["viewport"]?["supported"]?.truthy ?? false;self.viewportWindow=json["viewport"]?["window"]}
         case .failure:self.connected=false
         }
         self.store.connected=self.connected;self.store.enabled=self.enabled
@@ -61,6 +63,18 @@ final class MenuBarController:NSObject,NSMenuDelegate,NSWindowDelegate {
     @objc private func returnHidden(){command("restore-all")}
     @objc private func retile(){command("retile")}
     @objc private func balance(){command("balance")}
+    private func pan(_ direction:String) {
+        guard let selected=viewportWindow,let wid=selected["wid"]?.int,let pid=selected["pid"]?.int,
+              let birth=selected["birth"]?.string,let space=selected["space"]?.int else{return}
+        let request="pan \(direction) \(wid) \(pid) \(birth) \(space)"
+        // Let native menu tracking unwind before its guarded IPC action.
+        DispatchQueue.main.asyncAfter(deadline:.now()+0.05){[weak self] in self?.command(request)}
+    }
+    @objc private func panLeft(){pan("left")}
+    @objc private func panRight(){pan("right")}
+    @objc private func panUp(){pan("up")}
+    @objc private func panDown(){pan("down")}
+    @objc private func panReset(){pan("reset")}
     @objc private func checkConnection(){refresh()}
     @objc private func copyDiagnostics(){store.copyDiagnosis()}
     func showSettings(){showSettings(page:.general)}
@@ -76,6 +90,13 @@ final class MenuBarController:NSObject,NSMenuDelegate,NSWindowDelegate {
         add("Retile Windows",#selector(retile),menu,symbol:"rectangle.split.2x2",key:"r")
         add("Restore Hidden Windows",#selector(returnHidden),menu,symbol:"rectangle.on.rectangle",key:"w")
         add("Balance Layout",#selector(balance),menu,symbol:"equal.square",key:"=")
+        let viewport=NSMenu();viewport.autoenablesItems=false
+        add("Left",#selector(panLeft),viewport,symbol:"arrow.left")
+        add("Right",#selector(panRight),viewport,symbol:"arrow.right")
+        add("Up",#selector(panUp),viewport,symbol:"arrow.up")
+        add("Down",#selector(panDown),viewport,symbol:"arrow.down")
+        add("Reset Position",#selector(panReset),viewport,symbol:"arrow.uturn.backward")
+        let viewportItem=NSMenuItem(title:"Pan Cropped Content",action:nil,keyEquivalent:"");viewportItem.submenu=viewport;menu.addItem(viewportItem)
         menu.addItem(.separator())
         add("Settings…",#selector(openSettings),menu,symbol:"gearshape",key:",")
         add("Application Rules…",#selector(showRules),menu,symbol:"app.badge")
@@ -98,6 +119,18 @@ final class MenuBarController:NSObject,NSMenuDelegate,NSWindowDelegate {
         configErrorItem.title = String((store.error ?? "").split(separator:"\n").first.map(String.init)?.prefix(120) ?? "".prefix(120))
         configErrorItem.toolTip=store.error
         for entry in menu.items {
+            if entry.title=="Pan Cropped Content",let submenu=entry.submenu {
+                let x=viewportWindow?["x"]?.double ?? 0,y=viewportWindow?["y"]?.double ?? 0
+                let maxX=viewportWindow?["max_x"]?.double ?? 0,maxY=viewportWindow?["max_y"]?.double ?? 0
+                entry.isEnabled=connected && enabled && !unverified && viewportSupported && (maxX>1 || maxY>1)
+                for action in submenu.items {
+                    if action.action == #selector(panLeft){action.isEnabled=entry.isEnabled && x>0}
+                    if action.action == #selector(panRight){action.isEnabled=entry.isEnabled && x<maxX}
+                    if action.action == #selector(panUp){action.isEnabled=entry.isEnabled && y>0}
+                    if action.action == #selector(panDown){action.isEnabled=entry.isEnabled && y<maxY}
+                    if action.action == #selector(panReset){action.isEnabled=entry.isEnabled && (x>0 || y>0)}
+                }
+            }
             if entry.action == #selector(toggle) {entry.title=enabled ? "Pause Tiling":"Resume Tiling";entry.state = .off;entry.isEnabled=connected && !unverified}
             if let action=entry.action,[#selector(retile),#selector(balance),#selector(returnHidden)].contains(action) {entry.isEnabled=connected && !unverified}
             if entry.action == #selector(toggleBorders) {entry.state=store.number("appearance.border.size",2)>0 ? .on:.off;entry.isEnabled=store.loaded}

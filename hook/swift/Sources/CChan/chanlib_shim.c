@@ -17,7 +17,7 @@ int hs_curve_record(struct ch_curve *out,unsigned type,double a,double b,double 
 }
 
 static int hs_curves_idle(void) {
-    const u32 caps=CH_CAP_EFFECTS|CH_CAP_SHADOW|CH_CAP_SNAPSHOT|CH_CAP_SNAPSHOT_COVER|CH_CAP_TERMINAL_MOVE|CH_CAP_BIRTH|CH_CAP_ORDINARY_PREPARE;
+    const u32 caps=CH_CAP_EFFECTS|CH_CAP_SHADOW|CH_CAP_SNAPSHOT|CH_CAP_SNAPSHOT_COVER|CH_CAP_TERMINAL_MOVE|CH_CAP_BIRTH|CH_CAP_ORDINARY_PREPARE|CH_CAP_VIEWPORT;
     if(!ch||ch->h.magic!=CH_MAGIC||ch->h.size!=sizeof(*ch)||
        (ch->h.version&~caps)!=6||ch->h.stop||ch->h.nactive||ch->h.holding||pend!=pub||
        __atomic_load_n(&ch->h.cmd_head,__ATOMIC_ACQUIRE)!=__atomic_load_n(&ch->h.cmd_tail,__ATOMIC_ACQUIRE))return 0;
@@ -32,6 +32,15 @@ int hs_ordinary_prepare(unsigned wid,unsigned long long nonce,unsigned prepare,d
     k->op=OP_EDGE;k->wid=wid;k->flags=CH_ORDINARY_PREPARE;k->cpos=prepare;
     k->pad0=(u32)nonce;k->pad1=(u32)(nonce>>32);k->x=x;k->y=y;k->w=w;k->h=h;
     return 0;
+}
+int hs_viewport(unsigned wid,unsigned long long nonce,unsigned enable,double x,double y,double bx,double by,double bw,double bh) {
+    if(!ch || !wid || !nonce || enable>1 || ch->h.magic!=CH_MAGIC || ch->h.size!=sizeof(*ch) ||
+       !(ch->h.version&CH_CAP_VIEWPORT) || !isfinite(x) || !isfinite(y) || x<0 || y<0 || x>65536 || y>65536 ||
+       !isfinite(bx) || !isfinite(by) || !isfinite(bw) || !isfinite(bh) || bw<1 || bh<1)return -2;
+    struct ch_cmd *k=next_cmd();if(!k)return -1;
+    k->op=OP_EDGE;k->wid=wid;k->flags=CH_VIEWPORT;k->cpos=enable;
+    k->pad0=(u32)nonce;k->pad1=(u32)(nonce>>32);k->x=x;k->y=y;
+    k->fx=bx;k->fy=by;k->fw=bw;k->fh=bh;return 0;
 }
 
 int hs_curves_bootstrap(void *mapping,const struct ch_curve *expected,unsigned count) {

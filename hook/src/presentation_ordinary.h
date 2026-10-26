@@ -29,6 +29,7 @@ static struct rgba_ordinary *rgba_ordinary_control(struct rgba_capture *g) {
 }
 static struct rgba_inplace *rgba_ordinary_slots(struct rgba_capture *g) {return (void *)((char *)g+RGBA_ORDINARY_SLOTS);}
 static int rgba_ordinary_drop(struct rgba_capture *g) {
+    if(!rgba_pan_drop(g))return 0;
     struct rgba_ordinary *o=rgba_ordinary_control(g);if(!o)return 1;o->enabled=0;
     g->pc.engine->ch->h.version&=~CH_CAP_ORDINARY_PREPARE;
     int closed=rgba_close_drop(g);
@@ -496,7 +497,7 @@ static void rgba_ordinary_tick(struct rgba_capture *g,double now) {
     for(unsigned n=0;n<CH_NW;n++) {
         unsigned i=(o->cursor+n)%CH_NW;struct ch_win *w=&c->ch->win[i];struct rgba_inplace *m=0;
         if(now-o->seen[i]>.1)continue;
-        if(!w->used || !w->geo || w->geo==2)continue;
+        if(!w->used || !w->geo || w->geo==2 || rgba_pan_active(g,w->wid))continue;
         char *win=c->by_id(w->wid);
         if(!win || *(u32 *)(win+4)!=5 || *(int *)(win+0x20)!=0 || !((*(u64 *)(win+0x928)>>44)&1))continue;
         char *creator=*(char **)(win+0x30),*cwc=*(char **)(win+0x18);

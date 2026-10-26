@@ -97,6 +97,20 @@ extern "C" void anim_rgba_carrier_close_work(void *,double);
 extern "C" void anim_rgba_carrier_close(void *g,double now) noexcept {
     try {anim_rgba_carrier_close_work(g,now);}catch(...) {anim_rgba_carrier_failed(g);}
 }
+extern "C" void anim_rgba_viewport_tick(void *);
+extern "C" void anim_rgba_viewport_failed(void *) noexcept;
+extern "C" void anim_rgba_viewport_restore_at(void *,unsigned);
+extern "C" int anim_rgba_viewport_drop_work(void *);
+extern "C" int rgba_normal_viewport_drop(void *g) noexcept {
+    try {return anim_rgba_viewport_drop_work(g);}
+    catch(...) {anim_rgba_viewport_failed(g);return 0;}
+}
+extern "C" void rgba_normal_viewport_tick(void *g) noexcept {
+    try {anim_rgba_viewport_tick(g);}catch(...) {
+        for(unsigned i=0;i<64;i++)try {anim_rgba_viewport_restore_at(g,i);}catch(...) {}
+        anim_rgba_viewport_failed(g);
+    }
+}
 extern "C" int anim_rgba_carrier_pose(void *g,void *m,void *w) noexcept {
     try {return anim_rgba_carrier_pose_work(g,m,w);}
     catch(...) {

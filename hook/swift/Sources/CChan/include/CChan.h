@@ -21,6 +21,7 @@ int ch_under(unsigned wid, unsigned under);
 int ch_space(unsigned wid, unsigned long long sid);
 int ch_cfg(unsigned wid, double x, double y, double w, double h);
 int hs_ordinary_prepare(unsigned wid,unsigned long long nonce,unsigned prepare,double x,double y,double w,double h);
+int hs_viewport(unsigned wid,unsigned long long nonce,unsigned enable,double x,double y,double bx,double by,double bw,double bh);
 int hs_snapshot_final(unsigned wid, unsigned flags, double x,double y,double w,double h,
                       double fx,double fy,double fw,double fh,unsigned cp,unsigned cs,double dp,double ds);
 int ch_effects(unsigned flags, unsigned curve, const double *values);

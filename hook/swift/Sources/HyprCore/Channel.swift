@@ -5,7 +5,7 @@ import CChan
 import Foundation
 
 public enum ChannelCapabilities {
-    public static let mask=UInt32(CH_CAP_EFFECTS)|UInt32(CH_CAP_SHADOW)|UInt32(CH_CAP_SNAPSHOT)|UInt32(CH_CAP_SNAPSHOT_COVER)|UInt32(CH_CAP_TERMINAL_MOVE)|UInt32(CH_CAP_BIRTH)|UInt32(CH_CAP_ORDINARY_PREPARE)
+    public static let mask=UInt32(CH_CAP_EFFECTS)|UInt32(CH_CAP_SHADOW)|UInt32(CH_CAP_SNAPSHOT)|UInt32(CH_CAP_SNAPSHOT_COVER)|UInt32(CH_CAP_TERMINAL_MOVE)|UInt32(CH_CAP_BIRTH)|UInt32(CH_CAP_ORDINARY_PREPARE)|UInt32(CH_CAP_VIEWPORT)
     public static func abi(_ version:UInt32) -> UInt32 { version & ~mask }
 }
 
@@ -102,6 +102,10 @@ public final class LiveChannel: ChannelAPI {
     }
 
     // Commands
+    public var viewportSupported:Bool {hdr.pointee.version & UInt32(CH_CAP_VIEWPORT) != 0}
+    public func viewport(_ wid:Int,nonce:UInt64,offset:(Double,Double),box:Rect,enabled:Bool) -> Bool {
+        hs_viewport(UInt32(wid),nonce,enabled ? 1:0,offset.0,offset.1,box.x,box.y,box.w,box.h)==0
+    }
     public var ordinaryPrepareSupported:Bool {hdr.pointee.version & UInt32(CH_CAP_ORDINARY_PREPARE) != 0}
     public func ordinaryPrepare(_ wid:Int,nonce:UInt64,to:Rect,prepare:Bool) -> Bool {
         hs_ordinary_prepare(UInt32(wid),nonce,prepare ? 1:0,to.x,to.y,to.w,to.h)==0

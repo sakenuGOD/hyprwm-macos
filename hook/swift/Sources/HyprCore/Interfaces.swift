@@ -101,6 +101,8 @@ public struct EngStats {
 
 /// Daemon -> engine channel (chan.py Chan).
 public protocol ChannelAPI: AnyObject {
+    var viewportSupported:Bool {get}
+    func viewport(_ wid:Int,nonce:UInt64,offset:(Double,Double),box:Rect,enabled:Bool) -> Bool
     var ordinaryPrepareSupported:Bool {get}
     func ordinaryPrepare(_ wid:Int,nonce:UInt64,to:Rect,prepare:Bool) -> Bool
     var birthSupported:Bool {get}
@@ -131,6 +133,8 @@ public protocol ChannelAPI: AnyObject {
 }
 
 public extension ChannelAPI {
+    var viewportSupported:Bool {false}
+    func viewport(_ wid:Int,nonce:UInt64,offset:(Double,Double),box:Rect,enabled:Bool) -> Bool {false}
     var ordinaryPrepareSupported:Bool {false}
     func ordinaryPrepare(_ wid:Int,nonce:UInt64,to:Rect,prepare:Bool) -> Bool {false}
     var birthSupported:Bool {false}
