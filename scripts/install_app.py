@@ -10,6 +10,7 @@ import shlex
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -66,12 +67,84 @@ def owned_receipt(app):
     return value
 
 
-def install(root):
+def external_engine_state(path):
+    if path is None:return None
+    path=Path(os.path.abspath(path.expanduser()))
+    descriptor=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC)
+    try:
+        before=os.fstat(descriptor)
+        if not (stat.S_ISREG(before.st_mode) and before.st_uid in (os.getuid(),0) and
+                not before.st_mode&0o022 and before.st_nlink==1 and 0<before.st_size<=4096):
+            raise RuntimeError('Engine state must be a bounded owned regular file without shared write access')
+        data=os.read(descriptor,4097);after=os.fstat(descriptor)
+        if len(data)!=before.st_size or (before.st_dev,before.st_ino,before.st_size,before.st_mtime_ns)!=(after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns):
+            raise RuntimeError('Engine state changed during read')
+        fields=data.decode('utf-8').split()
+        if not fields or not fields[0].isascii() or not fields[0].isdigit() or not 1<int(fields[0])<=2147483647:
+            raise RuntimeError('Engine state does not name a native process')
+    finally:os.close(descriptor)
+    return path
+
+
+def stage_bundle(root,staged,engine_state_path=None):
+    if staged.exists() or staged.is_symlink():raise RuntimeError('Bundle destination already exists; preserved')
+    macos = staged / 'Contents/MacOS'
+    resources = staged / 'Contents/Resources'
+    config = resources / 'hook/config'
+    macos.mkdir(parents=True)
+    config.mkdir(parents=True)
+    binary = macos / 'hyprwm-swift'
+    shutil.copy2(root / 'hook/swift/.build/release/hyprwm-swift', binary)
+    binary.chmod(0o755)
+    shutil.copy2(root / 'hook/config/portable-defaults.json', config / 'hypr_cfg.json')
+    for name in ('runtime.schema.json', 'hypr_shim.lua'):
+        shutil.copy2(root / 'hook/config' / name, config / name)
+    version = os.environ.get('HYPRWM_APP_VERSION', '0.1.0')
+    info = dict(CFBundleIdentifier='dev.hyprwm.HyprWM', CFBundleName='HyprWM',
+                CFBundleDisplayName='HyprWM', CFBundleExecutable='hyprwm-swift',
+                CFBundlePackageType='APPL', CFBundleShortVersionString=version,
+                CFBundleVersion='1', LSMinimumSystemVersion='14.0', LSUIElement=True,
+                NSHighResolutionCapable=True, HyprWMLaunchRole='daemon',
+                NSScreenCaptureUsageDescription='HyprWM captures managed windows in memory to animate layout changes. Images are not saved.')
+    iconset = staged.parent / 'AppIcon.iconset'
+    subprocess.run(['swift', str(root / 'hook/swift/tools/AppIcon.swift'), str(iconset)], check=True)
+    subprocess.run(['iconutil', '--convert', 'icns', str(iconset), '--output', str(resources / 'AppIcon.icns')], check=True)
+    info['CFBundleIconFile'] = 'AppIcon'
+    (staged / 'Contents/Info.plist').write_bytes(plistlib.dumps(info))
+    receipt = dict(installer=MARKER, compiled_binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
+                   version=version, mode='auto', engine_installed=False)
+    if engine_state_path is not None:receipt['engine_state_path']=str(engine_state_path)
+    (resources / 'InstallReceipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+    subprocess.run(['codesign', '--force', '--sign', '-', '--identifier', 'dev.hyprwm.HyprWM', str(staged)], check=True)
+    subprocess.run(['codesign', '--verify', '--strict', str(staged)], check=True)
+    return binary
+
+
+def package(root,output,engine_state_path=None):
+    engine_state_path=external_engine_state(engine_state_path)
+    output=Path(os.path.abspath(output.expanduser()))
+    if output.exists() or output.is_symlink():raise RuntimeError('Package destination already exists; preserved')
+    output.parent.mkdir(parents=True,exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='.hyprwm-package-',dir=output.parent) as temporary:
+        staged=Path(temporary)/'HyprWM.app'
+        stage_bundle(root,staged,engine_state_path)
+        if output.exists() or output.is_symlink():raise RuntimeError('Package destination appeared; preserved')
+        staged.rename(output)
+    print(f'Packaged {output}; no app launched, configuration initialized or running daemon changed.')
+
+
+def install(root,engine_state_path=None):
     app, bin_dir = paths()
     if app.is_symlink():
         raise RuntimeError('Refusing to replace a symlink at the app destination')
     if app.exists():
-        owned_receipt(app)
+        previous=owned_receipt(app)
+        if engine_state_path is None and 'engine_state_path' in previous:
+            value=previous['engine_state_path']
+            if not isinstance(value,str) or not value.startswith('/'):
+                raise RuntimeError('Saved Engine state path is invalid; installation preserved')
+            engine_state_path=Path(value)
+    engine_state_path=external_engine_state(engine_state_path)
     for name in ('hyprwm', 'hyprwmctl'):
         destination = bin_dir / name
         if destination.is_symlink() or destination.exists():
@@ -83,34 +156,8 @@ def install(root):
     bin_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.hyprwm-install-', dir=app.parent) as temporary:
         staged = Path(temporary) / 'HyprWM.app'
-        macos = staged / 'Contents/MacOS'
-        resources = staged / 'Contents/Resources'
-        config = resources / 'hook/config'
-        macos.mkdir(parents=True)
-        config.mkdir(parents=True)
-        binary = macos / 'hyprwm-swift'
-        shutil.copy2(root / 'hook/swift/.build/release/hyprwm-swift', binary)
-        binary.chmod(0o755)
-        shutil.copy2(root / 'hook/config/portable-defaults.json', config / 'hypr_cfg.json')
-        for name in ('runtime.schema.json', 'hypr_shim.lua'):
-            shutil.copy2(root / 'hook/config' / name, config / name)
-        version = os.environ.get('HYPRWM_APP_VERSION', '0.1.0')
-        info = dict(CFBundleIdentifier='dev.hyprwm.HyprWM', CFBundleName='HyprWM',
-                    CFBundleDisplayName='HyprWM', CFBundleExecutable='hyprwm-swift',
-                    CFBundlePackageType='APPL', CFBundleShortVersionString=version,
-                    CFBundleVersion='1', LSMinimumSystemVersion='14.0', LSUIElement=True,
-                    NSHighResolutionCapable=True, HyprWMLaunchRole='daemon',
-                    NSScreenCaptureUsageDescription='HyprWM captures managed windows in memory to animate layout changes. Images are not saved.')
-        iconset = Path(temporary) / 'AppIcon.iconset'
-        subprocess.run(['swift', str(root / 'hook/swift/tools/AppIcon.swift'), str(iconset)], check=True)
-        subprocess.run(['iconutil', '--convert', 'icns', str(iconset), '--output', str(resources / 'AppIcon.icns')], check=True)
-        info['CFBundleIconFile'] = 'AppIcon'
-        (staged / 'Contents/Info.plist').write_bytes(plistlib.dumps(info))
-        receipt = dict(installer=MARKER, compiled_binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
-                       version=version, mode='auto', engine_installed=False)
-        (resources / 'InstallReceipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
-        subprocess.run(['codesign', '--force', '--sign', '-', '--identifier', 'dev.hyprwm.HyprWM', str(staged)], check=True)
-        subprocess.run(['codesign', '--verify', '--strict', str(staged)], check=True)
+        binary=stage_bundle(root,staged,engine_state_path)
+        resources=staged/'Contents/Resources'
         # Explicit destination keeps a temporary HOME isolated even on macOS where
         # Foundation's NSHomeDirectory resolves the account database instead.
         config_path = Path(os.environ.get('HYPRWM_CONFIG', str(Path(os.environ['HOME']) / '.config/hyprwm/hyprwm.conf')))
@@ -141,7 +188,9 @@ def install(root):
         os.replace(temporary, destination)
     print(f'Installed {app}')
     print(f'CLI: {bin_dir}/hyprwm (add {bin_dir} to PATH)')
-    print('Open ~/Applications/HyprWM.app to start Engine mode. An existing Engine channel is required.')
+    print('Open ~/Applications/HyprWM.app to start Engine mode. An existing qualified Engine installation and its external state receipt are required.')
+    if engine_state_path is not None:print(f'External Engine receipt: {engine_state_path}; startup still performs native qualification.')
+    else:print('Select the existing receipt with install --engine-state FILE or HYPRWM_ENGINE_STATE; no native engine was installed.')
     print('System Settings → Privacy & Security → Accessibility: enable HyprWM for tiling and focus.')
     print('System Settings → Privacy & Security → Screen & System Audio Recording: enable HyprWM for optional capture features.')
     print('Control–Option–P uses Carbon. Other Engine shortcuts require the separate native watcher; some watcher builds also need Input Monitoring permission. Automation → System Events is needed only for scripted desktop verification.')
@@ -243,12 +292,19 @@ def main():
     subparsers = parser.add_subparsers(dest='action', required=True)
     install_parser = subparsers.add_parser('install')
     install_parser.add_argument('--root', required=True, type=Path)
+    install_parser.add_argument('--engine-state',type=Path)
+    package_parser=subparsers.add_parser('package',help='Create a signed bundle without installing or launching it')
+    package_parser.add_argument('--root',required=True,type=Path)
+    package_parser.add_argument('--output',required=True,type=Path)
+    package_parser.add_argument('--engine-state',type=Path)
     uninstall_parser = subparsers.add_parser('uninstall')
     uninstall_parser.add_argument('--offline', action='store_true')
     arguments = parser.parse_args()
     try:
         if arguments.action == 'install':
-            install(arguments.root.resolve())
+            install(arguments.root.resolve(),arguments.engine_state)
+        elif arguments.action=='package':
+            package(arguments.root.resolve(),arguments.output,arguments.engine_state)
         else:
             uninstall(arguments.offline)
     except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:

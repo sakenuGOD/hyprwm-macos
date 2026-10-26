@@ -29,7 +29,7 @@ final class LiveEngine: EngineAPI {
     private let dead = DeadChannel()
     private var pt: UInt32?
     var c: ChannelAPI { ch ?? dead }
-    var statePath: String { hook + "/anim4.state" }
+    var statePath: String { get throws { try EngineStateLocation.resolve(hook:hook).path } }
 
     init(hook: String, cfg: HyprConfig) {
         self.hook = hook
@@ -88,7 +88,7 @@ final class LiveEngine: EngineAPI {
         }
         let path = try String(contentsOfFile: Self.ptr, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
         guard path.hasPrefix(Self.dir + "/chan."), !path.contains("..") else { throw CmdError("invalid engine channel path") }
-        let fields = try String(contentsOfFile: statePath, encoding: .utf8).split(whereSeparator: { $0.isWhitespace })
+        let fields = try EngineStateLocation.resolve(hook:hook).read().split(whereSeparator: { $0.isWhitespace })
         guard let first = fields.first, let pid = Int(first), pid > 0,
               !startup || Self.wsPid() == pid else { throw CmdError("WindowServer identity does not match installed engine") }
         let identity=try VerifiedPublicWorkspace.identity(pid)

@@ -19,6 +19,36 @@ with `./scripts/hyprwm` and inspect `./scripts/hyprwmctl status`. Accessibility
 permission is required. An unsupported platform stays unverified with tiling
 disabled.
 
+## Selecting an existing Engine installation
+
+An installed app keeps immutable configuration inside its signed bundle. Its
+mutable native Engine receipt stays outside that bundle. Select the receipt
+from an existing qualified installation when installing:
+
+```sh
+./install.sh --engine-state /path/to/native/hook/anim4.state
+```
+
+Updates preserve this selection when the option is omitted. An explicit
+`HYPRWM_ENGINE_STATE` overrides it at runtime. Source launches retain the
+`HYPRWM_HOOK/anim4.state` fallback. An invalid explicit selection is refused;
+startup still checks the native identity, platform, channel and owned canary.
+This does not install an Engine on a clean machine.
+
+To create a signed runtime bundle without installing it, changing configuration
+or launching another daemon:
+
+```sh
+./scripts/build-hyprwm
+python3 scripts/install_app.py package --root . --output dist/HyprWM-runtime.app \
+  --engine-state /path/to/native/hook/anim4.state
+dist/HyprWM-runtime.app/Contents/MacOS/hyprwm-swift --diagnose
+```
+
+Packaging refuses an existing destination. `--diagnose` reads the selected
+receipt and native metadata; it does not map the Engine for writing or perform
+the startup canary. It cannot establish full startup qualification.
+
 ## Updating a running daemon
 
 Use the daemon's authenticated local command socket to request `handover`.

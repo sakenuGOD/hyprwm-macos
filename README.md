@@ -21,13 +21,13 @@ The executable is `hook/swift/.build/release/hyprwm-swift`. You can inspect conf
 ./scripts/hyprwm --print-config
 ```
 
-To build the user-local app and CLI wrappers:
+To build the user-local app and CLI wrappers for an existing qualified native installation:
 
 ```sh
-./install.sh
+./install.sh --engine-state /path/to/qualified-native-hook/anim4.state
 ```
 
-This preserves existing configuration and leaves the app stopped. The installed app launches the daemon; the separate `build_app.sh` workflow builds a menu companion. Keep the checkout in place. See [packaging](hook/swift/PACKAGING.md) for bundle details.
+This preserves existing configuration and leaves the app stopped. The native receipt stays outside the signed app; updates preserve its selected location. `HYPRWM_ENGINE_STATE` can explicitly override it at runtime. The installed app launches the daemon; the separate `build_app.sh` workflow builds a menu companion. Keep the checkout in place. See [packaging](hook/swift/PACKAGING.md) for bundle details.
 
 ## Run
 
@@ -45,7 +45,7 @@ exiting. See [deployment and rollback](DEPLOY.md) before updating a running
 daemon. The legacy `hook/start.sh` and `hook/stop.sh` depend on development-only
 lifecycle support and are not the clean-checkout launch path.
 
-The native image has a separate build and deployment workflow. `hook/build_anim4.sh` is a legacy developer entry point; it does not build the current presentation C++/assembly entry points or perform whole-image qualification. Native rebuilds also require the complete optional effects source package, which is outside this checkout. Do not deploy a partial image into a desktop session.
+The native image has a separate build and deployment workflow. `hook/build_anim4.sh` is a legacy developer entry point; it does not build the current presentation C++/assembly entry points or perform whole-image qualification. The complete native build inputs and fresh-session bootstrap are not distributed by this source installer. Do not deploy a partial image into a desktop session.
 
 ## Configuration and controls
 

@@ -11,8 +11,21 @@ func diagnose(hook: String, controlPath: String) -> JSON {
         ("mode", .string("native-read-only")), ("runtime", .string("swift")),
         ("pid", .int(Int(getpid()))), ("accessibility_trusted", .bool(trusted)),
         ("control_alive", .bool(CommandServer.isAlive(controlPath))),
-        ("automatic_engine_installation", .bool(false))
+        ("automatic_engine_installation", .bool(false)),
+        ("startup_canary_performed", .bool(false))
     ]
+    do {
+        let location=try EngineStateLocation.resolve(hook:hook)
+        let tokens=try location.read().split(whereSeparator:{$0.isWhitespace})
+        guard let first=tokens.first,let pid=Int(first),pid>1 else {throw CmdError("Invalid native engine receipt")}
+        let identity=try VerifiedPublicWorkspace.identity(pid)
+        let actor=identity.array,executable=actor?.count==5 ? actor?[4].string:nil
+        let matches=actor?.count==5 && OverviewBinding.integer(actor?[0])==pid &&
+            OverviewBinding.integer(actor?[1])==88 && executable?.hasPrefix("/System/Library/PrivateFrameworks/SkyLight.framework/")==true &&
+            executable?.hasSuffix("/WindowServer")==true && LiveEngine.wsPid()==pid
+        fields.append(("engine_state",.object([("path",.string(location.path)),("source",.string(location.source)),
+            ("pid",.int(pid)),("identity_matches",.bool(matches))])))
+    } catch {fields.append(("engine_state_error",.string(String(describing:error))))}
     do {
         let snapshot = try system.snapshot()
         fields.append(("snapshot", .object([("stable", .bool(snapshot.stable)), ("space", .int(snapshot.space)),
