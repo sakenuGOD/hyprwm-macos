@@ -29,7 +29,14 @@ enum { OP_GEOM = 1, OP_ALPHA = 2, OP_FORGET = 3, OP_WARP = 4, OP_UNDER = 5, OP_S
 #define CH_CAP_BIRTH 0x04000000u // Native first-order custody; absent until its consumer is installed.
 #define CH_CAP_ORDINARY_PREPARE 0x02000000u // Actual old-R OWN adoption before a geometry batch.
 #define CH_CAP_VIEWPORT 0x01000000u // Live 1:1 source pan beneath a fixed tile.
+#define CH_CAP_CLOSE 0x00800000u // Qualified accepted-close witness and retained independent frame.
 #define CH_VIEWPORT 0x56504557u
+#define CH_CLOSE 0x434c5331u
+// OP_EDGE/CLOSE: cpos action, pad0/1 nonce, csize generation. ARM carries
+// epoch128 in x/y/w/h UInt32 halves and policy lifetime in dpos. RELEASE
+// carries its survivor batch nonce in x/y. No shared struct changes.
+enum { CLOSE_ARM=1,CLOSE_DISARM=2,CLOSE_PREARM=3,CLOSE_CANCEL=4,CLOSE_RELEASE=5 };
+enum { CLOSE_E_READY=1,CLOSE_E_HELD=2,CLOSE_E_RETIRED=3,CLOSE_E_REFUSED=4 };
 // Versioned OP_EDGE extension. Old consumers reject flags>2 without mutation.
 #define CH_ORDINARY_PREPARE 0x4f574e50u
 // pad0/pad1: UInt64 request nonce; cpos: 1 prepare, 0 cancel; xywh: future goal.
@@ -59,7 +66,8 @@ struct ch_cfgmsg { u32 magic, wid; double x, y, w, h; double t0; };   // payload
    // SPACE: move window to desktop (k.x = desktop id) inside WS; client SLSMoveWindowsToManagedSpace cannot move foreign windows
 enum { F_FROM = 1, F_MOVE = 2, F_STRETCH = 4, F_WAIT = 8, F_HOLD = 16, F_NATIVE = 32, F_STREAM = 64, F_EDGE = 128, F_SNAPSHOT = 256, F_MOVE_END = 512 }; // MOVE_END: keep native origin until live visual geometry completes.
    // STRETCH: stretch content to B (opening, like m_animatingIn); OP_GEOM / OP_ALPHA flags
-enum { EV_GONE = 1, EV_SETTLED = 2, EV_DONE = 3, EV_NEW = 4, EV_MOVED = 5, EV_REL = 6, EV_CLONE = 7, EV_ERROR = 8, EV_SNAPSHOT = 9, EV_BIRTH = 10, EV_ORDINARY = 11, EV_VIEWPORT = 12 };
+enum { EV_GONE = 1, EV_SETTLED = 2, EV_DONE = 3, EV_NEW = 4, EV_MOVED = 5, EV_REL = 6, EV_CLONE = 7, EV_ERROR = 8, EV_SNAPSHOT = 9, EV_BIRTH = 10, EV_ORDINARY = 11, EV_VIEWPORT = 12, EV_CLOSE = 13 };
+// CLOSE: x/y exact nonce halves, w CLOSE_E_*, h exact UInt32 generation.
 // VIEWPORT: x/y nonce halves, w/h actual offsets. Reset reports zero offsets.
 // BIRTH: x/y exact UInt32 token halves, w creator PID, h BIRTH_* state. The
 // native pending table remains authoritative; retry publication until state ACK.

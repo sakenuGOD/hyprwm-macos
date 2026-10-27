@@ -168,7 +168,14 @@ public final class WM {
     var snapshotConfigures:[Int:SnapshotConfigure]=[:]
     var ordinaryBatch:OrdinaryBatch?
     var ordinaryNonce:UInt64=0
+    var ordinaryReadyNonce:UInt64?
     var ordinaryFallback=Set<Int>()
+    var acceptedCloseEpoch=(UInt64.random(in:1...UInt64.max),UInt64.random(in:1...UInt64.max))
+    var acceptedCloseNonce:UInt64=0
+    var acceptedCloseRows:[Int:AcceptedCloseRow]=[:]
+    var acceptedCloseRetry:[Int:Double]=[:]
+    var acceptedCloseHeartbeat=0.0
+    var acceptedCloseArmed=false
     var liveBufferShrinks:[Int:LiveBufferShrink]=[:]
     // Current-window presentation ceilings, never persisted as per-app constraints.
     var acceptedCeilings:[Int:(pid:Int,birth:String,width:Double,height:Double)]=[:]
@@ -484,6 +491,7 @@ public final class WM {
         // Pre-adoption is not ready for production: an unacknowledged source
         // delays every configure for 600 ms, then warps the entire batch.
         // Keep the existing guarded live geometry/configure path immediate.
+        let acceptedCloseBatch=self.acceptedCloseBatch(space,rects:rects);ordinaryReadyNonce=nil
         defer {ordinaryFallback.removeAll()}
         if !opening.isEmpty && inOn { // Concealed openings remain invisible until their size is ready.
             for wid in opening where !restoring.contains(wid) && !presentedOpenings.contains(wid) {
@@ -510,12 +518,12 @@ public final class WM {
             let presentedOpening=presentedOpenings.contains(wid) && inOn && !noAnimation && !restoring.contains(wid)
             let motionCurve=presentedOpening ? inC:mvC,motionDuration=presentedOpening ? inD:mvD
             let motionOn=presentedOpening || mvOn
-            let snapshotFrames=options.production && options.snapshotFrames && eng.c.snapshotSupported && !noAnimation && mvOn &&
+            let snapshotFrames=options.production && acceptedCloseBatch==nil && options.snapshotFrames && eng.c.snapshotSupported && !noAnimation && mvOn &&
                 !opening.contains(wid) && !restoring.contains(wid) && cfgSink?.busy(wid) != true &&
                 clientPolicy?.admitted(cw,sys) == true && sys.clientCapability(cw.pid) >= 6 && dragSession == nil
             var capturedSnapshot=false
             var terminalMove=false
-            let nativeFrames = options.production && options.nativeFrames && !noAnimation && mvOn &&
+            let nativeFrames = options.production && acceptedCloseBatch==nil && options.nativeFrames && !noAnimation && mvOn &&
                 !snapshotFrames &&
                 (!opening.contains(wid) || restoring.contains(wid)) && clientPolicy?.admitted(cw,sys) == true && sys.clientCapability(cw.pid) >= 6 &&
                 sys.clientMinimum(cw.pid,wid).map{to.w+1 >= $0.0 && to.h+1 >= $0.1} == true &&
@@ -597,7 +605,9 @@ public final class WM {
                 }
             }
         }
-        if !posted.isEmpty {
+        let closePosted=releaseAcceptedClose(space,rects:rects,batch:acceptedCloseBatch,geometry:posted)
+        if closePosted<0 {for wid in posted {target[wid]=nil};return}
+        if !posted.isEmpty || closePosted>0 {
             c.commit()
             if options.production { claimAdmission(posted) }
             let t = sys.now()                                     // the engine accepts the batch on its next tick
@@ -1621,6 +1631,7 @@ public final class WM {
     public func handleEvents(_ evs: [EngEvent]) -> Bool {
         var drifted = false
         for ev in evs {
+            if options.production && ev.type==13 {drifted=observeAcceptedClose(ev) || drifted;continue}
             if options.production && ev.type==12 {observeViewport(ev);continue}
             if options.production && ev.type==11 {observeOrdinary(ev);drifted=true;continue}
             if options.production && ev.type==9 { observeSnapshot(ev);continue }
@@ -1829,7 +1840,7 @@ public final class WM {
         // Tab publication can change independently of window geometry. Read its
         // guarded envelope immediately without repeating the entire census.
         var (changed, opened) = sync(area, space, wins, refreshTabs: need || tabChanged)
-        changed = changed || drifted || nativeLayoutChanged || overviewRetilePending || ordinaryBatch != nil || (options.production && spaceChanged)
+        changed = changed || drifted || nativeLayoutChanged || overviewRetilePending || ordinaryBatch != nil || acceptedCloseRows.values.contains(where:{$0.phase==2}) || (options.production && spaceChanged)
         let cf = configured()                                     // window rejected size: retarget immediately
         changed = changed || cf
         if wasDown && !md {                                       // button released: a window may have been dragged

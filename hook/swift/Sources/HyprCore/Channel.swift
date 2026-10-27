@@ -5,7 +5,7 @@ import CChan
 import Foundation
 
 public enum ChannelCapabilities {
-    public static let mask=UInt32(CH_CAP_EFFECTS)|UInt32(CH_CAP_SHADOW)|UInt32(CH_CAP_SNAPSHOT)|UInt32(CH_CAP_SNAPSHOT_COVER)|UInt32(CH_CAP_TERMINAL_MOVE)|UInt32(CH_CAP_BIRTH)|UInt32(CH_CAP_ORDINARY_PREPARE)|UInt32(CH_CAP_VIEWPORT)
+    public static let mask=UInt32(CH_CAP_EFFECTS)|UInt32(CH_CAP_SHADOW)|UInt32(CH_CAP_SNAPSHOT)|UInt32(CH_CAP_SNAPSHOT_COVER)|UInt32(CH_CAP_TERMINAL_MOVE)|UInt32(CH_CAP_BIRTH)|UInt32(CH_CAP_ORDINARY_PREPARE)|UInt32(CH_CAP_VIEWPORT)|UInt32(CH_CAP_CLOSE)
     public static func abi(_ version:UInt32) -> UInt32 { version & ~mask }
 }
 

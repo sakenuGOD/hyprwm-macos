@@ -129,7 +129,7 @@ static int rgba_carrier_space_sync(struct rgba_capture *g,struct rgba_view *v,u6
     if(!b->contains(space,v->window))b->add_space(space,v->window);
     return rgba_carrier_space(g,v->window)==sid;
 }
-static int rgba_carrier_ordered(struct rgba_capture *g,struct rgba_carrier_slot *s,void *source) {
+static int rgba_carrier_ordered_windows(struct rgba_capture *g,void *source,void *own) {
     struct ctx *c=g->pc.engine;
     void *control=g->pc.session_control?*(void **)g->pc.session_control:0;
     if(!control || *(void **)((char *)control+0x20)!=c->session || !c->session)return 0;
@@ -139,12 +139,15 @@ static int rgba_carrier_ordered(struct rgba_capture *g,struct rgba_carrier_slot 
     void *previous=0;unsigned found=0,a=0,b=0;
     for(int i=0;i<count;i++)if(items[i]) {
         if(items[i]==source)a++;
-        if(items[i]==s->view.window){b++;if(previous==source)found++;}
+        if(items[i]==own){b++;if(previous==source)found++;}
         previous=items[i];
     }
     return found==1 && a==1 && b==1 && *(void **)g->pc.session_control==control &&
         *(void **)((char *)control+0x20)==c->session && *(char **)((char *)c->session+0x90)==data &&
         *(void ***)(data+0x20)==items && *(int *)(data+0x28)==count && *(int *)(data+0x2c)==capacity;
+}
+static int rgba_carrier_ordered(struct rgba_capture *g,struct rgba_carrier_slot *s,void *source) {
+    return rgba_carrier_ordered_windows(g,source,s->view.window);
 }
 static void rgba_carrier_release_frame(struct rgba_capture *g,struct rgba_retained_frame *f) {
     void *texture=f->texture,*color=f->color;*f=(struct rgba_retained_frame){0};

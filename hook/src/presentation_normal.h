@@ -27,9 +27,15 @@ static int rgba_pan_drop(struct rgba_capture *);
 void rgba_normal_viewport_tick(void *);
 void rgba_normal_draw_commands(void *);
 void rgba_normal_close_gate(void *,void **,unsigned,int);
+void rgba_normal_close_seed_commands(void *);
 static void rgba_draw_claim_commit(struct rgba_capture *,struct rgba_inplace *,u32);
 static void rgba_draw_adopted(struct rgba_capture *,struct rgba_inplace *,u32,int);
 static int rgba_draw_model_adopted(struct rgba_capture *,struct rgba_inplace *,void *,u32,void *,void *,void *,void *);
+static void rgba_close_accept_placement(struct rgba_capture *,struct rgba_inplace *,u32,rect);
+static void rgba_draw_close_lease(struct rgba_capture *,u32,u64,int);
+static int rgba_draw_close_cached(struct rgba_capture *,struct rgba_inplace *);
+struct rgba_accepted_close_slot;
+static void rgba_draw_close_detach(struct rgba_capture *,struct rgba_accepted_close_slot *);
 #include "presentation_inplace.h"
 struct rgba_normal_binding {
     u64 magic;u32 size,version;
@@ -125,6 +131,9 @@ static int rgba_carrier_timer_allowed(struct rgba_capture *);
 static u64 rgba_carrier_bytes(struct rgba_capture *);
 static void rgba_carrier_finish_drop(struct rgba_capture *);
 static int rgba_carrier_can_publish(struct rgba_capture *,struct rgba_inplace *);
+static u64 rgba_carrier_space(struct rgba_capture *,void *);
+static int rgba_carrier_space_sync(struct rgba_capture *,struct rgba_view *,u64);
+static int rgba_carrier_ordered_windows(struct rgba_capture *,void *,void *);
 static void rgba_carrier_observe_idle(struct rgba_capture *,struct rgba_inplace *,void *);
 static void rgba_carrier_before_window(struct rgba_capture *,void *,unsigned,u64,u64 *);
 extern void anim_rgba_carrier_recover(struct rgba_capture *,struct rgba_inplace *);
@@ -225,6 +234,7 @@ static void rgba_normal_arm_active(struct rgba_normal_scope *scope) {
                 if(d>=distance || !m->on || m->opening || m->padding_motion ||
                    m->wid!=wid || !!m->presenting!=pass || !rgba_inplace_source(g,m))continue;
                 if(!(w->pos.active || w->size.active || w->alpha.active || rgba_draw_pending(g,m)))continue;
+                if(!w->pos.active && !w->size.active && !w->alpha.active && rgba_draw_close_cached(g,m))continue;
                 rect r={w->pos.v[0],w->pos.v[1],w->size.v[0],w->size.v[1]};
                 if(rgba_view_rect(r)){best=i;distance=d;}
             }
@@ -362,6 +372,8 @@ void anim_rgba_normal_present_dispatch(struct ctx *c,double now) {
     struct rgba_capture *g=*(void **)((char *)c+PC_CONTROL_PTR);
     if(rgba_valid(g) && !g->destroyed && !g->pc.dead && !g->pc.active_command)rgba_inplace_tick(g);
     if(rgba_valid(g) && !g->destroyed && !g->pc.dead && !g->pc.active_command) {
+        struct rgba_accepted_close *accepted=rgba_accepted_close_control(g);
+        if(accepted)rgba_close_tick_accepted(g,accepted,now);
         if(rgba_carrier_active(g))anim_rgba_carrier_close(g,now);else rgba_close_tick(g,now);
     }
     if(rgba_valid(g) && !g->destroyed && !g->pc.dead && !g->pc.active_command)rgba_ordinary_tick(g,now);

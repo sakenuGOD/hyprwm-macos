@@ -230,7 +230,12 @@ static void rgba_draw_commands(struct ctx *c) {
                !rgba_inplace_source(g,m)) {rgba_draw_receipt(g,m,request,3);continue;}
             if(s && s->request) {
                 if(s->request==request)continue;
-                rgba_draw_receipt(g,m,request,3);continue;
+                if(!rgba_draw_identity(g,m,s) || !rgba_close_take_prepare(g,m,s->request)) {
+                    rgba_draw_receipt(g,m,request,3);continue;
+                }
+                // Transfer only the close preparation's request ownership.
+                // The same already-proven graph stays in place throughout.
+                s->request=0;s->phase=0;s->claim_request=0;s->claim_epoch=0;s->claim_commit=0;s->claim_frame=(rect){0};
             }
             rect current={w->pos.v[0],w->pos.v[1],w->size.v[0],w->size.v[1]};
             if(!rgba_draw_prepare(g,m,w,current)){rgba_draw_receipt(g,m,request,3);continue;}
@@ -243,6 +248,60 @@ static void rgba_draw_commands(struct ctx *c) {
     }
 }
 void anim_rgba_draw_commands(void *context) {rgba_draw_commands(context);}
+static void rgba_draw_close_lease(struct rgba_capture *g,u32 wid,u64 nonce,int cancel) {
+    struct rgba_inplace *all=rgba_ordinary_slots(g);
+    for(unsigned i=0;i<CH_NW;i++)if(all[i].on && all[i].wid==wid) {
+        struct rgba_inplace *m=&all[i];struct rgba_draw_slot *s=rgba_draw_row(g,m);
+        if(!s || s->request!=nonce || !rgba_draw_identity(g,m,s))return;
+        if(cancel){s->phase=3;s->claim_request=0;}
+        else if(s->phase==1 || s->phase==2)s->deadline=g->pc.engine->ch->h.now+1;
+        return;
+    }
+}
+static void rgba_draw_close_detach(struct rgba_capture *g,struct rgba_accepted_close_slot *close) {
+    struct rgba_inplace *all=rgba_ordinary_slots(g);
+    for(unsigned i=0;i<CH_NW;i++) {
+        struct rgba_inplace *m=&all[i];if(!m->on || m->wid!=close->source_wid ||
+            (u64)m->window!=close->source || m->creator!=close->creator || m->pid_version!=close->birth ||
+            (u64)m->root!=close->source_root)continue;
+        struct rgba_draw_slot *s=rgba_draw_row(g,m);
+        if(!s || s->request!=close->nonce || !rgba_draw_identity(g,m,s))return;
+        // Revoke only this request's provenance. Keep the proven source graph
+        // intact, including when independent B teardown must retry.
+        s->request=0;s->phase=0;s->claim_request=0;s->claim_epoch=0;s->claim_commit=0;s->claim_frame=(rect){0};return;
+    }
+}
+// A proven close prewarm does not need a new texture for an unchanged native
+// commit. Re-encoding that same frame would invalidate its independent B before
+// the first Update could adopt it. Ordinary geometry preparations stay live.
+static int rgba_draw_close_cached(struct rgba_capture *g,struct rgba_inplace *m) {
+    struct rgba_draw_slot *d=rgba_draw_row(g,m);
+    struct rgba_accepted_close *b=rgba_accepted_close_control(g);
+    if(!b || !b->slots || !rgba_close_policy(g,b) || !rgba_draw_identity(g,m,d) ||
+       d->phase!=2 || !rgba_draw_pending(g,m) || !m->presenting || !m->texture ||
+       m->accepted.texture!=m->texture || m->adopted_texture!=(u64)m->texture || !m->adopted_sequence)return 0;
+    struct ch_win *w=slot(g->pc.engine->ch,m->wid,0);
+    if(!w || !w->geo || w->held || w->wait || w->pos.active || w->size.active || w->alpha.active ||
+       w->cur_alpha!=1 || !rgba_view_same(m->current,(rect){w->pos.v[0],w->pos.v[1],w->size.v[0],w->size.v[1]}) ||
+       m->accepted.client_context!=m->good_client_context || m->accepted.client_id!=m->good_client_id ||
+       m->accepted.client_sequence!=m->good_client_sequence)return 0;
+    char *cwc=*(char **)((char *)m->window+0x18);void *client=cwc?*(void **)(cwc+0x48):0;
+    if(!client || (u64)client!=m->good_client_context || *(u32 *)(cwc+0x50)!=m->good_client_id ||
+       __atomic_load_n((u32 *)((char *)client+0x40),__ATOMIC_ACQUIRE)!=m->good_client_sequence)return 0;
+    for(unsigned i=0;i<RGBA_ACCEPTED_CLOSE_N;i++) {
+        struct rgba_accepted_close_slot *s=&b->slots[i];
+        if(s->nonce==d->request && s->source_wid==m->wid && s->source==(u64)m->window &&
+           s->creator==m->creator && s->birth==m->pid_version && s->source_root==(u64)m->root &&
+           s->space==rgba_carrier_space(g,m->window) &&
+           s->lifecycle>=CLOSE_WARM && s->lifecycle<=CLOSE_READY && !s->release_requested &&
+           g->pc.engine->ch->h.now<s->expires &&
+           ((s->pending_sequence==m->adopted_sequence && s->unpublished.texture==m->texture &&
+             rgba_view_same(s->pending_pose,m->current)) ||
+            (s->accepted_epoch==m->adopted_sequence && s->frame.texture==m->texture &&
+             rgba_view_same(s->accepted_pose,m->current))))return 1;
+    }
+    return 0;
+}
 void anim_rgba_draw_commands_abort(void *context) {
     struct ctx *c=context;struct rgba_capture *g=*(void **)((char *)c+PC_CONTROL_PTR);
     if(!rgba_valid(g) || g->pc.engine!=c)return;

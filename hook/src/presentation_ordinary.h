@@ -105,6 +105,7 @@ static int rgba_ordinary_reset(struct rgba_capture *g) {
 // retarget. Read only the published command batch before that baseline tick;
 // an explicit ordinary 1:1 command must not inherit an earlier opening mode.
 static void rgba_ordinary_before_tick(struct ctx *c) {
+    rgba_normal_close_seed_commands(c);
     rgba_normal_draw_commands(c);
     struct rgba_capture *g=*(void **)((char *)c+PC_CONTROL_PTR);
     if(!rgba_valid(g) || g->pc.engine!=c || !pc_main(&g->pc) || c->in_cb || c->dead || !c->ch ||
@@ -515,8 +516,9 @@ static void rgba_ordinary_tick(struct rgba_capture *g,double now) {
             slots[j].pid_version==*(u64 *)(creator+0x268)){m=&slots[j];break;}
         if(!m)for(unsigned j=0;j<CH_NW;j++)if(!slots[j].on && !slots[j].root && !slots[j].texture && !slots[j].opening){m=&slots[j];break;}
         if(!m)continue;
-        if(m->on && !rgba_draw_pending(g,m) && m->good_client_sequence==commit && m->good_client_context==(u64)client &&
-           m->good_client_id==*(u32 *)(cwc+0x50) && !m->presenting &&
+        if(m->on && m->good_client_sequence==commit && m->good_client_context==(u64)client &&
+           m->good_client_id==*(u32 *)(cwc+0x50) &&
+           ((!rgba_draw_pending(g,m) && !m->presenting) || rgba_draw_close_cached(g,m)) &&
            !w->pos.active && !w->size.active && !w->alpha.active)continue;
         if(!m->on && (m->wid!=w->wid || m->window!=win || m->creator!=(u64)creator ||
            m->pid_version!=*(u64 *)(creator+0x268))) {

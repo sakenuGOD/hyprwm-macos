@@ -2,7 +2,7 @@
 
 HyprWM is an experimental tiling window manager for macOS. It arranges application windows in a dwindle layout, adds keyboard controls and animates their presentation through a native engine. Applications keep their own window identity, input and Spaces membership.
 
-The Swift daemon, menu, settings, configuration tools and reference tests are available here. Running the tiling engine requires a separately qualified native installation. The source installer builds the app and command-line tools; it does not install that engine.
+The Swift daemon, menu, settings, configuration tools and native build sources are available here. The native engine has a separate, privileged setup for the supported macOS fingerprint. The app installer preserves the selected engine installation.
 
 ## Build
 
@@ -45,7 +45,7 @@ exiting. See [deployment and rollback](DEPLOY.md) before updating a running
 daemon. The legacy `hook/start.sh` and `hook/stop.sh` depend on development-only
 lifecycle support and are not the clean-checkout launch path.
 
-The native image has a separate build and deployment workflow. `hook/build_anim4.sh` is a legacy developer entry point; it does not build the current presentation C++/assembly entry points or perform whole-image qualification. The complete native build inputs and fresh-session bootstrap are not distributed by this source installer. Do not deploy a partial image into a desktop session.
+For a first native installation, follow [native Engine setup](DEPLOY.md#native-engine-first-setup). `hook/tools/build_native.py` builds the complete current image and runs its structural and unwind checks. Its OS-derived output stays in a private directory outside the checkout. `hook/build_anim4.sh` is a legacy entry point and does not build the current image.
 
 ## Configuration and controls
 
@@ -65,12 +65,11 @@ Explicit floats, float rules and native auxiliary windows share the floating
 plane above ordinary tiles. Local playback documents identified through macOS
 Accessibility and file types stay floating. `layout.minimum_policy = "ratio"`
 keeps split proportions when an application needs a larger native frame; its
-presentation is cropped to the allocated tile. Fullscreen and float controls
-can expose clipped controls; independent viewport panning is still unfinished.
+presentation is cropped to the allocated tile. Use `hyprwmctl pan left`, `right`, `up`, `down` and `reset` to reach clipped content where the native viewport is available. Fullscreen and float controls remain available. The separate toolbar navigation UI is not included.
 
 ## Current limits
 
-The native presentation path uses accepted client texture dimensions for 1:1 crop and edge extension. It retains working frames during transfer and falls back to the application when a source cannot be qualified. The optional [application helper](DEPLOY.md#application-menus) enables first-map handoff for new ordinary AppKit windows. Cold-launch first windows can precede helper attachment; universal first-display, restore and retained-close coverage remain incomplete. Native presentation and compatibility remain experimental, and a source build alone does not qualify a machine.
+The native presentation path uses accepted client texture dimensions for 1:1 crop and edge extension. It retains working frames during transfer and falls back to the application when a source cannot be qualified. The optional [application helper](DEPLOY.md#application-menus) enables first-map handoff for new ordinary AppKit windows. Cold-launch first windows can precede helper attachment; universal first-display and restore coverage remain incomplete. Retained-close prewarming is disabled: the closing window can still disappear abruptly, even when its neighbor animates. Native presentation and compatibility remain experimental, and a source build alone does not qualify a machine.
 
 The current checkout ships the Engine runtime. Historical Lite behavior appears
 in the [animation comparison](docs/ANIMATION_AUDIT.md), with unavailable code

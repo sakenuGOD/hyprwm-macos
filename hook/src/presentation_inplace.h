@@ -314,7 +314,7 @@ static void rgba_inplace_observe_slot(struct rgba_capture *g,struct rgba_inplace
     part_handle[0]=bh;
     for(unsigned i=1;i<4;i++)part_handle[i]=v->api.lookup_handle(context,part_id[i],0,0,0);
     char *parts[4]={0},*actual_surface=0;
-    m->reason=100;int adopted=0,placement_proven=0;
+    m->reason=100;int adopted=0,placement_proven=0;rect accepted_pose={0};
     char *roots[64],*next[64],*prev[64],*parent[64],*seen[512];
     unsigned depth=1,n=0;char *actual_root=0,*actual_body=0,*actual_host=0;
     roots[0]=update+0xd8;next[0]=*(char **)roots[0];prev[0]=roots[0];parent[0]=0;
@@ -379,6 +379,7 @@ static void rgba_inplace_observe_slot(struct rgba_capture *g,struct rgba_inplace
         m->adoptions++;m->adopted_sequence=sequence;m->adopted_texture=(u64)m->texture;m->reason=0;
         adopted=1;
         if(preclaim)placement_proven=rgba_draw_model_adopted(g,m,context,sequence,rh,surface_handle,server_handle,actual_surface);
+        if(placement_proven)accepted_pose=m->current;
     }else m->reason=0x10000|failed;
 done:
     g->api.unlock_context(context);
@@ -393,6 +394,8 @@ done:
                 m->good_client_id,m->good_client_sequence,m->color?g->api.geometry.retain_cf(m->color):0};
         }
     }
+    if(adopted && placement_proven && m->accepted.texture==m->texture)
+        rgba_close_accept_placement(g,m,sequence,accepted_pose);
 }
 static void rgba_inplace_observe(struct rgba_capture *g,void *head,void *prepared) {rgba_inplace_observe_slot(g,rgba_inplace_control(g),head,prepared);}
 static void rgba_inplace_tick(struct rgba_capture *g) {

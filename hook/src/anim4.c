@@ -194,6 +194,14 @@ static int birth_retire_cover(struct ctx *,unsigned,int,double);
 static int birth_source_release(struct ctx *,char *,double);
 static void birth_clone_frame(struct ctx *,struct ch_win *,struct ch_win *,double);
 static int birth_capture_source(struct ctx *,void *,rect,u64);
+int rgba_normal_close_order(void *) __attribute__((nothrow));
+int rgba_normal_close_command(void *,void *) __attribute__((nothrow));
+static void rgba_close_capability(struct ctx *,int);
+static inline int rgba_close_callbacks_needed(struct ctx *);
+static int rgba_close_source_held(struct ctx *,void *);
+static void rgba_close_batch_start(struct ctx *,double);
+static void rgba_close_batch_begin(struct ctx *,u32,u32);
+static unsigned rgba_close_active(struct ctx *);
 #define P8_TAB(c) ((struct p8c *)((char *)(c) + 0x800))
 #define P8_N 32
 #define P8_SOURCE(c) ((u64 *)((char *)(c) + 0xb00))
@@ -1371,6 +1379,7 @@ static int snapshot_acquire(struct ctx *c, char *win, struct ch_win *w, double n
 }
 
 static void apply_cmd(struct ctx *c, struct ch_cmd *k, double now) {
+    if(rgba_normal_close_command(c,k))return;
     if(birth_command(c,k,now))return;
     struct ch *ch = c->ch;
     if(k->op==OP_SNAP && !k->wid && k->flags==1) {
@@ -1659,9 +1668,10 @@ static void apply_cmd(struct ctx *c, struct ch_cmd *k, double now) {
         if (!native && k->op == OP_GEOM && (k->flags & F_WAIT)) { w->wait = 1; w->wait_t = now; }
         // Neighbor of an opening window waits at start until new window supplies a tile-sized frame (<=150 ms),
         // then starts in the same frame as its popin: one wave (like Hyprland: configure before showing).
-        if (k->op == OP_GEOM && (k->flags & F_HOLD) && !moving) {
-            // A new opening batch must not stop an already visible moving neighbor.
-            // Its current spring retargets continuously; only resting neighbors join the hold.
+        if (k->op == OP_GEOM && (k->flags & F_HOLD) &&
+            (!moving || ((ch->h.version&CH_CAP_CLOSE) && (k->pad0 || k->pad1)))) {
+            // Ordinary openings keep moving neighbors continuous. A nonce-tagged
+            // close cohort explicitly holds every peer for its shared restart.
             w->held = 1; w->needs = native ? 0 : dabs(w->aw - k->w) > 2 || dabs(w->ah - k->h) > 2; ch->h.holding = 1;
             ch->h.hold_t = now;
         }
@@ -2107,7 +2117,9 @@ static void p8_order_done(struct ctx *c) {
 void anim_will_release(u32 type, void *data, unsigned long len, struct ctx *c) {
     if (c->dead || c->in_cb) return;
     struct ch *ch = c->ch;
-    if (ch->h.magic != CH_MAGIC || ch->h.stop || !(ch->h.reserved[0] & 1)) return;
+    if (ch->h.magic != CH_MAGIC || ch->h.stop) return;
+    if(type==0x3ee){rgba_normal_close_order(c);return;}
+    if (!(ch->h.reserved[0] & 1)) return;
     if (type == 0x3ea) { c->in_cb = 1; p8_order_done(c); c->in_cb = 0; return; }
     if (type != 0x3e9 || !data || len != 8) return;
     char *src = data;
@@ -2118,6 +2130,7 @@ void anim_will_release(u32 type, void *data, unsigned long len, struct ctx *c) {
     struct ch_win *sw = slot(ch, swid, 0);
     if(sw) { live_edge_drop(c,sw); live_edge_client(c,sw,0); }
     post_evt(ch, EV_REL, swid, ch->h.now, on, 1, lvl, (sw ? 1 : 0) + (sw && sw->geo ? 2 : 0));
+    if(rgba_close_source_held(c,src))return;
     if (!(ch->h.reserved[0] & 2) || lvl != 0) return;
     for (int i = 0; i < P8_N; i++) {                           // captured on order-out: this is a close, start exit
         struct p8c *e = &P8_TAB(c)[i];
@@ -2132,13 +2145,15 @@ void anim_will_release(u32 type, void *data, unsigned long len, struct ctx *c) {
 // Tick: register callback and free clones whose animation ended (or all clones on stop).
 static void p8_tick(struct ctx *c, int stopping, double now) {
     struct ch *ch = c->ch;
-    int want = !stopping && (ch->h.reserved[0] & 1) && c->add_cb && c->rm_cb && c->cb;
+    int want = !stopping && ((ch->h.reserved[0] & 1) || rgba_close_callbacks_needed(c)) && c->add_cb && c->rm_cb && c->cb;
     if (want && !c->cb_on) {
         c->rm_cb(c->cb, 0x3e9, c); c->add_cb(c->cb, 0x3e9, c);
         c->rm_cb(c->cb, 0x3ea, c); c->add_cb(c->cb, 0x3ea, c);
+        c->rm_cb(c->cb, 0x3ee, c); c->add_cb(c->cb, 0x3ee, c);
         c->cb_on = 1;
     }
-    if (!want && c->cb_on) { c->rm_cb(c->cb, 0x3e9, c); c->rm_cb(c->cb, 0x3ea, c); c->cb_on = 0; }
+    if (!want && c->cb_on) { c->rm_cb(c->cb, 0x3e9, c); c->rm_cb(c->cb, 0x3ea, c); c->rm_cb(c->cb, 0x3ee, c); c->cb_on = 0; }
+    rgba_close_capability(c,want && c->cb_on);
     for (int i = 0; i < P8_N; i++) {
         struct p8c *e = &P8_TAB(c)[i];
         if (!e->live) continue;
@@ -2289,6 +2304,7 @@ void anim_tick(struct ctx *c, double now) {
 
     u32 head = __atomic_load_n(&h->cmd_head, __ATOMIC_ACQUIRE), tail = h->cmd_tail;
     if (head - tail > CH_NCMD) { tail = head - CH_NCMD; record_error(ch,0,0,ERR_CMD_RING); }
+    rgba_close_batch_begin(c,tail,head);
     // Batch t0 = previous presentation time (te - T): first presented animation frame is exactly
     // one period after start, avoiding a 1-2 frame jump (Hyprland starts in event frame).
     double t0 = te - T;
@@ -2391,6 +2407,9 @@ void anim_tick(struct ctx *c, double now) {
         }
     }
 
+    // All held survivors have acquired their final common clock above. An
+    // accepted close remains still until this point, including move-only peers.
+    if(!h->holding)rgba_close_batch_start(c,t0);
     u32 n = 0;
     unsigned char border_presented[CH_NW] = {0};
     int decoration_ready = deco_ready(c);
@@ -2470,6 +2489,7 @@ void anim_tick(struct ctx *c, double now) {
     p8_tick(c, 0, te);
     birth_tick(c,now,1);
     for (int i = 0; i < P8_N; i++) n += P8_TAB(c)[i].live;
+    n+=rgba_close_active(c);
     h->nactive = n;
     if (n) {                                         // frame grid regularity: te step must equal T
         if (h->te_prev > 0 && dabs(te - h->te_prev - T) > 0.25 * T) h->te_skips++;

@@ -23,6 +23,20 @@ try:
     options=lldb.SBExpressionOptions();options.SetIgnoreBreakpoints(True);options.SetStopOthers(True)
     options.SetTryAllThreads(False);options.SetUnwindOnError(True);options.SetTimeoutInMicroSeconds(2000000);options.SetLanguage(lldb.eLanguageTypeC)
     arm64e=target.GetTriple().startswith('arm64e-')
+    legacy=[(module,entry) for module in target.modules for entry in CONFIG['legacy_entries'].values()
+            if (module.GetUUIDString() or '').upper()==entry['hypradmission_uninstall']['uuid']]
+    assert len(legacy)<=1,'ambiguous predecessor first-map module'
+    if legacy:
+        os.write(1,b'FIRST_MAP_PREDECESSOR\n')
+        image,entries=legacy[0]
+        for symbol in ['hypradmission_uninstall','hypradmission_is_installed']:
+            own=entries[symbol];address=image.GetObjectFileHeaderAddress().GetLoadAddress(target)+own['offset']
+            assert process.ReadMemory(address,16,error).hex()==own['prefix'] and error.Success()
+            region=lldb.SBMemoryRegionInfo();assert process.GetMemoryRegionInfo(address,region).Success() and region.IsExecutable() and not region.IsWritable()
+            pointer='(void*)'+str(address)
+            if arm64e:pointer='__builtin_ptrauth_sign_unauthenticated('+pointer+',0,0)'
+            result=target.EvaluateExpression('((int(*)(void))'+pointer+')()',options)
+            assert result.IsValid() and result.GetError().Success() and result.GetValueAsSigned()==0,'previous first-map source remains owned'
     pointer='(void*)'+str(entry['address'])
     if arm64e:pointer='__builtin_ptrauth_sign_unauthenticated('+pointer+',0,0)'
     loaded=target.EvaluateExpression('((void*(*)(const char*,int))'+pointer+')('+json.dumps(CONFIG['library'])+',2)',options)
@@ -33,7 +47,7 @@ try:
             if (module.GetUUIDString() or '').upper()==entry['uuid']]
     assert len(images)==1,'verified first-map image unavailable: '+repr([
         (module.GetFileSpec().fullpath,module.GetUUIDString()) for module in target.modules
-        if module.GetFileSpec().filename=='hypradmission.v2.dylib'])
+        if module.GetFileSpec().filename=='hypradmission.v3.dylib'])
     image,own=images[0]
     address=image.GetObjectFileHeaderAddress().GetLoadAddress(target)+own['offset']
     assert process.ReadMemory(address,16,error).hex()==own['prefix'] and error.Success()

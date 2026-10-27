@@ -43,7 +43,12 @@ final class NativeAdmissionContainers {
         services[pid]=(.array(actual),service);return path
     }
     func restore() {
-        let path=FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/HyprWM/first-map/grants.json").path
+        // Both versions use the same identity-bound socket. Retain old grants
+        // during cooperative client migration; register() deduplicates them.
+        for name in ["grants.json","grants-v3.json"] {restore(name)}
+    }
+    private func restore(_ name:String) {
+        let path=FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/HyprWM/first-map/"+name).path
         var parent=stat();let directory=URL(fileURLWithPath:path).deletingLastPathComponent().path
         guard lstat(directory,&parent)==0,parent.st_mode&S_IFMT==S_IFDIR,parent.st_uid==getuid(),parent.st_mode&0o077==0 else{return}
         let fd=open(path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC);guard fd>=0 else{return};defer{Darwin.close(fd)}

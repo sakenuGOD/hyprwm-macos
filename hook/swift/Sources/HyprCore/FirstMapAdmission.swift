@@ -7,6 +7,7 @@ public struct FirstMapLayout {
     public let gapsIn:Double, gapsOut:Gaps, splitWidthMult:Double, defaultRatio:Double, minimumPolicy:String
     public let rules:[JSON], owners:[Int:String],ownerMinima:[String:(Double,Double)]
     public var detached:Set<Int>=[]
+    public var closeBindings:[Int:AcceptedCloseBinding]=[:]
     var topology:JSON {
         .object([("area",.array(area.arr.map(JSON.double))),("space",.int(space)),("tree",tree),
                  ("presel",presel.map(JSON.string) ?? .null),("full",full.map(JSON.int) ?? .null),
@@ -45,7 +46,7 @@ public struct FirstMapLayout {
     func adopting(_ plan:FirstMapPlan) -> FirstMapLayout {
         FirstMapLayout(area:area,space:space,tree:plan.tree,focus:plan.focus,presel:plan.presel,full:full,fullmode:fullmode,
                        cursor:cursor,minima:plan.minima,gapsIn:gapsIn,gapsOut:gapsOut,splitWidthMult:splitWidthMult,
-                       defaultRatio:defaultRatio,minimumPolicy:minimumPolicy,rules:rules,owners:owners,ownerMinima:ownerMinima,detached:detached)
+                       defaultRatio:defaultRatio,minimumPolicy:minimumPolicy,rules:rules,owners:owners,ownerMinima:ownerMinima,detached:detached,closeBindings:closeBindings)
     }
 }
 public struct FirstMapPlan {public let tree:JSON,focus:Int,presel:String?,rect:Rect,minima:[Int:(Double,Double)]}
@@ -104,7 +105,7 @@ public final class FirstMapAdmission {
         }
         guard request["schema"] == .int(1),request["transport"]?.string=="fixture-uds-v1",key.pid==pid,
               let deadline=request["deadline"]?.double,deadline.isFinite,deadline>now,deadline-now<=0.100 else{return reply("expired")}
-        guard let op=request["op"]?.string,["prepare","preview","mapped","cancel","closed"].contains(op) else{return reply("operation")}
+        guard let op=request["op"]?.string,["prepare","preview","mapped","cancel","closed","close-bind"].contains(op) else{return reply("operation")}
         if pending.map({now >= $0.expires}) == true {pending=nil}
         if let source=sources[pid],source.birth != birth {
             sources[pid]=nil;sequences=sequences.filter{!$0.key.hasPrefix("\(pid):")}
@@ -118,6 +119,13 @@ public final class FirstMapAdmission {
             sources[pid]=(birth,key.launch,key.generation)
         }
         guard let snapshot=layout,base != nil else{return reply("unmanaged")}
+        if op=="close-bind" {
+            // Preexisting managed windows need no first-map offer. The worker
+            // returns only the latest immutable native-ready WM publication.
+            guard let binding=base?.closeBindings[key.wid],binding.pid==pid,binding.birth==birth,
+                  binding.space==snapshot.space else{return reply("native")}
+            return reply("close-bound",[("marker",.string(binding.marker))])
+        }
         if op=="prepare" || op=="preview" {
             guard let facts=request["facts"],facts.object != nil else{return reply("facts")}
             let names=["normal","resizable","panel","sheet","parent","modal","grouped","group_known"]
@@ -208,13 +216,18 @@ extension WM {
                               defaultRatio:tile.defaultRatio,minimumPolicy:tile.minimumPolicy,rules:cfg.raw["window_rules"]?.array ?? [],
                               owners:Dictionary(wins.map{($0.pid,$0.owner)},uniquingKeysWith:{$1}),
                               ownerMinima:Dictionary(mins.map{($0.0,($0.1.first?.double ?? Dwindle.minW,$0.1.dropFirst().first?.double ?? Dwindle.minH))},uniquingKeysWith:{$1}),
-                              detached:nativeFullscreenWindows.subtracting(nativeSuspendedWindows).intersection(Dwindle.leaves(state.tree).compactMap(\.wid)))
+                              detached:nativeFullscreenWindows.subtracting(nativeSuspendedWindows).intersection(Dwindle.leaves(state.tree).compactMap(\.wid)),
+                              closeBindings:acceptedCloseBindings(space:space))
     }
     public func publishAdmission() {
         guard let admission else{return}
         guard options.production,enabled,let last,sys.now()-lastSnap<=0.3,sys.activeSpace()==UInt64(last.space),!sys.sessionLocked(),overviewFrozen?() != true,
               nativeSpaceType==0,dragSession==nil,
-              !nativeSuspendedSpaces.contains(String(last.space)) else{admission.suspend();return}
+              !nativeSuspendedSpaces.contains(String(last.space)) else{stopAcceptedClose();admission.suspend();return}
+        // Accepted-close prewarming is not ready for production: its repeated
+        // idle custody can cycle OWN/native presentation before B is adopted.
+        // Preserve native idle drawing until that lifecycle is qualified.
+        stopAcceptedClose()
         admission.publish(admissionLayout(last.area,last.space,last.wins))
         claimAdmission([])
     }

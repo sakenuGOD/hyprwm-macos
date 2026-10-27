@@ -39,11 +39,11 @@ def main():
     python=loader.protected_tool('python3');loader.protected_tool('lldb')
     interpreter=['/bin/launchctl','asuser',str(args.uid),'/usr/bin/arch','-arm64',python,'-I','-S']
     if args.action=='install':
-        for name in ['menu-policy.py','menu-inject.py','hyprmenus.dylib','first-map-inject.py','first-map-load.py','hypradmission.v2.dylib']:
+        for name in ['menu-policy.py','menu-inject.py','hyprmenus.dylib','first-map-inject.py','first-map-load.py','hypradmission.v3.dylib']:
             if not (source/name).is_file():parser.error('Missing '+name+'; run hook/active/build.sh first.')
         result=command('/usr/bin/codesign','--verify','--strict',str(source/'hyprmenus.dylib'))
         if result.returncode:raise RuntimeError(result.stderr)
-        result=command('/usr/bin/codesign','--verify','--strict',str(source/'hypradmission.v2.dylib'))
+        result=command('/usr/bin/codesign','--verify','--strict',str(source/'hypradmission.v3.dylib'))
         if result.returncode:raise RuntimeError(result.stderr)
     # Stop only this policy, allowing its exit handler to restore menu entries.
     command('/bin/launchctl','bootout','system/'+label)
@@ -63,7 +63,7 @@ def main():
         print('Application menus restored; policy disabled.')
         return
     checked_directory(parent);checked_directory(folder)
-    for name in ['menu-policy.py','menu-inject.py','hyprmenus.dylib','first-map-inject.py','first-map-load.py','hypradmission.v2.dylib']:
+    for name in ['menu-policy.py','menu-inject.py','hyprmenus.dylib','first-map-inject.py','first-map-load.py','hypradmission.v3.dylib']:
         atomic_write(folder/name,(source/name).read_bytes(),0o600)
     value=dict(Label=label,ProgramArguments=interpreter+[str(folder/'menu-policy.py'),'--uid',str(args.uid)],
                RunAtLoad=True,KeepAlive=True,ThrottleInterval=10,ProcessType='Standard',

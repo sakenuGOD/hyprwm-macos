@@ -40,6 +40,10 @@ extension WM {
         let owner=sys.winPidLevel(wid).pid
         guard owner==nil || owner==pid else{return false}
         if let known=closeDepartures[wid] {return known.pid==pid && known.birth==birth && known.space==space}
+        if let accepted=acceptedCloseRows[wid],accepted.phase>=2,accepted.job.pid==pid,
+           accepted.job.birth==birth,accepted.job.expectedSpace==space {
+            closeDepartures[wid]=CloseDeparture(pid:pid,birth:birth,space:space);return true
+        }
         if exited || (window==nil && owner==nil && goneT[wid] != nil) {
             closeDepartures[wid]=CloseDeparture(pid:pid,birth:birth,space:space);return true
         }

@@ -25,6 +25,28 @@ extern "C" void anim_rgba_close_gate(void *,void **,unsigned,int);
 extern "C" void rgba_normal_close_gate(void *capture,void **nodes,unsigned count,int promote) noexcept {
     try {anim_rgba_close_gate(capture,nodes,count,promote);}catch(...) {}
 }
+extern "C" void *anim_rgba_close_order_begin(void *) noexcept;
+extern "C" int anim_rgba_close_order_body(void *,void *);
+extern "C" void anim_rgba_close_order_end(void *) noexcept;
+extern "C" void anim_rgba_close_order_abort(void *,void *) noexcept;
+extern "C" int anim_rgba_close_command(void *,void *);
+extern "C" void anim_rgba_close_failed(void *) noexcept;
+extern "C" void anim_rgba_close_seed_commands(void *);
+extern "C" void rgba_normal_close_seed_commands(void *context) noexcept {
+    try {anim_rgba_close_seed_commands(context);}
+    catch(...) {anim_rgba_close_failed(context);}
+}
+extern "C" __attribute__((noinline)) int rgba_normal_close_order(void *context) noexcept {
+    void *binding=anim_rgba_close_order_begin(context);if(!binding)return 0;
+    int accepted=0;
+    try {accepted=anim_rgba_close_order_body(context,binding);}
+    catch(...) {anim_rgba_close_order_abort(context,binding);}
+    anim_rgba_close_order_end(binding);return accepted;
+}
+extern "C" __attribute__((noinline)) int rgba_normal_close_command(void *context,void *command) noexcept {
+    try {return anim_rgba_close_command(context,command);}
+    catch(...) {anim_rgba_close_failed(context);return 1;}
+}
 
 using ShapeOriginal=void *(*)(void *,unsigned);
 extern "C" void anim_rgba_draw_commands(void *);

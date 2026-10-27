@@ -101,6 +101,9 @@ public struct EngStats {
 
 /// Daemon -> engine channel (chan.py Chan).
 public protocol ChannelAPI: AnyObject {
+    var acceptedCloseSupported:Bool {get}
+    func acceptedClose(_ command:AcceptedCloseCommand) -> Bool
+    func acceptedClosePublication(_ releases:[AcceptedCloseCommand],geometry:[Int])->Bool
     var viewportSupported:Bool {get}
     func viewport(_ wid:Int,nonce:UInt64,offset:(Double,Double),box:Rect,enabled:Bool) -> Bool
     var ordinaryPrepareSupported:Bool {get}
@@ -133,6 +136,9 @@ public protocol ChannelAPI: AnyObject {
 }
 
 public extension ChannelAPI {
+    var acceptedCloseSupported:Bool {false}
+    func acceptedClose(_ command:AcceptedCloseCommand) -> Bool {false}
+    func acceptedClosePublication(_ releases:[AcceptedCloseCommand],geometry:[Int])->Bool {false}
     var viewportSupported:Bool {false}
     func viewport(_ wid:Int,nonce:UInt64,offset:(Double,Double),box:Rect,enabled:Bool) -> Bool {false}
     var ordinaryPrepareSupported:Bool {false}

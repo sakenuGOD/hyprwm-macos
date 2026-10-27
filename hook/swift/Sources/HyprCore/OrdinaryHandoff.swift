@@ -80,7 +80,7 @@ extension WM {
                 }
                 ordinaryBatch=batch;return true
             }
-            if batch.ready.count==batch.participants.count {ordinaryBatch=nil;return false}
+            if batch.ready.count==batch.participants.count {ordinaryBatch=nil;ordinaryReadyNonce=batch.nonce;return false}
             ordinaryBatch=batch;return true
         }
         guard options.production,c.ordinaryPrepareSupported,motion,!unboundOpening,dragSession==nil else{return false}

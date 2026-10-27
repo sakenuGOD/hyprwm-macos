@@ -40,7 +40,7 @@ int HAInstallGranted(NSDictionary *identity) {
     NSString *home=NSHomeDirectory(),*realHome=@(user->pw_dir);
     BOOL container=![home isEqual:realHome] && [home hasPrefix:[realHome stringByAppendingPathComponent:@"Library/Containers/"]] && [home hasSuffix:@"/Data"];
     NSString *directory=container?[home stringByAppendingPathComponent:@".hwm"]:[realHome stringByAppendingPathComponent:@"Library/Application Support/HyprWM/first-map"];
-    NSDictionary *grant=ReadGrant(directory,container?[NSString stringWithFormat:@"g%d",getpid()]:@"grants.json");if(!grant)return 0;
+    NSDictionary *grant=ReadGrant(directory,container?[NSString stringWithFormat:@"g3%d",getpid()]:@"grants-v3.json");if(!grant)return 0;
     NSArray *birth=@[identity[@"pid"]?:NSNull.null,identity[@"uid"]?:NSNull.null,
         identity[@"birth_sec"]?:NSNull.null,identity[@"birth_usec"]?:NSNull.null];
     for(id target in grant[@"targets"]) {
@@ -87,7 +87,7 @@ static BOOL desiredEnabled;
 static void publishReadiness(void) {
     static int token=-1;
     if(token<0) {
-        char name[96];snprintf(name,sizeof(name),"hyprwm.admission.v2.cap.%d",getpid());
+        char name[96];snprintf(name,sizeof(name),"hyprwm.admission.v3.cap.%d",getpid());
         if(notify_register_check(name,&token)!=NOTIFY_STATUS_OK)return;
     }
     notify_set_state(token,hypradmission_is_accepting()?1:0);
@@ -100,7 +100,7 @@ int HAInstallCurrentGrant(void) {
         desiredEnabled=YES;
         static int requestToken=-1;
         if(requestToken<0) {
-            char name[96];snprintf(name,sizeof(name),"hyprwm.admission.v2.request.%d",getpid());
+            char name[96];snprintf(name,sizeof(name),"hyprwm.admission.v3.request.%d",getpid());
             int status=notify_register_dispatch(name,&requestToken,dispatch_get_main_queue(),^(int token){
                 uint64_t enabled=0;
                 if(notify_get_state(token,&enabled)!=NOTIFY_STATUS_OK)return;

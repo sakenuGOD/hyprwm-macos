@@ -1,5 +1,6 @@
 #import "admission.h"
 #import "client.h"
+#import "lifecycle.h"
 #import <objc/message.h>
 #import <objc/runtime.h>
 #include <dlfcn.h>
@@ -21,6 +22,8 @@ static HAEventCallback callback;
 static NSMutableArray *observers;
 static NSMapTable<NSWindow *, NSMutableDictionary *> *records;
 static BOOL installed, inWill, stopping;
+static BOOL closeInstalled;
+static NSUInteger closeCursor;
 static int (*setAlpha)(int,uint32_t,float);
 static int (*mainConnection)(void);
 static NSString *const appKitPath=@"/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit";
@@ -166,6 +169,58 @@ static BOOL group_facts(NSWindow *w, BOOL *known) {
     if (![windows isKindOfClass:NSArray.class]) { *known = NO; return NO; }
     return [windows count] != 1 || [windows firstObject] != w;
 }
+static BOOL accepted_close_marker(NSWindow *w,uint32_t wid,char out[256]) {
+    // HLC's accepted-close callback performs this local lookup only. Socket
+    // work and validation of a new binding happen on normal application updates.
+    if(!installed || stopping || !closeInstalled || !owns_source() || !w.visible || w.windowNumber!=wid)return NO;
+    NSMutableDictionary *r=[records objectForKey:w];NSData *bytes=r[@"closeMarker"];
+    if(![bytes isKindOfClass:NSData.class] || bytes.length!=88 || [r[@"closeWID"] unsignedIntValue]!=wid)return NO;
+    memcpy(out,bytes.bytes,88);return YES;
+}
+static BOOL close_marker_bytes(NSString *text,char out[88]) {
+    if(![text isKindOfClass:NSString.class] || text.length!=87 ||
+       !CFStringGetCString((__bridge CFStringRef)text,out,88,kCFStringEncodingASCII) ||
+       out[87] || memcmp(out,"HLC1:",5) || out[37]!=':' || out[70]!=':')return NO;
+    for(unsigned i=5;i<87;i++)if(i!=37 && i!=70 && !((out[i]>='0' && out[i]<='9') || (out[i]>='a' && out[i]<='f')))return NO;
+    return YES;
+}
+static void refresh_close_binding(void) {
+    if(!installed || stopping || !closeInstalled || !owns_source() || inWill)return;
+    NSArray<NSWindow *> *windows=NSApp.windows;NSUInteger count=windows.count;
+    if(!count || count>4096)return;
+    // One bounded exchange per real DidUpdate. No timer and no IPC from close.
+    for(NSUInteger step=0;step<MIN(count,256);step++) {
+        NSWindow *w=windows[(closeCursor++)%count];NSMutableDictionary *r=record(w);
+        if(!r)continue;
+        NSInteger number=w.windowNumber;
+        if(!w.visible || w.miniaturized || [w isKindOfClass:NSPanel.class] || w.level!=NSNormalWindowLevel ||
+           !(w.styleMask&NSWindowStyleMaskTitled) || !(w.styleMask&NSWindowStyleMaskResizable) ||
+           w.parentWindow || w.isSheet || w.sheetParent || NSApp.modalWindow==w || number<=0 || (uint64_t)number>UINT32_MAX) {
+            [r removeObjectForKey:@"closeMarker"];[r removeObjectForKey:@"closeWID"];continue;
+        }
+        double now=HAClock();if(now-[r[@"closeFetched"] doubleValue]<0.1)continue;
+        r[@"closeFetched"]=@(now);
+        BOOL known=NO,grouped=group_facts(w,&known);
+        if(!known || grouped){[r removeObjectForKey:@"closeMarker"];continue;}
+        if([r[@"closeKey"][@"wid"] integerValue]!=number) {
+            // Preexisting windows have no first-map offer/key. A separate
+            // lookup key shares their existing object identity and source.
+            r[@"closeKey"]=@{@"pid":@(getpid()),@"launch":launch,@"generation":@(generation),
+                @"object":r[@"object"],@"wid":@(number),@"attempt":@1};
+            [r removeObjectForKey:@"closeMarker"];
+        }
+        double deadline=now+MIN(budget,0.006);
+        NSDictionary *request=@{@"schema":@1,@"transport":@"fixture-uds-v1",@"op":@"close-bind",
+            @"key":r[@"closeKey"],@"deadline":@(deadline)};
+        NSDictionary *reply=HAExchange(socketPath,request,deadline);char bytes[88]={0};
+        if([reply[@"schema"] isEqual:@1] && [reply[@"transport"] isEqual:@"fixture-uds-v1"] &&
+           [reply[@"status"] isEqual:@"close-bound"] && [reply[@"key"] isEqual:r[@"closeKey"]] &&
+           close_marker_bytes(reply[@"marker"],bytes)) {
+            r[@"closeMarker"]=[NSData dataWithBytes:bytes length:sizeof(bytes)];r[@"closeWID"]=@(number);
+        }else{[r removeObjectForKey:@"closeMarker"];[r removeObjectForKey:@"closeWID"];}
+        return;
+    }
+}
 static void will_order(NSWindow *w) {
     if (!installed || stopping || !owns_source() || inWill || ![w isKindOfClass:NSWindow.class] || w.visible) return;
     NSMutableDictionary *r = record(w);
@@ -271,6 +326,15 @@ int hypradmission_install(NSString *path, double budgetMS, HAEventCallback logge
     launch=source[@"launch"];generation=[source[@"generation"] unsignedIntegerValue];
     records = [NSMapTable weakToStrongObjectsMapTable];
     observers = [NSMutableArray new]; stopping=NO;installed = YES;
+    HLCConfig closeConfig={.schema=1,.marker=accepted_close_marker};
+    closeInstalled=HLCInstall(&closeConfig)>=0;closeCursor=0;
+    if(!closeInstalled) {
+        // A v3 readiness receipt includes the accepted-close witness. A foreign
+        // swizzle remains untouched and the shared source is returned cleanly.
+        installed=NO;records=nil;observers=nil;socketPath=nil;callback=NULL;
+        if(owns_source())[source removeObjectForKey:@"owner"];
+        installOwner=nil;return -7;
+    }
     for (NSWindow *w in NSApp.windows) {
         objc_setAssociatedObject(w,(const void *)sel_registerName("hyprwmFirstMapPreexistingVersion1"),@YES,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         record(w)[@"preexisting"]=@YES;
@@ -283,6 +347,7 @@ int hypradmission_install(NSString *path, double budgetMS, HAEventCallback logge
     [observers addObject:[center addObserverForName:NSApplicationDidUpdateNotification object:NSApp queue:nil usingBlock:^(NSNotification *n) {
         (void)n;if (!owns_source()) return;
         for (NSWindow *w in records) {NSMutableDictionary *r=[records objectForKey:w];if ([r[@"releaseDue"] boolValue]) finish_presentation(w,r);}
+        refresh_close_binding();
     }]];
     [observers addObject:[center addObserverForName:NSWindowWillCloseNotification object:nil queue:nil usingBlock:^(NSNotification *n) {
         NSWindow *w = n.object; NSMutableDictionary *r = [records objectForKey:w];
@@ -300,6 +365,11 @@ int hypradmission_uninstall(void) {
     if (!installed) return 0;
     if (!owns_source()) return -2;
     stopping=YES;
+    if(closeInstalled) {
+        for(NSWindow *w in records){NSMutableDictionary *r=[records objectForKey:w];[r removeObjectForKey:@"closeMarker"];}
+        if(HLCUninstall()!=0)return -3;
+        closeInstalled=NO;
+    }
     for (NSWindow *w in records) {
         NSMutableDictionary *r = [records objectForKey:w];
         if (!finish_presentation(w, r)) return -3;
