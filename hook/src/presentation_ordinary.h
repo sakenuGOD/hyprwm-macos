@@ -124,6 +124,37 @@ static void rgba_ordinary_before_tick(struct ctx *c) {
         if(count==1 && !(intent&(F_STRETCH|F_NATIVE|F_SNAPSHOT)))w->stretch=0;
     }
 }
+// A growing native frame can supply B directly at 1:1. Keep the live crop and
+// springs when it covers the whole current allocation; no cached pixels or
+// takeover proof are needed for this path.
+static inline __attribute__((always_inline)) int rgba_ordinary_live_covered(
+        struct rgba_capture *g,struct rgba_inplace *m,struct ch_win *w,void *win) {
+    struct ctx *c=g->pc.engine;void *fresh=0;
+    if(!w || !w->used || w->wid!=m->wid || (w->geo!=1 && w->geo!=4) ||
+       m->presenting || m->opening || w->stretch || w->wait || w->cur_alpha!=1 ||
+       cover_index(c,w->wid,1)>=0 || birth_holds(c,w->wid) ||
+       !actual(c,w,&fresh) || fresh!=win || rgba_inplace_source(g,m)!=win)return 0;
+    char *cwc=*(char **)((char *)win+0x18);
+    if(!cwc || *(void **)(cwc+0x38)!=m->context || *(void **)(cwc+0x98)!=m->host ||
+       *(void **)(cwc+0x80)!=m->server_root)return 0;
+    double x=w->pos.v[0],y=w->pos.v[1],width=w->size.v[0],height=w->size.v[1];
+    if(!finite(x) || !finite(y) || !finite(width) || !finite(height) || width<1 || height<1 ||
+       w->aw<width || w->ah<height)return 0;
+    struct rect4 host=((msgb_t)c->msg)(m->host,c->s_bounds);
+    if(!finite(host.x) || !finite(host.y) || !finite(host.w) || !finite(host.h) ||
+       host.w<width || host.h<height ||
+       ((float (*)(void *,void *))c->msg)(m->host,c->sel("opacity"))<=0)return 0;
+    RGBA_LAYER_SCOPE(c,tx);c->tx_add(tx,m->context);
+    live_edge_client(c,w,0);
+    put_xform(c,w,1,1,w->ax-x,w->ay-y);
+    int crop=w->aw-width>.5 || w->ah-height>.5;
+    double edge=crop && c->ch->deco.sys_off!=1?c->ch->deco.width:0;
+    put_mask(c,w,win,use_mask(c,w) && crop,width,height);
+    put_clip(c,w,win,crop,x-edge,y-edge,width+2*edge,height+2*edge);
+    put_under(c,w,0,0,0,0,0,0,0,0);
+    rgba_inplace_legacy(c,m,w,0);m->padding_motion=0;m->motion_started=0;
+    RGBA_LAYER_COMMIT(tx);decoration_damage(c,win);return 1;
+}
 // A refused OWN transfer must leave the real application visible. The saved
 // baseline tick can otherwise keep projecting/clipping its newly resized frame
 // and drawing a fill while no qualified OWN surface is actually presenting.
@@ -133,6 +164,7 @@ static int rgba_ordinary_native_fallback(struct rgba_capture *g,struct rgba_inpl
     double position[2]={w->pos.g[0],w->pos.g[1]},size[2]={w->size.g[0],w->size.g[1]};
     if(!finite(position[0]) || !finite(position[1]) || !finite(size[0]) || !finite(size[1]) ||
        size[0]<1 || size[1]<1 || m->presenting)return 1;
+    if(rgba_ordinary_live_covered(g,m,w,win))return 1;
     int active=!w->held && !w->wait && (w->pos.active || w->size.active);
     // Minimum-size/grid mismatch can keep settling set indefinitely. Once A is
     // stable, retain the original tick's idle crop and allow the next motion.

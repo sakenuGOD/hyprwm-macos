@@ -75,6 +75,7 @@ static void rgba_begin_promoted(struct rgba_capture *g,struct rgba_inplace *m) {
 }
 static int rgba_begin_wait(struct rgba_capture *g,struct rgba_inplace *m,struct ch_win *w,void *win) {
     if(!rgba_begin_active(g) || m->opening || m->padding_motion || w->wait || w->cur_alpha!=1)return 0;
+    if(rgba_ordinary_live_covered(g,m,w,win))return 1;
     if(w->held)m->settle_started=0;
     else {
         double now=g->pc.engine->ch->h.now;
