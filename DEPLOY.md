@@ -1,8 +1,62 @@
 # Deploying and rolling back HyprWM
 
 The Swift app and the WindowServer engine have separate lifecycles. Build and
-install the app without replacing a running native engine. A source checkout
-does not include a complete, qualified native engine installer.
+install the app without replacing a running native engine. The checkout includes the native build, preparation, publication and inverse tools. Native setup is explicit and session-bound; installing the app preserves an existing engine.
+
+## Native Engine first setup
+
+This developer setup is qualified for macOS build `25G241` on Apple silicon.
+It requires Xcode Command Line Tools, Python 3 and existing authorization to
+access the WindowServer task. An unsupported build or framework identity is
+refused. The tools do not change SIP, NVRAM or boot policy. If macOS denies
+attachment, stop at that refusal and keep native window management.
+
+Use this first-setup path with no HyprWM daemon, menu companion or native installation already
+running. Follow the update procedure below for an existing installation.
+Build as your normal user; keep the generated image outside the checkout:
+
+```sh
+HYPRWM_NATIVE_WORK=$(mktemp -d "${TMPDIR:-/tmp}/hyprwm-native.XXXXXX")
+python3 hook/tools/build_native.py --output-dir "$HYPRWM_NATIVE_WORK/image"
+sudo /usr/bin/python3 hook/tools/prepare_native.py \
+  --image-dir "$HYPRWM_NATIVE_WORK/image" --owner-uid "$(id -u)"
+```
+
+Preparation prints a root-private `prepared.json` path. It allocates a fresh,
+disabled context, registers and checks every unwind entry, and verifies the
+framework and process identities. Set `HYPRWM_NATIVE_PREPARED` to that printed
+path, then publish it:
+
+```sh
+HYPRWM_NATIVE_PREPARED=/private/tmp/hyprwm-native-prepared-REPLACE/prepared.json
+HYPRWM_NATIVE_STATE="$HOME/.local/share/hyprwm/native/engine.state"
+sudo /usr/bin/python3 hook/tools/activate_native.py activate \
+  --prepared "$HYPRWM_NATIVE_PREPARED" \
+  --engine-state "$HYPRWM_NATIVE_STATE" --owner-uid "$(id -u)" \
+  --control-socket /tmp/hyprwm.ctl
+./install.sh --engine-state "$HYPRWM_NATIVE_STATE"
+```
+
+The publisher creates missing user-owned state directories with mode `0700`
+and the shared root-owned channel directory with mode `1777`. Existing unsafe
+paths are refused and existing directory permissions are preserved. Keep the
+printed activation receipt: its `retire --receipt` command is the guarded
+inverse. It requires a completed manager handover and never restarts an owner
+application or the desktop session. Retained mappings and unwind registrations
+are not freed from a running WindowServer.
+
+For a custom `HYPRWM_CTL`, pass its absolute path with `--control-socket`;
+retirement reads that path from the activation receipt. Publication refuses
+any running `hyprwm-swift` process across all users, including menu companions,
+even if its socket is absent. Keep that executable name. These are preflight
+checks; do not launch a manager concurrently with native publication.
+
+Start the installed HyprWM app and grant Accessibility access. Startup checks
+the native identity, channel and an owned placement canary before enabling
+tiling. A native installation belongs to one WindowServer generation. A reboot
+or WindowServer replacement invalidates it; preserve the refusal and prepare a
+new qualified session. Never replay old addresses, copy a receipt to another
+Mac, or put generated OS code, receipts and private captures in Git.
 
 ## Before deployment
 
@@ -33,7 +87,7 @@ Updates preserve this selection when the option is omitted. An explicit
 `HYPRWM_ENGINE_STATE` overrides it at runtime. Source launches retain the
 `HYPRWM_HOOK/anim4.state` fallback. An invalid explicit selection is refused;
 startup still checks the native identity, platform, channel and owned canary.
-This does not install an Engine on a clean machine.
+For a clean machine, complete the native first-setup procedure above.
 
 To create a signed runtime bundle without installing it, changing configuration
 or launching another daemon:
@@ -51,7 +105,7 @@ the startup canary. It cannot establish full startup qualification.
 
 ## Updating a running daemon
 
-Use the daemon's authenticated local command socket to request `handover`.
+Request `./scripts/hyprwmctl handover` through the daemon's local command socket.
 Continue only after the exact reply `handover ready: state preserved; terminate
 this exact process with SIGHUP`. A pending reply means workers are still active;
 leave the current process running. This operation preserves hidden windows and
