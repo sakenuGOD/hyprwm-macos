@@ -1669,7 +1669,17 @@ static void apply_cmd(struct ctx *c, struct ch_cmd *k, double now) {
         w->done_t = now;
     } else if (k->op == OP_ALPHA) {
         double ga[1] = {k->a};
-        if (k->calpha == CH_INSTANT) { warp(&w->alpha, 1, ga); return; }
+        if (k->calpha == CH_INSTANT) {
+            warp(&w->alpha, 1, ga);
+            // A first-map client may conceal A after our last applied alpha.
+            // An explicit reveal must reconcile that native value even when
+            // the logical goal was already one. Covers retain their custody;
+            // the normal frame path still owns the native write.
+            float applied=*(float *)((char *)win+0x1d8);
+            if(k->a==1 && w->cur_alpha==1 && finite(applied) && applied>=0 && applied<1 &&
+               cover_index(c,w->wid,1)<0)w->cur_alpha=applied;
+            return;
+        }
         if (k->flags & F_FROM) { double fa[1] = {k->fa}; warp(&w->alpha, 1, fa); }
         if (!w->held && !w->wait && w->alpha.active && now > w->alpha.last) step(c, &w->alpha, 1, now);
         retarget(c, &w->alpha, 1, ga, k->calpha, k->dalpha, now);
