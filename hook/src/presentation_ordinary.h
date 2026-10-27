@@ -131,7 +131,8 @@ static inline __attribute__((always_inline)) int rgba_ordinary_live_covered(
         struct rgba_capture *g,struct rgba_inplace *m,struct ch_win *w,void *win) {
     struct ctx *c=g->pc.engine;void *fresh=0;
     if(!w || !w->used || w->wid!=m->wid || (w->geo!=1 && w->geo!=4) ||
-       m->presenting || m->opening || w->stretch || w->wait || w->cur_alpha!=1 ||
+       m->presenting || m->opening || w->stretch || w->wait ||
+       !finite(w->cur_alpha) || w->cur_alpha<0 || w->cur_alpha>1 ||
        cover_index(c,w->wid,1)>=0 || birth_holds(c,w->wid) ||
        !actual(c,w,&fresh) || fresh!=win || rgba_inplace_source(g,m)!=win)return 0;
     char *cwc=*(char **)((char *)win+0x18);
