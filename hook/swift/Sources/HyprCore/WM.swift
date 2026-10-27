@@ -481,7 +481,9 @@ public final class WM {
             guard options.production,let window=cur[wid] else{return false}
             return (sys.winAlpha(wid) ?? window.alpha)>0.001 && (engW[wid]?.curAlpha ?? 1)>0.001
         })
-        if prepareOrdinaryBatch(space,wins,rects:rects,real:real,engine:engW,opening:opening,force:force,motion:mvOn) {return}
+        // Pre-adoption is not ready for production: an unacknowledged source
+        // delays every configure for 600 ms, then warps the entire batch.
+        // Keep the existing guarded live geometry/configure path immediate.
         defer {ordinaryFallback.removeAll()}
         if !opening.isEmpty && inOn { // Concealed openings remain invisible until their size is ready.
             for wid in opening where !restoring.contains(wid) && !presentedOpenings.contains(wid) {
