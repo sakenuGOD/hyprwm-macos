@@ -58,6 +58,51 @@ or WindowServer replacement invalidates it; preserve the refusal and prepare a
 new qualified session. Never replay old addresses, copy a receipt to another
 Mac, or put generated OS code, receipts and private captures in Git.
 
+## Restoring native workspace switching
+
+The workspace bridge is separate from the WindowServer presentation engine.
+After a Dock or desktop-session replacement, an old workspace lease is refused.
+With one verified HyprWM daemon already running, build the constructor-free
+bridge as the desktop user into a new directory outside this checkout:
+
+```sh
+python3 hook/tools/build_workspaces.py --output-dir /absolute/private/workspace-build
+sudo /usr/bin/python3 -I -S hook/tools/bootstrap_workspaces.py \
+  --image-dir /absolute/private/workspace-build --owner-uid "$(id -u)" \
+  --manager-executable /absolute/path/to/running/hyprwm-swift \
+  --manager-sha256 APPROVED_EXECUTABLE_SHA256 --replace-stale
+```
+
+Use the expected SHA-256 of the intended installed executable and its full
+canonical path. The bootstrap checks the running socket peer, kernel code
+identity and approved file bytes. `--replace-stale` only permits replacing a
+lease whose exact previous Dock process has departed. It preserves a current
+Dock lease; a successor daemon uses the existing consumer rebind instead.
+For a custom command socket, also pass `--control-socket /absolute/socket`.
+
+This operation is qualified only for build `25G241`, its reviewed Dock UUID,
+and the image/helper digests pinned in the launcher. A different compiler or
+SDK may produce an unapproved image: preserve that refusal; editing the build
+manifest cannot authorize it. Task attachment must already be authorized.
+The tool never restarts Dock, changes system security policy, creates a Space,
+or switches desktops. It publishes only after native status and a verified
+detach, retaining the previous lease under a private backup name.
+
+Keep the printed root bootstrap receipt and retained image directory. For an
+interrupted operation, use the same approved manager arguments with
+`--resume /private/tmp/hyprwm-workspace-bootstrap-RECEIPT` instead of
+`--image-dir`. Resume uses the original request and authenticated status;
+it does not repeat a confirmed installation. A departed original manager may
+be followed by its exact approved successor, with normal consumer rebind
+required before switching. A changed Dock or WindowServer generation is
+refused. Never edit PIDs, nonce values or receipts to bypass that refusal.
+
+After publication, exercise an existing ordinary desktop through
+`./scripts/hyprwmctl workspace N`, where N is its one-based catalog ordinal.
+The queued reply is not completion: require `workspace_public.acknowledged`
+and the expected current `space` in status, then return to the original
+workspace. The configured keyboard bindings use this same command backend.
+
 ## Before deployment
 
 Build with `./scripts/build-hyprwm`. Run the existing checks affected by the
