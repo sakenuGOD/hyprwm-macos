@@ -448,7 +448,7 @@ public final class WM {
         var out = OrderedMap<Int, Rect>()
         for (wid, r) in rects where wid > 0 {
             var width=r.w,height=r.h
-            if options.production,let cap=acceptedCeilings[wid],pids[wid]==cap.pid,sys.processBirth(cap.pid)==cap.birth {
+            if options.production,tile.minimumPolicy=="native",let cap=acceptedCeilings[wid],pids[wid]==cap.pid,sys.processBirth(cap.pid)==cap.birth {
                 width=min(width,cap.width);height=min(height,cap.height)
             }
             out[wid] = Rect(pyRound(r.x), pyRound(r.y), pyRound(width), pyRound(height))
