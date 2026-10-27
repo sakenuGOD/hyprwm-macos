@@ -61,6 +61,21 @@ int ws_input_overlay(void) {
 
 typedef int CGSConnectionID;
 extern CGSConnectionID SLSMainConnectionID(void);
+extern CGError SLSFindWindow(CGSConnectionID cid, uint32_t start, int direction,
+                            const CGPoint *point, CGPoint *local, uint32_t *wid) __attribute__((weak_import));
+
+// Query the current input region, including for a stationary pointer. CG window
+// bounds can include input-empty system overlays; event-tap samples can expire
+// while a queued AX focus request is being checked.
+int ws_pointer_window(double x, double y, unsigned *wid) {
+    if (!wid || !isfinite(x) || !isfinite(y) || fabs(x)>1000000 || fabs(y)>1000000 || !SLSFindWindow) return -1;
+    CGPoint point=CGPointMake(x,y),local=CGPointZero;
+    uint32_t window=0;
+    CGError error=SLSFindWindow(SLSMainConnectionID(),0,1,&point,&local,&window);
+    if (error!=kCGErrorSuccess) return -1;
+    *wid=window;
+    return 0;
+}
 extern uint64_t SLSGetActiveSpace(CGSConnectionID cid);
 extern CFArrayRef SLSCopySpacesForWindows(CGSConnectionID cid, int mask, CFArrayRef wids);
 extern CFArrayRef SLSCopyManagedDisplaySpaces(CGSConnectionID cid);

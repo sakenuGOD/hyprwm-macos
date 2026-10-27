@@ -243,10 +243,19 @@ final class LiveSys: SysAPI {
         }
     }
     func pointerHit() -> (wid:Int,pid:Int?)? {
+        let point=mouse()
+        var current:UInt32=0
+        if ws_pointer_window(point.0,point.1,&current)==0 {
+            // A successful empty hit must not resurrect an old event receiver.
+            guard current>0 else{return(0,nil)}
+            let owner=winPidLevel(Int(current))
+            guard let pid=owner.pid,pid>0,owner.level != nil else{return(0,nil)}
+            return(Int(current),pid)
+        }
         guard ax_pointer_hit_available()==1 else{return nil}
         var value=ax_pointer_hit()
         guard ax_pointer_hit_read(&value)==1 else{return nil}
-        let time=ax_launcher_now_ns(),point=mouse()
+        let time=ax_launcher_now_ns()
         guard value.valid==3,value.wid>0,value.sequence>0,value.sequence&1==0,
               value.x.isFinite,value.y.isFinite,abs(value.x)<1_000_000,abs(value.y)<1_000_000,
               [UInt32(1),2,5,6,7,27].contains(value.event_type),
