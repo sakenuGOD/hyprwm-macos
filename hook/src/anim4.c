@@ -1870,8 +1870,12 @@ show:
         double cw = source_w < w->aw ? source_w : w->aw, ch_ = source_h < w->ah ? source_h : w->ah;
         put_xform(c, w, sx, sy, (w->ax - bx) * sx, (w->ay - by) * sy);
         int crop = !st && (dabs(cw - w->aw) > 0.5 || dabs(ch_ - w->ah) > 0.5);
-        if (use_mask(c, w)) { put_clip(c, w, win, 0, 0, 0, 0, 0); put_mask(c, w, win, crop, cw, ch_); }
-        else { put_mask(c, w, win, 0, 0, 0); put_clip(c, w, win, crop, bx, by, cw/sx, ch_/sy); }
+        // Hosting's rounded mask does not cover ServerRoot glass/outline.
+        // Keep the owner's native drawing clip at B on both mask routes.
+        // Retain the own ring's outward band, including a mixed A/B mismatch.
+        double edge=crop && ch->deco.sys_off!=1 ? ch->deco.width : 0;
+        put_mask(c, w, win, use_mask(c, w) && crop, cw, ch_);
+        put_clip(c, w, win, crop, bx-edge, by-edge, bw+2*edge, bh+2*edge);
         put_under(c, w, !st, bx, by, bw, bh, w->cur_alpha, cw/sx, ch_/sy);
         if(!st && live_edge_enabled(c,w)) {
             struct edge_state *edge=&c->edges[w-ch->win];
