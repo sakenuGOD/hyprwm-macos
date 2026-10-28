@@ -1,7 +1,9 @@
-"""Канал демон <-> движок v4 в WindowServer (общая память /tmp/hyprwm/chan, см. src/chan.h).
+# Python reference model used to generate Swift test fixtures. Not used at runtime.
+"""Daemon-to-engine channel model using shared memory; see src/chan.h.
 
-Команды пишутся пачкой (geom/alpha/forget) и публикуются commit() — движок применяет всю
-пачку в одном тике с одним t0. Кривые Hyprland задаются по номерам (curves()).
+Write geom/alpha/forget commands in batches and publish with commit().
+The engine applies a batch in one tick with a common start time.
+curves() assigns IDs to configuration curves.
 """
 import ctypes
 import os
@@ -9,9 +11,9 @@ import subprocess
 
 HOOK = os.path.dirname(os.path.abspath(__file__))
 DIR = "/tmp/hyprwm"
-PTR = DIR + "/chan_path"     # путь к текущему каналу. Каждая установка — НОВЫЙ файл: файл под живым
-                             # движком нельзя пересоздавать/обрезать (обрезка = SIGBUS в WindowServer,
-                             # так упала сессия 2026-10-08 20:27)
+PTR = DIR + "/chan_path"     # Path to the current channel. Each installation creates a new file.
+                             # Never replace or truncate a file mapped by a running engine:
+                             # truncating the mapping can cause SIGBUS inside WindowServer.
 LIB = os.path.join(HOOK, "build", "libhyprchan.dylib")
 
 CH_MAGIC = 0x3630574d52505948
@@ -109,7 +111,7 @@ class Chan:
         self.h = Hdr.from_address(self.base)
         self.win_off = L.ch_off(1)
 
-    # ── команды ──────────────────────────────────────────────────────────
+    # Commands
     def geom(self, wid, to, cpos, csize, dpos=0.0, dsize=0.0, frm=None, move=True, warp=False, stretch=False):
         fl = (F_FROM if frm else 0) | (F_MOVE if move else 0) | (F_STRETCH if stretch else 0)
         f = frm or (0, 0, 0, 0)
@@ -131,14 +133,14 @@ class Chan:
     def commit(self):
         self.L.ch_commit()
 
-    # ── кривые ───────────────────────────────────────────────────────────
+    # Curves
     def bezier(self, i, p1, p2):
         self.L.ch_curve_bezier(i, p1[0], p1[1], p2[0], p2[1])
 
     def spring(self, i, mass, k, d):
         self.L.ch_curve_spring(i, mass, k, d)
 
-    # ── состояние ────────────────────────────────────────────────────────
+    # State
     def events(self):
         e = Evt()
         while self.L.ch_event(ctypes.byref(e)):
@@ -149,7 +151,7 @@ class Chan:
         return [w for w in arr if w.used]
 
     def traj(self, since=0):
-        """Журнал траектории движка (кольцо 256): записи с номером >= since -> (новый since, [Traj])."""
+        """Read trajectory records from the 256-entry ring since the given sequence."""
         head = self.h.traj_head
         lo = max(since, head - 256)
         arr = (Traj * 256).from_address(self.base + self.L.ch_off(6))

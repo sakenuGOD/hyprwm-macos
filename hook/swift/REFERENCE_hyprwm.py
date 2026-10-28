@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
-"""hyprwm — демон тайлинга: dwindle как в Hyprland; анимации — центральный движок в WindowServer.
+# Python reference model used to generate Swift test fixtures. Not used at runtime.
+"""Python tiling model with a dwindle tree for each macOS desktop.
 
-Кто что делает:
-- демон: дерево dwindle на каждый рабочий стол macOS, события (открытие/закрытие окна, бинды) ->
-  целевые рамки -> ОДНА пачка команд движку (все окна события стартуют в одном кадре, как в Hyprland);
-- движок v4 (src/anim4.c, внутри WS): каждый кадр по кривым Hyprland ведёт видимую рамку и альфу,
-  сразу ставит реальную позицию окна, растягивает прошлый буфер, пока приложение не перерисовалось;
-- приложению конечный размер сообщается один раз (WindowManager.app, мост wm/), без его анимации.
+The daemon turns window and keyboard events into one batch of target rectangles.
+The WindowServer engine animates geometry and opacity together. The application
+receives its final size once; the engine crops the previous buffer until redraw.
 
-Снимок окон — в процессе (build/libwinsnap.dylib): у каждого окна свой рабочий стол, поэтому окна
-разных столов не смешиваются в одном дереве. Реальные рамки — от движка (CGWindowList отдаёт видимые).
-Бинды приходят от keys/hyprkeys через сокет /tmp/hyprwm.ctl (строка = команда):
+Window snapshots come from libwinsnap. Each desktop has a separate layout tree.
+The engine supplies actual window bounds; CGWindowList supplies visible bounds.
+Keyboard commands use /tmp/hyprwm.ctl, with one command per line:
   focus <l|r|u|d>   move <l|r|u|d>   togglesplit   preselect <l|r|u|d|none>
   float   fullscreen   retile   reset   status
-Лог: /tmp/hyprwm.log. Запуск: hook/start.sh.
+This saved model is used by the fixture generator with fake system adapters.
 """
 import ctypes
 import json
@@ -34,17 +32,17 @@ sys.path.insert(0, os.path.join(HOOK, "config"))
 sys.path.insert(0, os.path.join(HOOK, "wm"))
 import chan      # noqa: E402
 import hyprcfg   # noqa: E402
-import tile      # noqa: E402  дерево dwindle, зазоры, учёт минимумов
+import tile      # noqa: E402  dwindle tree, gaps and minimum sizes
 from engine import Engine  # noqa: E402
 from deco import Deco      # noqa: E402
 
 CTL = "/tmp/hyprwm.ctl"
 STATE = os.path.join(HOOK, "hyprwm.state.json")
-MINSIZE = os.path.join(HOOK, "minsize_app.json")   # минимумы окон по приложению (owner)
-POLL = 0.016           # такт демона, с (снимок в процессе ~2 мс): фокус за курсором без задержки
-TOL = 6                # допуск размера, pt (Terminal округляет до сетки символов)
+MINSIZE = os.path.join(HOOK, "minsize_app.json")   # Per-application minimum window sizes (owner)
+POLL = 0.016           # Daemon interval in seconds; in-process snapshots take about 2 ms
+TOL = 6                # Size tolerance in points; Terminal rounds to its character grid
 RESIZABLE = 1 << 3     # NSWindowStyleMaskResizable
-APP_SPRING = [1.0, 1e5, 2 * 1e5 ** 0.5, 0.001]   # приложению: сразу в конечный размер, без своей анимации
+APP_SPRING = [1.0, 1e5, 2 * 1e5 ** 0.5, 0.001]   # Apply the final application size immediately, without its own animation
 DIRS = {"l": "left", "r": "right", "u": "up", "d": "down",
         "left": "left", "right": "right", "up": "up", "down": "down"}
 
@@ -52,7 +50,7 @@ _snap = ctypes.CDLL(os.path.join(HOOK, "build", "libwinsnap.dylib"))
 _buf = ctypes.create_string_buffer(1 << 21)
 _snap.ws_close.argtypes = _snap.ws_focus.argtypes = [ctypes.c_int, ctypes.c_uint]
 _snap.ws_quit.argtypes = [ctypes.c_int]
-_ax = ctypes.CDLL(os.path.join(HOOK, "build", "libax.dylib"))   # configure приложению (src/axlib.c)
+_ax = ctypes.CDLL(os.path.join(HOOK, "build", "libax.dylib"))   # Application configure calls (src/axlib.c)
 _ax.ax_tileable.argtypes = [ctypes.c_int, ctypes.c_uint]
 _ax.ax_frame.argtypes = [ctypes.c_int, ctypes.c_uint] + [ctypes.c_double] * 4
 _ax.ax_forget.argtypes = [ctypes.c_uint]
@@ -64,7 +62,7 @@ _cid = _sl.SLSMainConnectionID()
 
 
 def win_pid_level(wid):
-    """Владелец (pid) и уровень окна у сервера — сразу после создания, без ожидания списка окон."""
+    """Read the server owner PID and level as soon as a window appears."""
     o, p, lv = ctypes.c_int(), ctypes.c_int(), ctypes.c_int()
     if _sl.SLSGetWindowOwner(_cid, wid, ctypes.byref(o)) or _sl.SLSConnectionGetPID(o, ctypes.byref(p)):
         return None, None
@@ -80,7 +78,7 @@ _hi = ctypes.CDLL("/System/Library/Frameworks/ApplicationServices.framework/Appl
 
 
 def front_pid():
-    """Переднее приложение у сервера (NSWorkspace без run loop в демоне не обновляется)."""
+    """Read the front application; NSWorkspace needs a run loop to update."""
     psn, pid = _PSN(), ctypes.c_int(0)
     if _sl._SLPSGetFrontProcess(ctypes.byref(psn)) or _hi.GetProcessPID(ctypes.byref(psn), ctypes.byref(pid)):
         return None
@@ -92,7 +90,7 @@ class _Rect(ctypes.Structure):
 
 
 def win_bounds(wid):
-    """Реальная рамка окна у сервера (без нашего трансформа) или None."""
+    """Return actual server bounds without our transform, or None."""
     r = _Rect()
     return None if _sl.SLSGetWindowBounds(_cid, wid, ctypes.byref(r)) else (r.x, r.y, r.w, r.h)
 
@@ -113,7 +111,7 @@ _sl.SLSGetActiveSpace.restype = ctypes.c_uint64
 
 
 def move_to_space(wids, space):
-    """Перенести окна на рабочий стол space (как yabai: SLSMoveWindowsToManagedSpace)."""
+    """Move windows to a desktop using SLSMoveWindowsToManagedSpace."""
     nums = [_cfa.CFNumberCreate(None, 3, ctypes.byref(ctypes.c_int32(w))) for w in wids]   # kCFNumberSInt32Type
     arr = (ctypes.c_void_p * len(nums))(*nums)
     a = _cfa.CFArrayCreate(None, arr, len(nums), ctypes.addressof(ctypes.c_void_p.in_dll(_cfa, "kCFTypeArrayCallBacks")))
@@ -157,7 +155,7 @@ def mouse():
 
 
 def mouse_down():
-    return _cg.CGEventSourceButtonState(1, 0)        # combinedSessionState, левая кнопка
+    return _cg.CGEventSourceButtonState(1, 0)        # combinedSessionState, left mouse button
 
 
 def snapshot():
@@ -177,37 +175,37 @@ class WM:
         self.spaces = st.get("spaces", {})          # space -> {tree, focus, full, presel}
         self.floating = set(st.get("floating", []))
         self.mins = json.load(open(MINSIZE)) if os.path.exists(MINSIZE) else {}   # owner -> [w, h]
-        self.owner = {}      # wid -> имя приложения
-        self.cfg_q = queue.Queue()   # ответы configure: (wid, owner, цель, фактическая рамка)
+        self.owner = {}      # Window ID -> application name
+        self.cfg_q = queue.Queue()   # Configure replies: (window ID, owner, target, actual bounds)
         self.info = {}       # pid -> {wid(str): {type, style, uuid}, "_conn": ...}
-        self.miss = {}       # wid -> (попыток, когда) — окна, которых пока нет у WindowManager
-        self.target = {}     # wid -> последняя цель, отданная движку
-        self.pids = {}       # wid -> pid (для узнавания вкладок)
-        self.gone_t = {}     # wid -> когда движок сообщил, что окна нет (замер задержки)
-        self.newbies = {}    # wid -> когда движок увидел новое окно (ещё не в раскладке)
-        self.optimistic = {}  # wid -> когда спрятано заранее (приложение тайлится, AX ещё не ответил)
-        self.hidden = []                             # [{wid, pid, owner, space, rect}] — скрытые (special:hidden)
-        for h in st.get("hidden", []):               # без дублей (старый баг: прятали уже скрытое)
+        self.miss = {}       # Window ID -> (attempts, time), while WindowManager has not seen it
+        self.target = {}     # Window ID -> latest target sent to the engine
+        self.pids = {}       # Window ID -> PID, for tab detection
+        self.gone_t = {}     # Window ID -> time the engine reported it missing
+        self.newbies = {}    # Window ID -> time the engine first saw it, before layout
+        self.optimistic = {}  # Window ID -> time hidden before the application answered AX
+        self.hidden = []                             # Hidden windows: [{wid, pid, owner, space, rect}]
+        for h in st.get("hidden", []):               # Avoid hiding a window that is already hidden
             if all(x["wid"] != h["wid"] for x in self.hidden):
                 self.hidden.append(h)
-        self.restoring = set()                       # возвращаемые из скрытых: drift + fadeIn, не popin
-        self.later = []                              # [(когда, функция)]
-        # configure: последняя цель окна побеждает; один рабочий поток на приложение (AX приложения
-        # всё равно сериализуется его главным потоком) — поздний ответ со старой целью не перетирает новую
+        self.restoring = set()                       # Restored windows use drift + fadeIn, without popin
+        self.later = []                              # [(time, callback)]
+        # Configure uses the latest target and one worker per application.
+        # AX runs on the application main thread; old replies must not replace new targets.
         self.cfg_lock = threading.Lock()
-        self.cfg_want = {}                           # wid -> последнее задание (с серийным номером)
+        self.cfg_want = {}                           # Window ID -> latest job, with a serial number
         self.cfg_seq = 0
-        self.cfg_workers = {}                        # pid -> очередь wid этого приложения
+        self.cfg_workers = {}                        # PID -> queued window IDs for this application
         self.closing = set()
-        self.front_pid = None                        # переднее приложение (из снимка)
-        self.own_focus = (None, 0.0)                 # (pid, когда) — активацию сделали мы сами (follow_mouse)
-        self.dim_since = {}                          # wid -> когда замечено «α<1 без причины» (страж)
-        self.moved_t = {}                            # wid -> [когда] возвращали в плитку по EV_MOVED
+        self.front_pid = None                        # Front application from the snapshot
+        self.own_focus = (None, 0.0)                 # (PID, time) for an activation triggered by follow_mouse
+        self.dim_since = {}                          # Window ID -> time unexplained opacity below 1 was first seen
+        self.moved_t = {}                            # Window ID -> times restored to a tile after EV_MOVED
         self.float_rules = [r for r in hyprcfg.load()["window_rules"] if r.get("float")]
         log("конфиг: зазоры", tile.GAPS_IN, tile.GAPS_OUT, "windowsMove", hyprcfg.animation("windowsMove"),
             "windowsIn", hyprcfg.animation("windowsIn"), "правил float:", len(self.float_rules))
 
-    # ── состояние ────────────────────────────────────────────────────────
+    # State
     def save(self):
         json.dump({"spaces": self.spaces, "floating": sorted(self.floating), "hidden": self.hidden},
                   open(STATE, "w"), indent=1)
@@ -216,19 +214,19 @@ class WM:
     def sp(self, space):
         return self.spaces.setdefault(str(space), {"tree": None, "focus": None, "full": None, "presel": None})
 
-    # ── какие окна тайлить ───────────────────────────────────────────────
+    # Which windows can be tiled
     def wm_info(self, pid, wid):
-        """Тайлить ли окно: обычное окно с изменяемым размером (спрашиваем приложение напрямую, ~1 мс).
-        Окна, которых приложение ещё не показало, переспрашиваются с паузой (backoff)."""
+        """Ask the application whether this is a normal resizable window.
+        Retry with backoff while the application has not shown it yet."""
         k = str(wid)
         now = time.time()
         i = self.info.get(pid, {}).get(k)
-        # положительный ответ — навсегда; отрицательный — переспросить: только что созданное окно
-        # бывает ещё не AXStandardWindow / без settable размера (S5.2); первые ~3 с раз в 0.25 с
+        # Cache positive results; retry negative results while a new window
+        # may still lack the AXStandardWindow role or a writable size.
         if i and (i["type"] == "primary" or i.get("n", 9) >= 12 or now - i["t"] < 0.25):
             return i
         n, t = self.miss.get(wid, (0, 0))
-        # окна ещё нет у приложения: первую секунду — каждый такт, потом с паузой (P26)
+        # If the application has not seen it, retry each tick for one second, then back off.
         if now - t < (0.0 if n < 60 else min(0.05 * 2 ** (n - 60), 1.0)):
             return None
         r = _ax.ax_tileable(pid, wid)
@@ -264,24 +262,24 @@ class WM:
             return False
         return self.rule_float(w) is None
 
-    # ── раскладка ────────────────────────────────────────────────────────
+    # Layout
     def layout(self, area, s):
-        # минимумы известны ДО раскладки (по приложению) — окно сразу получает место, в которое влезает
+        # Read application minimum sizes before layout so each tile fits immediately.
         tile.MINS = {n["wid"]: self.mins[self.owner[n["wid"]]] for n in tile.leaves(s["tree"])
                      if self.owner.get(n["wid"]) in self.mins}
         rects = {wid: tile.with_gaps(b, area) for wid, b in tile.boxes(s["tree"], area, {}).items()}
         if s.get("full") in rects:
             x, y, w, h = area
             go = tile.GAPS_OUT
-            if s.get("fullmode") == "fullscreen":               # весь экран без зазоров
+            if s.get("fullmode") == "fullscreen":               # Entire screen without gaps
                 rects[s["full"]] = (x, y, w, h)
-            else:                                              # maximized: рабочая область минус gaps_out
+            else:                                              # Maximized: work area minus gaps_out
                 rects[s["full"]] = (x + go["left"], y + go["top"], w - go["left"] - go["right"],
                                     h - go["top"] - go["bottom"])
         return {wid: tuple(float(round(v)) for v in r) for wid, r in rects.items()}
 
     def apply(self, area, space, wins, force=False, opening=()):
-        """Цели всех окон стола -> одна пачка движку (общий t0) + конечные размеры приложениям."""
+        """Send one desktop batch with a shared start time, then final application sizes."""
         s = self.sp(space)
         rects = self.layout(area, s)
         cur = {w["wid"]: w for w in wins}
@@ -293,14 +291,14 @@ class WM:
         style = hyprcfg.animation("windowsIn")["style"]
         pop = float(re.search(r"popin\s+(\d+)", style).group(1)) / 100 if re.search(r"popin\s+(\d+)", style) else None
         posted, jobs = [], []
-        if opening and in_on:                              # новое окно — сразу невидимо, до размера и popin
+        if opening and in_on:                              # Hide new windows until their final size and popin are ready.
             for wid in opening:
-                if wid not in self.restoring:              # возвращаемое уже невидимо и пойдёт drift+fadeIn
+                if wid not in self.restoring:              # A restored window is already hidden and uses drift + fadeIn.
                     c.alpha(wid, 0.0, 0, 0.0, frm=0.0)
             c.commit()
         eng_w = {w.wid: w for w in c.wins()}
         vis = {}
-        for w in wins:                                     # видимая рамка: у покоящегося окна = реальная
+        for w in wins:                                     # Visible bounds equal actual bounds when the window is stationary.
             ew = eng_w.get(w["wid"])
             vis[w["wid"]] = ((ew.pos.v[0], ew.pos.v[1], ew.size.v[0], ew.size.v[1]) if ew and
                              (ew.pos.active or ew.size.active or ew.settling) else
@@ -312,15 +310,15 @@ class WM:
                 continue
             if wid in opening and in_on and wid not in self.restoring:
                 frm = None
-                if pop:                                        # popin: от pop% цели, масштаб от центра
+                if pop:                                        # Popin starts at pop% of the target, scaled around its center.
                     sw, sh = max(5.0, to[2] * pop), max(5.0, to[3] * pop)
                     frm = (to[0] + (to[2] - sw) / 2, to[1] + (to[3] - sh) / 2, sw, sh)
-                c.geom(wid, to, in_c, in_c, frm=frm, move=True, stretch=True)   # popin тянет содержимое
+                c.geom(wid, to, in_c, in_c, frm=frm, move=True, stretch=True)   # Popin stretches window contents.
                 if fi_on:
                     c.alpha(wid, 1.0, fi_c, fi_d, frm=0.0)
             else:
-                # стартовая ВИДИМАЯ рамка явно: приложение может встать в цель раньше, чем движок
-                # заберёт команду (AX быстрее тика) — тогда движок взял бы уже новую рамку = телепорт
+                # Supply initial visible bounds explicitly: AX may place the application at
+                # its target before the engine reads the command, causing an immediate jump.
                 frm = None
                 ew = eng_w.get(wid)
                 if ew is None or not (ew.pos.active or ew.size.active or ew.settling):
@@ -337,17 +335,17 @@ class WM:
                     c.alpha(wid, 1.0, fi_c, fi_d if fi_on else 0.0)
             self.target[wid] = to
             posted.append(wid)
-            # Приложению — конечный размер сразу и один раз по обеим осям (как xdg configure в Hyprland);
-            # позицию ставит движок сразу. Пока буфер не совпал с видимой рамкой, движок показывает его
-            # 1:1 от левого верхнего угла: больше рамки — обрезка, меньше — край закрыт подложкой.
+            # Send the final size once for both axes, like Hyprland configure.
+            # The engine sets position immediately and shows the old buffer at 1:1 scale.
+            # Crop larger buffers; cover a smaller buffer edge with a backing window.
             a = real.get(wid) or (cur[wid]["x"], cur[wid]["y"], cur[wid]["w"], cur[wid]["h"])
             if wid in opening or max(abs(p - q) for p, q in zip(a, to)) > 1:
-                j = self.job(cur[wid]["pid"], wid, to)       # конечный размер сразу и один раз (Hyprland)
+                j = self.job(cur[wid]["pid"], wid, to)       # Apply the final size immediately and only once.
                 if j:
                     jobs.append(j)
         if posted:
             c.commit()
-            t = time.time()                                # движок принимает пачку в ближайшем тике
+            t = time.time()                                # The engine accepts the batch on its next tick.
             while c.h.cmd_tail != c.h.cmd_head and time.time() - t < 0.05:
                 time.sleep(0.001)
         if jobs:
@@ -364,10 +362,10 @@ class WM:
         return {"wid": wid, "pid": pid, "owner": self.owner.get(wid, ""), "to": tuple(r)}
 
     def configure(self, jobs):
-        """Конечный размер приложениям (как configure Hyprland) — сразу после того, как движок принял пачку.
-        На окно — только последняя цель (серийный номер); на приложение — один рабочий поток, задания
-        окон одного приложения идут по очереди (S3: N потоков на одно окно перетирали друг друга).
-        Поток перечитывает, что окно реально приняло, и кладёт ответ в очередь — главный цикл учит минимум."""
+        """Configure applications after the engine accepts the batch.
+        Keep only the latest target for each window. One worker per application
+        processes its windows in order. Read accepted sizes back into a reply
+        queue so the main loop can learn minimum window sizes."""
         with self.cfg_lock:
             for j in jobs:
                 self.cfg_seq += 1
@@ -389,7 +387,7 @@ class WM:
             try:
                 wid = q.get(timeout=30)
             except queue.Empty:
-                with self.cfg_lock:                         # простаивает — уйти (новое задание заведёт поток)
+                with self.cfg_lock:                         # Exit when idle; a new job starts another worker.
                     if q.empty():
                         self.cfg_workers.pop(pid, None)
                         return
@@ -397,7 +395,7 @@ class WM:
             with self.cfg_lock:
                 j = self.cfg_want.get(wid)
                 if j is None or j.get("taken"):
-                    continue                                 # уже сделано более новым заданием из очереди
+                    continue                                 # A newer queued job already completed this work.
                 j["taken"] = True
             try:
                 self._cfg_one(j)
@@ -414,7 +412,7 @@ class WM:
         while not e and time.time() - t0 < 0.6:
             time.sleep(0.03)
             if not self._cfg_latest(wid, seq):
-                return                                       # пришла новая цель — этот ответ не нужен
+                return                                       # A new target arrived; discard this reply.
             if _ax.ax_get_frame(j["pid"], wid, buf) != 0:
                 continue
             cur = tuple(buf)
@@ -423,9 +421,9 @@ class WM:
                 break
             same = same + 1 if cur == got else 0
             got = cur
-            # окно встало, где смогло: 90 мс без изменений; если так и не сдвинулось с прежнего размера —
-            # ждать дольше (Ghostty/Telegram применяют размер асинхронно), чтобы не принять «ещё не
-            # ответило» за минимум
+            # Treat bounds as stable after 90 ms without changes. If the old size persists,
+            # wait longer because applications can apply size asynchronously; avoid
+            # mistaking a delayed response for a minimum size.
             if same >= 3 and (pre is None or max(abs(p - q) for p, q in zip(cur[2:], pre[2:])) > 1 or
                               time.time() - t0 > 0.35):
                 break
@@ -433,8 +431,8 @@ class WM:
             self.cfg_q.put((wid, j["owner"], j["to"], got, e, pre))
 
     def configured(self):
-        """Ответы configure: окно стабильно стоит больше цели — это его минимум; запомнить по приложению.
-        -> True, если раскладку надо пересчитать (ретаргет в этом же цикле)."""
+        """Learn a stable accepted size larger than the target as an application minimum.
+        Return True when layout needs to run again in this cycle."""
         changed = False
         while True:
             try:
@@ -446,8 +444,8 @@ class WM:
                 continue
             if not got or self.target.get(wid) != to:
                 continue
-            # Минимум: окно стабильно (поток дождался тишины) и по оси осталось больше цели. Неважно,
-            # сдвигалось ли оно: окно, уже стоящее на минимуме, тоже должно учиться (S2).
+            # Learn the minimum when stable bounds exceed the target on an axis.
+            # Also learn from a window that was already at its minimum.
             mw, mh = self.mins.get(owner, (0, 0))
             nw = max(mw, got[2]) if got[2] > to[2] + TOL else mw
             nh = max(mh, got[3]) if got[3] > to[3] + TOL else mh
@@ -460,7 +458,7 @@ class WM:
                 log("окно %s %d стоит %s вместо %s — держу в плитке" % (owner, wid, tuple(round(v) for v in got[2:]), to[2:]))
 
     def sync(self, area, space, wins):
-        """Дерево стола <- его видимые окна. -> (изменилось ли, новые окна)."""
+        """Sync the desktop tree with visible windows; return (changed, new windows)."""
         s = self.sp(space)
         hid = {h["wid"] for h in self.hidden}
         closing = self.closing
@@ -469,12 +467,12 @@ class WM:
         ids = [w["wid"] for w in live]
         have = {n["wid"] for n in tile.leaves(s["tree"])}
         changed, opened = False, []
-        # Вкладки (Ghostty, Finder, Safari): у macOS это отдельные окна одной группы, видна одна.
-        # Ушло окно X и в этот же момент появилось окно того же приложения на его месте —
-        # это переключение вкладки: новое окно занимает лист X, раскладка не меняется.
+        # Native tabs are separate windows in one group, with only one visible.
+        # If a window disappears and another from the same application replaces it,
+        # keep the existing leaf so switching tabs does not change the layout.
         gone = [x for x in have - set(ids)]
         alive = {w["wid"] for w in wins}
-        # ушедшие «на задний план» (вкладку заслонила другая) или закрытые (Cmd+W вкладки — показалась соседняя)
+        # Windows hidden behind another tab or closed with Cmd+W
         offscreen = {x for x in gone if x not in hid and (x not in alive or
                      any(w["wid"] == x and not w["on"] for w in wins))}
         for w in live:
@@ -483,8 +481,8 @@ class WM:
             twin = next((x for x in gone if self.pids.get(x) == w["pid"] and self.target.get(x) and
                          max(abs(a - b) for a, b in zip(self.target[x], (w["x"], w["y"], w["w"], w["h"]))) <= TOL), None)
             if twin is None:
-                # рамка новой вкладки в первые кадры бывает ещё не рамкой группы; признак надёжнее: окно того
-                # же приложения в этот же момент ушло с экрана, но живо (не закрыто) — его заслонила вкладка
+                # A new tab may not have the group bounds yet. A stronger signal is another
+                # live window from the same application disappearing at the same time.
                 twin = next((x for x in gone if self.pids.get(x) == w["pid"] and x in offscreen), None)
             if twin is None:
                 continue
@@ -498,9 +496,9 @@ class WM:
                 s["focus"] = w["wid"]
             if s.get("full") == twin:
                 s["full"] = w["wid"]
-            # Вкладка у macOS появляется мгновенно — без анимации. Её могли спрятать до popin
-            # (hide_newbies): вернуть альфу. Старой вкладке — освободить слот движка (трансформ, обрезка,
-            # альфа сняты); при возврате на неё она снова пройдёт этой веткой.
+            # Native tabs appear immediately. Restore opacity if hide_newbies hid one
+            # before popin. Release the old tab engine slot and its transform, crop and
+            # opacity; the same path handles it when it becomes visible again.
             c = self.eng.c
             c.alpha(w["wid"], 1.0, 0, 0.0)
             c.forget(twin)
@@ -522,7 +520,7 @@ class WM:
                 s["full"] = None
             changed = True
         have &= set(ids)
-        # активное окно (Hyprland делит именно его) — самое переднее тайловое окно стола
+        # Split the frontmost tiled window on this desktop, as Hyprland does.
         s["focus"] = next((x for x in ids if x in have), s.get("focus") if s.get("focus") in have else None)
         for w in live:
             if w["wid"] in have:
@@ -538,8 +536,8 @@ class WM:
         return changed, opened
 
     def insert(self, s, wid, target, area, point=None):
-        """dwindle-вставка: preselect задаёт сторону; без него — сторона по курсору (force_split 0)
-        или по точке point (перенос направлением: focal за краем окна)."""
+        """Insert into dwindle using preselect, the cursor, or an explicit point.
+        Directional moves use a point just beyond the target edge."""
         pre = s.get("presel")
         boxes = tile.boxes(s["tree"], area, {}) if target is not None else {}
         tree = tile.insert(s["tree"], wid, target, area)
@@ -558,14 +556,14 @@ class WM:
                 par["a"], par["b"] = par["b"], par["a"]
         return tree
 
-    # ── команды (бинды) ──────────────────────────────────────────────────
+    # Keyboard commands
     def command(self, line, area, space, wins):
         a = line.split()
         if not a:
             return "пусто"
         s, cmd = self.sp(space), a[0]
         rects = self.layout(area, s)
-        cur = next((w["wid"] for w in wins if w["wid"] in rects and w["on"]), None)   # переднее разложенное
+        cur = next((w["wid"] for w in wins if w["wid"] in rects and w["on"]), None)   # Frontmost tiled window
         if cmd == "status":
             h = self.eng.c.h
             return json.dumps({"space": space, "tree": s["tree"], "focus": cur, "mins": self.mins,
@@ -584,7 +582,7 @@ class WM:
             if cmd == "focus":
                 pid = next(w["pid"] for w in wins if w["wid"] == tgt)
                 self.own_focus = (pid, time.time())
-                r = _ax.ax_focus(pid, tgt, 0)                  # именно окно; z тайловых не меняем (Hyprland)
+                r = _ax.ax_focus(pid, tgt, 0)                  # Focus this window without changing the tile stacking order.
                 return "фокус -> %d (%d)" % (tgt, r)
             self.move_dir(s, area, cur, d, rects)
         elif cmd == "togglesplit":
@@ -646,8 +644,8 @@ class WM:
         return "ok"
 
     def move_dir(self, s, area, cur, d, rects):
-        """movewindow Hyprland (dwindle moveTargetInDirection): окно вынимается из дерева и
-        вставляется у узла, ближайшего к точке на 1 px за серединой его стороны; сторона — по этой точке."""
+        """Move a window beside the closest node in the requested direction.
+        Remove it from the tree and insert using a point beyond the edge midpoint."""
         x, y, w, h = rects[cur]
         g = tile.GAPS_IN + 1
         focal = {"left": (x - g, y + h / 2), "right": (x + w + g, y + h / 2),
@@ -666,9 +664,9 @@ class WM:
         s["tree"] = self.insert(s, cur, near, area, point=focal)
 
     def close_anim(self, area, space, wins, w):
-        """killactive как в Hyprland: окно уходит из раскладки (соседи едут в том же кадре), само
-        сжимается до popin 92% от центра (windowsOut) и гаснет (fadeOut); приложение закрывается в конце.
-        Не закрылось (диалог «Сохранить?») — вернуть в раскладку."""
+        """Remove a closing window while neighbors animate in the same frame.
+        Shrink it with windowsOut and fadeOut, then ask the application to close.
+        Restore it to the tree if a save dialog prevents closing."""
         wid, s = w["wid"], self.sp(space)
         c = self.eng.c
         ew = {x.wid: x for x in c.wins()}.get(wid)
@@ -684,7 +682,7 @@ class WM:
         self.closing.add(wid)
         c.geom(wid, to, oc, oc, od if on else 0.0, od if on else 0.0, frm=cur, move=False, stretch=True)
         c.alpha(wid, 0.0, fc, fd if fon else 0.0)
-        self.apply(area, space, wins)                      # соседи — в том же кадре
+        self.apply(area, space, wins)                      # Move neighbors in the same frame.
         c.commit()
         done = max(od if on else 0, fd if fon else 0)
 
@@ -695,23 +693,23 @@ class WM:
             self.closing.discard(wid)
             if win_bounds(wid) is not None and any(x.wid == wid for x in c.wins()):
                 log("окно %d не закрылось — возвращаю" % wid)
-                self.restoring.add(wid)                    # sync вставит обратно: drift из сжатой рамки + fadeIn,
-                self.target.pop(wid, None)                 # а не второй popin (P32)
+                self.restoring.add(wid)                    # Sync inserts it again with drift from the smaller rectangle and fadeIn,
+                self.target.pop(wid, None)                 # without starting another popin.
                 self.later.append((time.time() + 1.5, lambda: self._restore_check(wid)))
         self.later.append((time.time() + done, shut))
         self.later.append((time.time() + done + 0.6, check))
         return "закрываю %d (%.0f мс)" % (wid, done * 1000)
 
     def front(self, wins, space):
-        """Окно в фокусе: самое переднее видимое окно этого стола (CGWindowList идёт спереди назад).
-        Скрытые/закрываемые/невидимые (α≈0) окна тоже «на экране» у сервера — их пропускаем."""
+        """Find the frontmost visible window on this desktop.
+        Skip hidden, closing and transparent windows that the server lists."""
         skip = {h["wid"] for h in self.hidden} | self.closing
         dim = {w.wid for w in self.eng.c.wins() if w.cur_alpha < 0.05 and not w.alpha.active}
         return next((w for w in wins if w["on"] and w["space"] == space and w["w"] >= 120 and w["h"] >= 120 and
                      w["wid"] not in skip and w["wid"] not in dim), None)
 
     def hide(self, area, space, wins, wid=None):
-        """M+W: окно гаснет на месте (fadeOut), соседи сразу занимают место; потом уводим за экран."""
+        """Fade the focused window in place, retile neighbors, then move it offscreen."""
         w = next((x for x in wins if x["wid"] == wid), None) if wid else self.front(wins, space)
         if not w:
             return "нет окна"
@@ -728,7 +726,7 @@ class WM:
         self.hidden.append({"wid": wid, "pid": w["pid"], "owner": w["owner"], "space": space, "rect": list(rect)})
         fo_c, fo_d, fo_on = self.eng.anim("fadeOut")
         self.eng.c.alpha(wid, 0.0, fo_c, fo_d if fo_on else 0.0)
-        self.apply(area, space, wins)                      # соседи — в том же кадре, что и затухание
+        self.apply(area, space, wins)                      # Move neighbors in the same frame as fadeOut.
         self.eng.c.commit()
         park = (area[0] + area[2] + 200, rect[1], rect[2], rect[3])
 
@@ -741,10 +739,9 @@ class WM:
         return "скрыто %d" % wid
 
     def unhide(self, area, space, wins, everything=False, which=None):
-        """M+Shift+W: последнее скрытое — назад в раскладку ТЕКУЩЕГО стола: drift из прежнего места +
-        fadeIn (sync вставит его, apply поведёт как «возврат», не popin).
-        which — выбрать: список wid или функция-фильтр по записи. everything — все сразу и мгновенно
-        (только при остановке демона: дальше их никто не поведёт)."""
+        """Restore hidden windows into the current desktop with drift and fadeIn.
+        Select records with window IDs or a predicate. everything restores all
+        windows immediately when the daemon stops."""
         if not self.hidden:
             return "скрытых нет"
         if callable(which):
@@ -761,14 +758,14 @@ class WM:
             wid = h["wid"]
             if space is not None and str(h.get("space")) != str(space):
                 try:
-                    move_to_space([wid], space)                # скрыли на другом столе — вернуть сюда (P28)
+                    move_to_space([wid], space)                # Return a window hidden on another desktop to the current desktop.
                 except Exception as e:
                     log("перенос окна %d на стол %s: %r" % (wid, space, e))
-            c.geom(wid, tuple(h["rect"]), 0, 0, move=True, warp=True)   # невидимым — на прежнее место
+            c.geom(wid, tuple(h["rect"]), 0, 0, move=True, warp=True)   # Restore the previous location while the window is invisible.
             w = next((x for x in wins or () if x["wid"] == wid), None)
             if everything:
                 c.alpha(wid, 1.0, 0, 0.0)
-            elif w is not None and not self.tileable(w):           # плавающее — проявить на месте
+            elif w is not None and not self.tileable(w):           # Show floating windows at their existing location.
                 fi_c, fi_d, fi_on = self.eng.anim("fadeIn")
                 c.alpha(wid, 1.0, fi_c, fi_d if fi_on else 0.0)
             else:
@@ -780,7 +777,7 @@ class WM:
         return "возвращено %s" % [h["wid"] for h in todo]
 
     def _restore_check(self, wid):
-        """Возвращаемое окно так и не попало в раскладку (не тайлится, другой стол) — просто показать."""
+        """Show restored windows that did not enter the current layout."""
         if wid in self.restoring and all(h["wid"] != wid for h in self.hidden):
             self.restoring.discard(wid)
             self.eng.c.alpha(wid, 1.0, 0, 0.0)
@@ -788,8 +785,8 @@ class WM:
             log("возврат окна %d: в раскладку не попало — показываю на месте" % wid)
 
     def on_activate(self, area, space, wins, pid):
-        """Приложение стало передним не нашим фокусом (Dock, Cmd+Tab, open, уведомление): его скрытые окна
-        возвращаются в раскладку текущего стола — как Hyprland при активации окна со special:hidden (P44)."""
+        """Restore hidden windows when their application is activated externally.
+        Dock, Cmd+Tab, open and notifications can trigger this path."""
         if not self.hidden:
             return
         for h in self.hidden:
@@ -798,9 +795,9 @@ class WM:
         mine = [h["wid"] for h in self.hidden if h.get("pid") == pid]
         if not mine:
             return
-        # Клик по видимому окну того же приложения — не повод возвращать скрытое. Возвращаем, если у
-        # приложения на этом столе нет видимых окон (Dock/Cmd+Tab/open) или macOS вывел вперёд именно
-        # скрытое окно (его key-окно).
+        # Clicking a visible window from the same application should not restore
+        # hidden windows. Restore only if this desktop has no visible window from
+        # that application or macOS explicitly made a hidden window the key window.
         hid = {h["wid"] for h in self.hidden}
         own = [w for w in wins if w["pid"] == pid and w["on"] and w["w"] >= 120 and w["h"] >= 120]
         visible = [w for w in own if w["wid"] not in hid and w["space"] == space]
@@ -808,15 +805,15 @@ class WM:
             log("приложение %d активировано извне — возвращаю скрытые: %s" % (pid, self.unhide(area, space, wins, which=mine)))
 
     def rescue(self, area, space, wins, keep_hidden=False):
-        """Страховка (P44): все скрытые — назад (команда rescue; при старте демона скрытые остаются
-        скрытыми — keep_hidden); окна, оставшиеся невидимыми или за экраном без причины (альфа хранится
-        в WS и переживает перезапуск демона и движка), — показать и вернуть на экран."""
+        """Restore all hidden windows and recover unexplained invisible windows.
+        keep_hidden preserves intentional hiding at startup. Server opacity can
+        survive daemon or engine restarts, so recover stray offscreen windows too."""
         out = []
         alive = {w["wid"] for w in wins}
-        self.hidden = [h for h in self.hidden if h["wid"] in alive]     # закрытые, пока демона не было
+        self.hidden = [h for h in self.hidden if h["wid"] in alive]     # Windows closed while the daemon was stopped
         if self.hidden and not keep_hidden:
             out.append(self.unhide(area, space, wins, which=lambda h: True))
-        elif self.hidden:                                    # скрытые должны быть скрыты: α=0 и за экраном
+        elif self.hidden:                                    # Keep intentionally hidden windows transparent and offscreen.
             c = self.eng.c
             for h in self.hidden:
                 r = win_bounds(h["wid"])
@@ -838,7 +835,7 @@ class WM:
             if (a is None or a >= 0.999) and not off:
                 continue
             if wid not in self.restoring and not self.tileable(w):
-                continue                                    # служебные невидимые окна приложений не трогаем
+                continue                                    # Leave application utility windows invisible.
             if off and wid not in self.restoring:
                 c.geom(wid, (area[0] + 40, area[1] + 40, min(r[2], area[2] - 80), min(r[3], area[3] - 80)),
                        0, 0, move=True, warp=True)
@@ -853,10 +850,9 @@ class WM:
         return "; ".join(out) or "всё видно"
 
     def on_moved(self, wid, a):
-        """Движок: покоящееся тайловое окно ушло с цели (приложение/система сами двинули, поздний AX).
-        Как в Hyprland, плитка главнее: вернуть в неё тем же drift. Не воевать: не больше 3 раз за 10 с
-        на окно (иначе окно, которое само упорно встаёт иначе, держится как есть). Перетаскивание мышью —
-        не сюда: его разбирает realign после отпускания."""
+        """Return a stationary tiled window that drifted away from its target.
+        Limit retries to three per ten seconds to avoid fighting an application.
+        Mouse dragging is handled by realign after the button is released."""
         if mouse_down() or wid not in self.target or wid in self.closing:
             return False
         now = time.time()
@@ -869,12 +865,12 @@ class WM:
         return True
 
     def alpha_guard(self, wins):
-        """Страж: окно в слоте движка стоит с α<1 без анимации и без причины (не скрыто, не закрывается,
-        не ждёт popin) дольше 1 с — вернуть α=1. Ловит любые пропущенные пути вроде P1."""
+        """Restore opacity when a visible engine window is unexpectedly transparent.
+        Wait one second and skip hidden, closing or opening windows."""
         now = time.time()
         busy = (self.closing | self.restoring | set(self.newbies) | set(self.optimistic) |
                 {h["wid"] for h in self.hidden})
-        on = {w["wid"] for w in wins if w["on"]}          # невидимость важна только у окна на экране
+        on = {w["wid"] for w in wins if w["on"]}          # Opacity matters only for an onscreen window.
         c, fix = self.eng.c, []
         for w in c.wins():
             if w.wid in busy or w.wid not in on or w.cur_alpha >= 0.999 or w.alpha.active or w.held:
@@ -891,7 +887,7 @@ class WM:
             log("страж: α=1 окнам %s (оставались невидимыми без причины)" % fix)
 
     def resize_active(self, s, area, cur, dx, dy):
-        """resizeactive Hyprland: двигается разделитель ближайшего сплита по оси на dx/dy pt."""
+        """Resize the nearest split on the requested axis by dx/dy points."""
         path = []
 
         def walk(n, box):
@@ -913,9 +909,9 @@ class WM:
                     break
 
     def exec_app(self, args):
-        """exec из дотфайла. «Ghostty --new» — новое окно терминала (пункт меню New Window через AX:
-        у osascript нет Универсального доступа, его нажатия macOS молча блокирует); «-e prog» — терминал
-        с программой; «spotlight» — лаунчер (openrunner на Линуксе)."""
+        """Run a command from the configuration.
+        Ghostty --new opens a window through its AX menu; -e runs a program.
+        spotlight opens the system launcher."""
         if not args:
             return "нечего запускать"
         app, rest = args[0], args[1:]
@@ -929,7 +925,7 @@ class WM:
         if rest[:1] == ["--new"]:
             pid = next((int(p) for p in subprocess.run(["/usr/bin/pgrep", "-x", app.lower()], capture_output=True,
                                                         text=True).stdout.split()), None)
-            if pid:                                    # обход меню AX — не в главном цикле (S5.3)
+            if pid:                                    # Walk the AX menu outside the main loop.
                 def press():
                     if _ax.ax_menu_press(pid, b"New Window") != 0:
                         subprocess.Popen(["open", "-a", app])
@@ -942,7 +938,7 @@ class WM:
             subprocess.Popen(["open", "-a", app])
         return "запуск %s" % " ".join(args)
 
-    # ── цикл ─────────────────────────────────────────────────────────────
+    # Main loop
     def run(self):
         try:
             os.unlink(CTL)
@@ -961,7 +957,7 @@ class WM:
         while True:
             r, _, _ = select.select([srv], [], [], POLL)
             if r and last is not None:
-                self.commands(srv, *last)                  # команды — сразу, до снимка (его выбросы до 30 мс)
+                self.commands(srv, *last)                  # Read commands before the snapshot, which can occasionally take 30 ms.
             due = [f for t, f in self.later if t <= time.time()]
             self.later = [(t, f) for t, f in self.later if t > time.time()]
             for f in due:
@@ -969,7 +965,7 @@ class WM:
                     f()
                 except Exception as e:
                     log("отложенное упало:", repr(e))
-            if time.time() - last_eng > 2.0:                     # WindowServer перезапускался?
+            if time.time() - last_eng > 2.0:                     # Did WindowServer restart?
                 last_eng = time.time()
                 if not self.eng.alive():
                     self.target.clear()
@@ -977,9 +973,9 @@ class WM:
                 if self.eng.c.h.errors != getattr(self, "_errors", 0):
                     self._errors = self.eng.c.h.errors
                     log("движок: ошибок %d (слотов занято %d из 64)" % (self._errors, len(self.eng.c.wins())))
-            # Полный снимок окон — только когда что-то могло измениться (Q2): событие движка, команда,
-            # смена стола/переднего приложения, кнопка мыши, окна в процессе открытия/возврата/закрытия;
-            # иначе сверка раз в 250 мс. Остальное время — данные прошлого снимка (раньше 60 снимков/с).
+            # Take a complete snapshot after engine events, commands, desktop changes,
+            # front application changes, mouse activity or pending window transitions.
+            # Otherwise check every 250 ms and reuse the previous snapshot.
             drifted, evs = False, list(self.eng.c.events())
             for ev in evs:
                 if ev[0] == chan.EV_NEW:
@@ -993,7 +989,7 @@ class WM:
                     self.gone_t[wid] = time.time()
                     self.target.pop(wid, None)
                     self.deco.drop(wid)
-                    _ax.ax_forget(wid)                         # AX-кэш не копит мёртвые окна (P7)
+                    _ax.ax_forget(wid)                         # Remove dead windows from the AX cache.
                     self.dim_since.pop(wid, None)
                     for pid in list(self.info):
                         self.info[pid].pop(str(wid), None)
@@ -1008,8 +1004,8 @@ class WM:
             if need:
                 d, area = snapshot()
                 if not d["stable"]:
-                    continue                                     # стол переключается посреди снимка
-                space, wins = d["space"], [w for w in d["windows"] if w["owner"] != "hyprdeco"]   # без подложек
+                    continue                                     # The desktop can change during a snapshot.
+                space, wins = d["space"], [w for w in d["windows"] if w["owner"] != "hyprdeco"]   # Exclude backing windows.
                 last_snap, last_sp = time.time(), sp_now
                 self.snaps += 1
                 if r and last is None:
@@ -1020,12 +1016,12 @@ class WM:
             if space != last_space:
                 log("рабочий стол", space)
                 last_space = space
-            if not rescued:                                  # после (пере)запуска: скрытые — назад, а
-                rescued = True                               # невидимые без причины — показать (P33, P44)
+            if not rescued:                                  # After startup or restart, restore hidden windows and show windows
+                rescued = True                               # that are invisible without an explicit reason.
                 log("старт: %s" % self.rescue(area, space, wins, keep_hidden=True))
             top = max((w["wid"] for w in wins), default=0)
-            # номера новых окон сканирует движок и сам ведёт wid_max; демон только будит застрявший скан
-            # (первый запуск или разрыв > 24 номеров) — иначе две стороны пишут поле наперегонки (S5.5)
+            # The engine scans new window IDs and owns wid_max. Wake a stalled scan
+            # only at startup or after a gap larger than 24 IDs to avoid competing writes.
             if top > self.eng.c.h.wid_max + 24 or not self.eng.c.h.wid_max:
                 self.eng.c.h.wid_max = top
             if fp and fp != self.front_pid:
@@ -1037,7 +1033,7 @@ class WM:
             for w in wins:
                 self.owner[w["wid"]] = w["owner"]
             self.hide_newbies(space, wins)
-            if time.time() - getattr(self, "_sampled", 0) > 2.0:     # цвет края окон для подложек
+            if time.time() - getattr(self, "_sampled", 0) > 2.0:     # Sample window edge colors for backing windows.
                 self._sampled = time.time()
                 busy = {w.wid for w in self.eng.c.wins() if w.pos.active or w.size.active or w.settling}
                 for n in tile.leaves(self.sp(space)["tree"]):
@@ -1045,8 +1041,8 @@ class WM:
                         self.deco.sample(n["wid"])
             changed, opened = self.sync(area, space, wins)
             changed |= drifted
-            changed |= self.configured()                   # окно не приняло размер — ретаргет сразу
-            if was_down and not md:                        # отпустили кнопку: окно могли утащить мышью
+            changed |= self.configured()                   # Retarget immediately if the application rejected its size.
+            if was_down and not md:                        # On mouse release, a window may have been dragged out of its tile.
                 changed |= self.realign(area, space, wins)
             was_down = md
             if changed:
@@ -1056,7 +1052,7 @@ class WM:
                 self.alpha_guard(wins)
 
     def commands(self, srv, area, space, wins):
-        """Все ждущие команды сокета за раз (автоповтор бинда не морит голодом остальное — P42)."""
+        """Drain pending socket commands together so shortcut repeat cannot starve work."""
         while select.select([srv], [], [], 0)[0]:
             c, _ = srv.accept()
             c.settimeout(1)
@@ -1072,10 +1068,10 @@ class WM:
                 c.close()
 
     def hide_newbies(self, space, wins):
-        """Новое окно, которое пойдёт в раскладку, прячется ДО первого показа (альфа 0), чтобы macOS не
-        показал его на «своём» месте; дальше sync вставляет его в дерево, и оно вырастает popin в плитке.
-        Окна приложений, которые уже тайлились, прячутся сразу (не ждём AX: Finder отдаёт окно ~150 мс);
-        если окно оказалось не обычным (диалог, панель) — альфа возвращается."""
+        """Hide new tiled windows before their first visible frame.
+        sync inserts them into the tree and popin shows them in their tile.
+        Hide windows from tiled applications immediately while AX catches up.
+        Restore opacity if the window turns out to be a dialog or panel."""
         if not self.newbies and not self.optimistic:
             return
         by = {w["wid"]: w for w in wins}
@@ -1083,8 +1079,8 @@ class WM:
         tiled_apps = {self.owner.get(n["wid"]) for sp in self.spaces.values() for n in tile.leaves(sp.get("tree"))}
         tiled_pids = {self.pids.get(n["wid"]) for sp in self.spaces.values() for n in tile.leaves(sp.get("tree"))}
         def tab(pid, wid):
-            # вкладка (Ghostty/Finder/Safari): новое окно встаёт ровно на рамку тайлового окна того же
-            # приложения — его не прятать, оно просто заменит лист (sync, ветка «вкладка»)
+            # A native tab that matches an existing tiled window replaces that leaf.
+            # Leave it visible; sync handles the tab switch.
             r = win_bounds(wid)
             return r is not None and any(self.pids.get(x) == pid and max(abs(a - b) for a, b in zip(t, r)) <= TOL
                                          for x, t in self.target.items())
@@ -1094,7 +1090,7 @@ class WM:
                 self.newbies.pop(wid)
                 continue
             if not w or w["w"] < 120 or w["h"] < 120:
-                # окна ещё нет в списке: спросить сервер напрямую — обычный уровень и тайловое приложение
+                # If absent from the snapshot, ask the server for its level and application.
                 pid, lv = win_pid_level(wid)
                 if lv == 0 and pid in tiled_pids and wid not in self.optimistic and not tab(pid, wid):
                     self.optimistic[wid] = time.time()
@@ -1115,15 +1111,15 @@ class WM:
                 self.optimistic.pop(wid, None)
                 log("новое окно %s %d спрятано до popin (через %.0f мс после создания)" % (w["owner"], wid, (time.time() - t) * 1000))
             elif self.info.get(w["pid"], {}).get(str(wid)):
-                self.newbies.pop(wid)                      # точно не тайлится
+                self.newbies.pop(wid)                      # Definitely not tileable
                 if self.optimistic.pop(wid, None):
                     c.alpha(wid, 1.0, 0, 0.0)
                     touched = True
             elif w and w["owner"] in tiled_apps and wid not in self.optimistic:
-                self.optimistic[wid] = time.time()         # приложение тайлится — спрятать сразу
+                self.optimistic[wid] = time.time()         # This application is tiled; hide the new window immediately.
                 c.alpha(wid, 0.0, 0, 0.0, frm=0.0)
                 touched = True
-        for wid, t in list(self.optimistic.items()):        # так и не стало тайловым — вернуть видимость
+        for wid, t in list(self.optimistic.items()):        # If it never became tileable, restore visibility.
             if wid not in self.newbies and time.time() - t > 1.5:
                 self.optimistic.pop(wid)
                 c.alpha(wid, 1.0, 0, 0.0)
@@ -1132,8 +1128,8 @@ class WM:
             c.commit()
 
     def follow_mouse(self, space, wins):
-        """input:follow_mouse = 1: фокус у окна под курсором, как только курсор на него зашёл.
-        Берётся самое верхнее окно под курсором (меню/попапы/плавающие перекрывают — их не трогаем)."""
+        """Focus the topmost window as the pointer enters it with follow_mouse = 1.
+        Leave menus, popups and floating windows above tiles untouched."""
         p = mouse()
         if p == getattr(self, "_mp", None) or mouse_down():
             return
@@ -1148,20 +1144,20 @@ class WM:
             log("курсор", p, "верх", top and top["wid"], "перед", front and front["wid"], "тайлы", tiled)
         if not top or top["wid"] not in tiled:
             return
-        # без AXRaise z-порядок не меняется, поэтому «уже в фокусе» — по нашей памяти: фокус отдан этому
-        # окну и его приложение переднее (если кто-то активировал другое приложение — фокус снова нужен)
+        # Without AXRaise the stacking order stays unchanged. Track the last focused
+        # window and require its application to remain frontmost.
         if getattr(self, "_fwant", None) == top["wid"] and (self.front_pid == top["pid"] or time.time() - self._ft < 0.3):
             return
         if getattr(self, "_fwant", None) is None and front and front["wid"] == top["wid"]:
             return
         self._fwant, self._ft = top["wid"], time.time()
         self.own_focus = (top["pid"], time.time())
-        r = _ax.ax_focus(top["pid"], top["wid"], 0)         # без AXRaise: Hyprland не меняет z тайловых (Q3)
+        r = _ax.ax_focus(top["pid"], top["wid"], 0)         # Avoid AXRaise to preserve tile stacking order.
         s["focus"] = top["wid"]
         log("фокус за курсором -> %s %d (%d)" % (top["owner"], top["wid"], r))
 
     def realign(self, area, space, wins):
-        """После отпускания мыши: окно, утащенное из своей плитки, вернуть (как Hyprland после drag)."""
+        """Return a window to its tile after the mouse button is released."""
         s = self.sp(space)
         rects = self.layout(area, s)
         busy = {w.wid for w in self.eng.c.wins() if w.pos.active or w.size.active or w.settling}

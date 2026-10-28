@@ -89,7 +89,7 @@ def main():
     for b in hyprcfg.load()["binds"]:
         desc = b.get("opts", {}).get("description") or b["keys"]
         cmd = action_to_cmd(b["action"], desc)
-        # ALT = Command: ⌘H/⌘M/⌘Tab/⌘Space на маке уже делают то же самое — не перехватываем
+        # ALT = Command: keep standard macOS shortcuts ⌘H/⌘M/⌘Tab/⌘Space.
         ks = [p.strip().upper() for p in b["keys"].split("+")]
         if "ALT" in ks and "SUPER" not in ks:
             cmd = None
@@ -110,7 +110,7 @@ def main():
         out.append({"keycode": key, "mods": mods, "cmd": cmd, "desc": desc, "keys": b["keys"],
                     "repeat": bool(b.get("opts", {}).get("repeating"))})
 
-    # своё: переложить принудительно (в Hyprland такого бинда нет — раскладка там сама, как и у нас)
+    # Add an explicit retile shortcut; normal layout updates happen automatically.
     out.append({"keycode": KEY["t"], "mods": MOD["CTRL"] | MOD["SUPER"] | MOD["SHIFT"], "cmd": ["retile"],
                 "desc": "Retile windows", "keys": "CTRL + SUPER + SHIFT + T"})
 

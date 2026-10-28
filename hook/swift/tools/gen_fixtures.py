@@ -27,7 +27,7 @@ os.makedirs(FIX, exist_ok=True)
 os.environ.pop("HYPRWM_TIME_SCALE", None)
 os.environ.pop("HYPRWM_DEBUG", None)
 
-# ── конфиг: снимок hypr_cfg.json (только чтение) ─────────────────────────
+# Configuration snapshot: read hypr_cfg.json without changing it
 CFG_FIX = os.path.join(FIX, "hypr_cfg.json")
 if not os.path.exists(CFG_FIX) or "--refresh-config" in sys.argv:
     shutil.copy(os.path.join(HOOK, "config", "hypr_cfg.json"), CFG_FIX)
@@ -36,7 +36,7 @@ CFG = json.load(open(CFG_FIX))
 spec = importlib.util.spec_from_file_location("hyprcfg", os.path.join(HOOK, "config", "hyprcfg.py"))
 hyprcfg = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hyprcfg)
-hyprcfg._cfg = CFG                               # load() больше не смотрит на диск и не запускает lua
+hyprcfg._cfg = CFG                               # load() now uses memory without disk access or Lua.
 sys.modules["hyprcfg"] = hyprcfg
 
 
@@ -49,7 +49,7 @@ def load_ref(name, modname):
 
 
 tile = load_ref("REFERENCE_tile.py", "tile")
-chan = load_ref("REFERENCE_chan.py", "chan")      # только классы/константы; библиотеку не грузит
+chan = load_ref("REFERENCE_chan.py", "chan")      # Classes and constants only; no native library is loaded.
 engine = load_ref("REFERENCE_engine.py", "engine")
 TILE0 = (tile.GAPS_IN, dict(tile.GAPS_OUT), tile.SPLIT_WIDTH_MULT, tile.DEFAULT_RATIO)
 
@@ -58,7 +58,7 @@ def tree_json(n):
     return copy.deepcopy(n)
 
 
-# ── A. раскладка dwindle ──────────────────────────────────────────────────
+# A. Dwindle layout
 def internal_paths(n, p=""):
     if n is None or "wid" in n:
         return []
@@ -141,7 +141,7 @@ def gen_tile(ncases=400):
     return out
 
 
-# ── B. конфиг ────────────────────────────────────────────────────────────
+# B. Configuration
 class _NullChan:
     class _H:
         pass
@@ -172,13 +172,13 @@ def gen_config():
     }
 
 
-# ── C. дифференциальные сценарии демона ───────────────────────────────────
+# C. Daemon differential scenarios
 SRC = open(os.path.join(SW, "REFERENCE_hyprwm.py")).read()
 MOD = ast.parse(SRC)
 CLS = next(n for n in MOD.body if isinstance(n, ast.ClassDef) and n.name == "WM")
 CLS_SRC = ast.get_source_segment(SRC, CLS)
-# Порядок множества в Python не задан (хеш); Swift-порт берёт ушедшие окна по возрастанию wid —
-# в эталоне для сравнения делаем так же (единственная правка эталонного кода; см. README).
+# Python set order varies. Sort departed window IDs to match Swift;
+# this is the only reference-model adjustment for comparison.
 _G = "gone = [x for x in have - set(ids)]"
 assert CLS_SRC.count(_G) == 1
 CLS_SRC = CLS_SRC.replace(_G, "gone = sorted(have - set(ids))")
@@ -191,7 +191,7 @@ for n in MOD.body:
         exec(ast.get_source_segment(SRC, n), CONSTS)
 
 
-class W:                       # мир сценария (общий для подделок)
+class W:                       # Shared scenario world for fake adapters
     now = 1000.0
     mouse = (100.0, 100.0)
     md = False
@@ -399,7 +399,7 @@ OWNERS = [("Ghostty", 501), ("Telegram", 502), ("Finder", 503), ("Safari", 504),
 
 
 class Sim:
-    """Простая модель мира между шагами: окна снимка, слоты движка, ответы AX."""
+    """Model snapshots, engine slots and AX replies between scenario steps."""
 
     def __init__(self, rnd):
         self.rnd = rnd
@@ -408,7 +408,7 @@ class Sim:
         self.wins = []
         self.eng = {}
         self.tileable = {}
-        self.pending = {}          # wid -> (pid, rect): есть у сервера, нет в снимке
+        self.pending = {}          # Window ID -> (PID, rectangle): present on server but absent from snapshot
         self.nxt = 100 + rnd.randint(0, 50)
         for _ in range(rnd.randint(1, 5)):
             self.new_window(appear=True)
@@ -524,7 +524,7 @@ def gen_scenario(seed, nsteps):
                     c += " %d" % rnd.choice(ids)
             op = {"op": "cmd", "line": c}
         elif r < 0.58:
-            # новое окно: сначала событие движка, потом (возможно) появление в снимке
+            # A new window emits an engine event before appearing in a snapshot.
             appear = rnd.random() < 0.5
             tab = rnd.random() < 0.3 and wm.target
             if tab:
@@ -538,9 +538,9 @@ def gen_scenario(seed, nsteps):
                     sim.tileable[wid] = 1
                     if appear:
                         if rnd.random() < 0.6:
-                            d["on"] = 0             # вкладку заслонила новая
+                            d["on"] = 0             # A new tab covers the previous tab.
                         else:
-                            sim.wins.remove(d)      # Cmd+W вкладки — показалась соседняя
+                            sim.wins.remove(d)      # Cmd+W closes one tab and shows its neighbor.
                             sim.eng.pop(tw, None)
                 else:
                     wid = sim.new_window(appear)
@@ -589,7 +589,7 @@ def gen_scenario(seed, nsteps):
             else:
                 op = {"op": "sync"}
         elif r < 0.89:
-            # «окно осталось невидимым без причины» (страж): приглушить слот тайлового окна на экране
+            # Simulate unexplained opacity below 1 on an onscreen tiled window.
             cand = [w for w in sorted(wm.target) if w in sim.eng and w not in wm.restoring and w not in wm.closing]
             if cand and rnd.random() < 0.6:
                 e = sim.eng[rnd.choice(cand)]
@@ -600,7 +600,7 @@ def gen_scenario(seed, nsteps):
         elif r < 0.94:
             op = {"op": "activate", "pid": rnd.choice(OWNERS)[1]}
         elif r < 0.96:
-            if sim.wins:                               # окно вышло вперёд (z-порядок)
+            if sim.wins:                               # Move a window forward in the stacking order.
                 d = rnd.choice(sim.wins)
                 sim.wins.remove(d)
                 sim.wins.insert(0, d)
@@ -659,14 +659,14 @@ def gen_scenario(seed, nsteps):
                 wm.on_activate(a, sp, wins, op["pid"])
             elif op["op"] == "rescue":
                 res = wm.rescue(a, sp, wins, keep_hidden=op["keep_hidden"])
-        except Exception as e:                      # падение эталона вне разбора команды — сценарий в брак
+        except Exception as e:                      # Reject a scenario if the reference crashes outside command processing.
             shutil.rmtree(tmp, ignore_errors=True)
             return None, "%s: %r (шаг %d, %s)" % (type(e).__name__, e, i, op)
         ops = list(wm.eng.c.ops)
         steps.append({"world": world, "op": op, "res": res, "chan": ops, "jobs": list(wm.jobs),
                       "calls": list(W.calls), "state": state(wm)})
         sim.apply_ops(ops)
-        # что демон сохранил — тоже сверяем (формат файлов)
+        # Compare saved daemon state and file formats as well.
     saved = {"state": open(os.path.join(tmp, "state.json")).read() if os.path.exists(os.path.join(tmp, "state.json")) else None,
              "mins": open(os.path.join(tmp, "mins.json")).read() if os.path.exists(os.path.join(tmp, "mins.json")) else None}
     shutil.rmtree(tmp, ignore_errors=True)

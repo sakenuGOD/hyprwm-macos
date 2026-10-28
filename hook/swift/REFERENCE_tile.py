@@ -1,16 +1,11 @@
 #!/usr/bin/env python3
-"""Движок раскладки dwindle (как в Hyprland) для окон macOS.
+# Python reference model used to generate Swift test fixtures. Not used at runtime.
+"""Dwindle layout model for macOS windows.
 
-Считает целевые прямоугольники и отдаёт задания аниматору (scripts/anim.py).
-Дерево хранится между запусками в hook/tile.state.json — поэтому вставка нового окна
-ведёт себя как dwindle (делит текущий лист), а не пересобирает раскладку заново.
-
-Применение: tile.sh — нативный resize через WindowManager.app (позиция+размер, анимирует само
-приложение пружиной drift); план пишется в /tmp/tile_plan.json.
-
-Параметры взяты из конфига пользователя (nebula/look.lua):
-  gaps_in 5, gaps_out {top 8, right 12, bottom 12, left 12}, dwindle preserve_split,
-  default_split_ratio 1.0, force_split 0.
+Compute target rectangles while preserving the split tree between steps.
+New windows split an existing leaf instead of rebuilding the whole layout.
+Read gaps, split ratios and other layout values from the configuration.
+The fixture generator runs this saved model with fake system adapters.
 """
 import json
 import os
@@ -19,20 +14,20 @@ import sys
 
 HOOK = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATE = os.path.join(HOOK, "tile.state.json")
-MINSIZE = os.path.join(HOOK, "minsize.json")   # выученные минимумы окон {wid: [w, h]}
+MINSIZE = os.path.join(HOOK, "minsize.json")   # Learned window minimum sizes: {wid: [width, height]}
 sys.path.insert(0, os.path.join(HOOK, "config"))
-import hyprcfg                  # значения из дотфайлов Hyprland пользователя
+import hyprcfg                  # Values from the Hyprland configuration
 
 GAPS_IN, GAPS_OUT = hyprcfg.gaps()
 SPLIT_WIDTH_MULT = float(hyprcfg.dwindle().get("split_width_multiplier", 1.0))
-DEFAULT_RATIO = float(hyprcfg.dwindle().get("default_split_ratio", 1.0)) / 2.0   # 1.0 у Hyprland = 50/50
+DEFAULT_RATIO = float(hyprcfg.dwindle().get("default_split_ratio", 1.0)) / 2.0   # Hyprland ratio 1.0 means a 50/50 split.
 MIN_W, MIN_H = 200, 150
 
-# Окна, которые раскладка не трогает (служебные/плавающие по смыслу).
+# Utility or floating windows that layout should leave alone.
 SKIP_OWNERS = set()
 
 
-# ── дерево ────────────────────────────────────────────────────────────────
+# Split tree
 def leaf(wid):
     return {"wid": wid}
 
@@ -46,7 +41,7 @@ def leaves(node):
 
 
 def remove(node, wid):
-    """Убрать лист; второй ребёнок занимает место родителя (как dwindle)."""
+    """Remove a leaf and replace its parent with the other child."""
     if node is None:
         return None
     if "wid" in node:
@@ -61,7 +56,7 @@ def remove(node, wid):
 
 
 def insert(node, wid, target, box):
-    """Разделить лист target (или единственный лист) пополам, новое окно — вторым."""
+    """Split the target leaf, placing the new window in the second child."""
     if node is None:
         return leaf(wid)
     if "wid" in node:
@@ -86,11 +81,11 @@ def load_mins():
 
 
 def need(node):
-    """Минимальный размер плитки под поддерево (с зазорами вокруг окна)."""
+    """Return the subtree minimum tile size, including gaps around windows."""
     if "wid" in node:
         mw, mh = MINS.get(node["wid"], (MIN_W, MIN_H))
-        mw, mh = max(mw, MIN_W), max(mh, MIN_H)        # выученный 0 по оси — не меньше дефолта
-        pad = 2 * max(GAPS_IN, *GAPS_OUT.values())     # худший случай: плитка у края экрана
+        mw, mh = max(mw, MIN_W), max(mh, MIN_H)        # A learned zero on an axis must not reduce the default minimum.
+        pad = 2 * max(GAPS_IN, *GAPS_OUT.values())     # Use the screen edge as the worst case.
         return mw + pad, mh + pad
     (aw, ah), (bw, bh) = need(node["a"]), need(node["b"])
     if node["split"] == "v":
@@ -99,7 +94,7 @@ def need(node):
 
 
 def split_box(box, node):
-    """Деление по ratio, но так, чтобы обе части вмещали минимумы своих поддеревьев."""
+    """Split by ratio while allowing both subtree minimum sizes to fit."""
     x, y, w, h = box
     r = node.get("ratio", 0.5)
     (aw, ah), (bw, bh) = need(node["a"]), need(node["b"])
@@ -123,7 +118,7 @@ def boxes(node, box, out):
 
 
 def with_gaps(box, area):
-    """Зазоры: у края экрана gaps_out, внутри gaps_in с каждой стороны (как в Hyprland)."""
+    """Apply gaps_out at screen edges and gaps_in on each interior side."""
     x, y, w, h = box
     ax, ay, aw, ah = area
     eps = 1.0
@@ -134,7 +129,7 @@ def with_gaps(box, area):
     return (x + l, y + t, max(MIN_W, w - l - r), max(MIN_H, h - t - b))
 
 
-# ── окружение ─────────────────────────────────────────────────────────────
+# System adapters
 def snapshot():
     out = subprocess.check_output([os.path.join(HOOK, "scripts", "wlist_json")], text=True)
     d = json.loads(out)
@@ -153,7 +148,7 @@ def save(st):
 
 
 def sync(st, wins, area):
-    """Привести дерево к реальному набору окон."""
+    """Sync the tree with the current set of windows."""
     live = [w["wid"] for w in wins]
     for n in leaves(st["tree"]):
         if n["wid"] not in live:
@@ -191,7 +186,7 @@ def find_parent(node, wid, par=None):
 
 
 def neighbour(rects, wid, direction):
-    """Ближайшее окно в стороне direction от окна wid (по центрам плиток)."""
+    """Find the nearest window in a direction using tile centers."""
     if wid not in rects:
         return None
     x, y, w, h = rects[wid]
@@ -225,7 +220,7 @@ def swap(node, a, b):
 
 
 def focused_wid(wins):
-    """Окно активного приложения: первое в порядке CGWindowList (он идёт спереди назад)."""
+    """Find the active application window in front-to-back CGWindowList order."""
     front = subprocess.run(
         ["osascript", "-e", 'tell application "System Events" to get unix id of first process whose frontmost is true'],
         capture_output=True, text=True)
@@ -248,7 +243,7 @@ def main():
     load_mins()
 
     if cmd == "learn":
-        # сравнить факт с последним планом: окно больше плитки -> это его минимум
+        # Compare actual sizes with the last plan to learn window minimums.
         plan_prev = {i["wid"]: i for i in json.load(open("/tmp/tile_plan.json"))}
         mins = {int(k): v for k, v in json.load(open(MINSIZE)).items()} if os.path.exists(MINSIZE) else {}
         new = 0
@@ -301,7 +296,7 @@ def main():
         rebal(st["tree"])
 
     if cmd == "togglesplit":
-        # перевернуть деление у родителя фокуса
+        # Toggle the split direction of the focused window parent.
         par = find_parent(st["tree"], focused_wid(wins))
         if par:
             par["split"] = "h" if par["split"] == "v" else "v"
