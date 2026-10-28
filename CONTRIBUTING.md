@@ -1,18 +1,11 @@
-# Contributing to HyprWM
+# Contributing
 
-Start with one concrete behavior and a reproducible example. Check the [roadmap](docs/ROADMAP.md) and existing issues before expanding the scope.
+Choose one concrete problem and check the [open issues](https://github.com/sakenuGOD/hyprwm-macos/issues).
+Use small English commits and describe the behavior, reason and checks in your pull request.
 
-## Source map
+## Build and test
 
-- `hook/swift/Sources/HyprCore`: layout, configuration, commands, focus policy and recovery.
-- `hook/swift/Sources/hyprwm-swift`: native adapters, startup qualification, menu and settings.
-- `hook/src`: native engine and presentation ownership.
-- `hook/keys`: shortcut registration.
-- `hook/swift/Tests`: deterministic reference and policy checks.
-
-## Build and check
-
-Use macOS 14 or later with Swift 5.9 or later, Python 3 and Git.
+Use macOS 14+, Xcode Command Line Tools with Swift 5.9+, Python 3 and Git:
 
 ```sh
 ./scripts/build-hyprwm
@@ -20,16 +13,50 @@ Use macOS 14 or later with Swift 5.9 or later, Python 3 and Git.
 git diff --check
 ```
 
-`test-hyprwm` regenerates the ignored WM scenario fixture from the preserved Python reference. To generate only that fixture, run `python3 hook/swift/tools/gen_fixtures.py --wm-only`. Keep the full scenario count and step coverage.
+The suite currently has [three known failures](https://github.com/sakenuGOD/hyprwm-macos/issues/21). Preserve their coverage while resolving the code/reference mismatches.
 
-Choose the affected test filter while iterating. A documentation change needs command and relative-link verification. A native image needs its complete build recipe, framework/process identity preflight and whole-image qualification before deployment; ordinary CI must never attach to system processes.
+The test wrapper generates ignored layout scenarios from the Python reference.
+Keep `hook/swift/REFERENCE_*.py`; they are test inputs, not runtime prototypes.
+Run relevant checks once per affected change. Documentation needs valid commands and links.
 
-## Desktop changes
+## Source map and style
 
-Keep one desktop operator. Preserve source-window identity, process birth, epochs, input and recovery guards. Use role, parent and modal facts in generic policy. Retain a working native fallback until the replacement is qualified.
+- `hook/swift/Sources/HyprCore`: layout, configuration, commands and focus/recovery policy.
+- `hook/swift/Sources/hyprwm-swift`: system adapters, startup, menu and SwiftUI Settings.
+- `hook/swift/Sources/CAX`, `CChan`, `CSnap`: Accessibility, shared channel and snapshots.
+- `hook/src`, `hook/tools`: native WindowServer engine and its setup tools.
+- `hook/swift/Tests`: layout, configuration, protocol and policy tests.
 
-Builds and acknowledgements do not prove visible behavior. Observe the affected native window, focus/input and presentation, record the exact build, and clean up only windows opened for that check. Stop at a sufficient result instead of repeating unchanged checks.
+Follow the surrounding style. Keep changes small; avoid unrelated refactoring.
+Use English UI text, help and comments. Preserve error handling and window-identity checks.
 
-Never restart WindowServer, Dock or a user's application as a debugging shortcut. Do not change SIP, NVRAM or global native policy. Keep private captures, credentials, decompiler output and local run records out of commits.
+## Native changes
 
-Use small English commits with precise paths. Include the concrete problem, resulting behavior, validation and remaining limits in a pull request. See the [README](README.md) for current runtime and packaging prerequisites.
+The engine is pinned to **macOS 26.7.1 (25G241), Apple silicon**, including framework
+addresses and UUIDs. Do not change native code or its guards without that hardware,
+an exact image build and real desktop checks. CI and Swift tests cannot verify it.
+Keep generated OS code, native state files, dumps and private captures out of Git.
+Never restart WindowServer, Dock or user apps, or change SIP, as a debugging shortcut.
+Restore managed windows before stopping or replacing their owner.
+
+## How to test animations
+
+Use throwaway windows and observe opening, closing, moving, resizing and rapid bursts
+of those actions. Check the first frame, mid-motion and landing for flashes, detached
+borders, late content resizing and lost input. Retarget during motion and restore hidden
+windows. Record the macOS build and affected app; remove private window content before sharing.
+A green build verifies compilation; a clip and actual keyboard input verify desktop behavior.
+
+## How the app bundle is built
+
+`./install.sh` builds the runtime app and installs it without launching. Its engine
+state stays outside the signed bundle; `--engine-state /absolute/path` selects it.
+`python3 scripts/install_app.py package --root . --output dist/HyprWM-runtime.app --engine-state /absolute/path/to/engine.state`
+packages without installing. Destinations must be new. `--diagnose` reads metadata without enabling tiling.
+
+`zsh hook/swift/build_app.sh` builds a separate menu companion in `dist/HyprWM.app`;
+pass a new output path to build another. It connects to an existing daemon.
+Both packages use `dev.hyprwm.HyprWM` and an ad-hoc signature. The companion records
+its checkout in `HyprWMSourceRoot`; keep that folder. `BuildManifest.json` records
+version, SDK, source and executable hashes. `HYPRWM_APP_VERSION` and `HYPRWM_APP_BUILD`
+override numeric version/build values. Developer ID signing and notarization are separate work.

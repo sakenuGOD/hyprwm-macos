@@ -1,120 +1,82 @@
-# Troubleshooting and recovery
+# Troubleshooting
 
-The default runtime requires an already qualified native installation. Lite-specific guidance below applies only to the experimental adapters included in this source tree; see [current limits](../README.md#current-limits).
+Start with `~/.local/bin/hyprwm doctor` and `~/.local/bin/hyprwmctl status`.
+Remove private paths and window information before sharing diagnostics.
 
-Start with the mode, permissions and configuration diagnosis. Use the installed CLI:
+## Nothing tiles
 
-```sh
-~/.local/bin/hyprwm doctor
-```
+Check `sw_vers -buildVersion`: the engine requires **25G241, Apple silicon**, SIP
+debugging restrictions disabled and a prepared engine for the current WindowServer.
+Follow [native setup](INSTALL.md#native-engine); repeat it after a reboot.
+In **System Settings → Privacy & Security → Accessibility**, enable your current
+`~/Applications/HyprWM.app`. For source launches, enable the process named by macOS.
+Relaunch after changing permissions. A responding socket alone cannot verify tiling.
 
-Keep its output local until you have removed personal paths and private application information. A successful build is not a permission grant or proof that windows are being managed. A working `status` response proves a daemon answers; it does not prove native focus or visibility.
+## A window is invisible or hidden
 
-## Nothing tiles / permission is missing
+Keep the app, checkout and saved state. Run `~/.local/bin/hyprwmctl restore-all`.
+If the daemon crashed, retain the matching engine resources and restart HyprWM to
+let startup recovery restore its saved windows. Read any refusal before continuing.
+`Engine restoration pending:` means work is still running. The client waits four
+seconds; daemon recovery can take eight. Keep it running, check actual windows,
+and retry after the attempt finishes. `status` shows `visibility.restore_pending`
+and `visibility.engine_recovery_active`. An empty hidden list alone is insufficient.
+Restoration leaves tiling paused; use `~/.local/bin/hyprwmctl resume` only after
+checking visibility and placement. Never delete saved state or restart WindowServer,
+Dock or an application to recover a window.
 
-In **System Settings → Privacy & Security → Accessibility**, enable the process that actually controls windows. For an installed app that is HyprWM; for a command-line development launch, macOS may attribute access to your terminal host or the executable shown in the permission prompt. Use doctor for permission state and the OS prompt to identify the responsible process. Relaunch HyprWM after changing permissions.
+## Focus goes to the wrong window
 
-Screen capture animation needs **Screen & System Audio Recording** permission (called **Screen Recording** on some macOS versions). A denied capture permission should reduce Lite to live AX placement rather than make windows disappear. The Engine daemon’s fixed Carbon panic shortcut does not need Input Monitoring; its separate legacy watcher can require it. The settings shortcut recorder uses an event tap and can request **Input Monitoring**. **Automation → System Events** is for GUI scripting used in testing, not an instruction to grant blanket Automation access to every process.
+Check `focus.follow_mouse = 1`, matching `no_follow_mouse` rules and Accessibility.
+Dialogs, menus, Mission Control, floating windows and a held mouse button can
+intentionally delay pointer focus. Move over a tile, stop, and try typing in a
+throwaway document. Report whether input or only the border is wrong.
+If opening a URL or activating a hidden app leaves it invisible, try `restore-all`.
+Use **Control–Option–P** or `hyprwmctl pause` to stop an unexpected focus loop.
+A reload reapplies `runtime.enabled`; set it to `false` to stay paused across edits.
 
-If you recently rebuilt or moved the app, verify that the granted item is the current copy. Avoid running an old companion and a new daemon from different checkouts. Close the old companion through its menu before opening another.
+## A dialog is behind a tile
 
-If HyprWM is absent from the permission list, add the installed `~/Applications/HyprWM.app` with **+**. For capture permission, [Apple's instructions](https://support.apple.com/guide/mac-help/control-access-screen-system-audio-recording-mchld6aa7d23/mac) describe adding an app below the Screen & System Audio Recording list. The current Lite capture path checks permission before capturing; do not wait for an automatic capture prompt to appear.
-
-## A window is invisible, hidden or parked
-
-Keep the app and checkout installed until recovery finishes:
-
-```sh
-~/.local/bin/hyprwm restore-all
-```
-
-This is the recovery entry point for HyprWM-owned hidden/parked windows. Read any refusal or pending result; do not assume every window was restored because a command was sent. Confirm the real windows are visible. If the daemon is still alive, let it finish recovery before quitting. If it crashed, retain its persisted state and use the documented startup/recovery path rather than deleting state files.
-
-Explicit `restore-all` leaves tiling paused. After the command succeeds, inspect the real windows before resuming:
-
-```sh
-~/.local/bin/hyprwmctl status
-# Only after checking visibility and placement:
-~/.local/bin/hyprwmctl resume
-```
-
-A `Lite restoration pending:` or `Engine restoration pending:` response means recovery is incomplete. CLI clients retry these markers for four seconds, while the Engine daemon's recovery attempt can continue for eight seconds. Keep the daemon running, inspect status and visibility, and retry `restore-all` after allowing the current attempt to finish. Engine status exposes `visibility.engine_recovery_active` and `visibility.restore_pending`; the latter also includes visible mid-motion pause landings. An empty hidden list is insufficient if that work remains. A timeout preserves unresolved records and leaves tiling paused.
-
-Engine distinguishes an intentional prepared restart from a crash. A validated one-use handover preserves deliberately hidden windows through the prepared restart, then consumes the marker. Startup without that marker attempts restoration, even when configured paused. Automatic startup recovery may return to the configured enabled state after completion; explicit pause or restoration keeps it paused. The older `unhide all` operation does not provide the same completion protocol. Scoped live tests covered a disposable owned window; global recovery of existing user windows remains unverified.
-
-Do not kill WindowServer, Dock or the affected application to recover a HyprWM window. Do not delete the state ledger, force a window alpha globally, or overwrite the configuration while diagnosing ownership. If recovery refuses a stale or reused window identity, report the exact refusal and keep the state for inspection.
-
-If Lite starts paused with `lite.recovery_error` reporting Engine hidden-window records, its public AX recovery cannot restore the native Engine's alpha/Space ownership. Start the matching Engine runtime and finish `restore-all` there before selecting Lite. Keep the Engine resources and state until that succeeds. New installations without Engine records do not need this step. A successful Lite recovery does not establish global recovery of another mode's records.
-
-## Focus does not follow the mouse
-
-Confirm the session is enabled and `focus.follow_mouse = 1` in the effective configuration:
-
-```sh
-~/.local/bin/hyprwmctl status
-~/.local/bin/hyprwm --print-config
-```
-
-Check for a matching `no_follow_mouse` rule, a modal dialog, Mission Control, a menu, a floating window under the cursor, a held mouse button or missing Accessibility permission. These can intentionally suppress tile focus. `runtime.pointer_focus_pause_ms` adds a delay after relevant focus activity. After returning from a Space or Mission Control, move over a tile, stop, and test typing in a disposable document. Report whether the actual key window/input or only the border is wrong.
-
-Press **Control–Option–P**, choose the menu’s pause action, or use the client while investigating an unexpected layout/focus loop:
-
-```sh
-~/.local/bin/hyprwmctl pause
-# Resume when ready:
-~/.local/bin/hyprwmctl resume
-```
-
-`pause` stops automatic tiling for the session; it is not an uninstall or a promise to unhide every parked window. Use `restore-all` for visibility recovery. `runtime.enabled` controls the persistent setting. IPC pause/resume, the menu action and Control–Option–P change the current session. A config reload reapplies `runtime.enabled` and can resume a session-only pause. Set `runtime.enabled=false`, or use Settings → General → Tiling, to keep tiling paused across config edits. Incomplete Lite recovery must finish before resuming.
-
-An empty Lite workspace can show a **Workspace N / No windows** panel. This is HyprWM's visible keyboard receiver while clients are parked; it does not edit or retain typed text. Switch back to an occupied workspace to return to a client. If a workspace command refuses keyboard-receiver verification, read that error before retrying; the failed reservation preserves the current windows. `status` exposes the panel under `workspace_public.empty_receiver`.
-
-## A dialog or sheet is buried
-
-Record whether the object is an AX dialog, sheet, modal panel or an ordinary floated window; include its parent relationship if available. Do not solve generic dialog policy with application-name exceptions. Pause the manager if necessary, dismiss the dialog normally, and check where input lands after dismissal. Remove experimental rules from the reproduction. Report separate cases for staying above tiles, preserving modal input and returning focus to the parent.
+Pause HyprWM, dismiss the dialog normally, and check where input returns.
+Report the app, how you opened the dialog, and whether it is a sheet or separate
+window. Include the smallest relevant rules. Do not add app-name exceptions as a workaround.
 
 ## A config edit has no effect
 
-Use the shared text file, not a generated cache or an old JSON input. `HYPRWM_CONFIG` can select a different path than the default. In settings, the Advanced page exposes the file. Inspect line-numbered warnings and [CONFIG.md](CONFIG.md), including its **accepted, not yet effective** entries.
-
-One invalid assignment should not discard an independent valid gap edit. Save one valid change and compare the effective value. The watcher handles atomic replacement and coalesces rapid saves. Appearance-only changes should not trigger layout geometry. If they do, include the smallest edit and the before/after rects in your report. Preserve the original file and a backup; do not repeatedly reset all preferences to diagnose one line.
-
-Float-rule classification is currently latched for an observed window lifetime in the running daemon. Removing/changing a float rule does not automatically retile an already classified window, and the float toggle does not clear that cache. See [the rule limitation](CONFIG.md#rules-and-shortcuts); restarting HyprWM re-evaluates rules, while separately saved explicit floating remains in effect.
+Edit `~/.config/hyprwm/hyprwm.conf`, or the path selected by `HYPRWM_CONFIG`.
+Read line-numbered warnings with `hyprwm doctor` and compare `hyprwm --print-config`.
+See [settings and limits](CONFIG.md). Some parsed settings have no effect yet.
+Float rules stay attached to a window until HyprWM restarts, even after the rule is
+removed; saved explicit floating state can also keep a window floating.
 
 ## A shortcut does nothing
 
-Settings → Hotkeys lists configured bindings; a registration conflict can still prevent a chord from working. Check duplicate chords, imported modifier translation and whether the watcher is running. Engine ordinary shortcuts require the separate legacy watcher; the installer does not start it. Check Input Monitoring for that watcher and the settings recorder. The daemon’s fixed Carbon panic shortcut does not require it. Readable text bindings map `SUPER` to Command, `ALT` to Option and `CTRL` to Control. The legacy Lua defaults use a separate translation; the README lists the actual macOS keys.
+Check **Settings → Keyboard Shortcuts**, duplicate chords, and Input Monitoring.
+Ordinary global shortcuts need the separate keyboard helper; the app installer
+does not start it. The fixed Control–Option–P safety shortcut works independently.
+Text bindings use `SUPER` = Command, `ALT` = Option, `CTRL` = Control.
+See [imports](CONFIG.md#import-from-another-window-manager) for modifier differences.
 
-A shortcut contains a HyprWM command argument array, not arbitrary shell syntax. Imported shell commands and unsupported actions produce warnings. See [MIGRATING.md](MIGRATING.md) for the supported subset.
+## The socket is unavailable or a command is refused
 
-## The socket is unavailable / command refused
+Start one daemon. Match `HYPRWM_CTL` in its environment and your client; the default
+is `/tmp/hyprwm.ctl`. Keep a live socket in place. Read the first refusal before
+retrying: a changing Space, dialog or session lock can prevent a command.
+See [CLI commands](CLI.md) for exact arguments and reply handling.
 
-```sh
-~/.local/bin/hyprwmctl status
-```
+## Motion, transparency or Mission Control looks wrong
 
-The command socket defaults to `/tmp/hyprwm.ctl`. Set the same `HYPRWM_CTL` in both client and daemon if using a custom path. The event socket defaults to that path plus `.events`, with an optional `HYPRWM_EVENTS` override. Do not delete a live socket or start a second daemon over it. A stale socket can be removed by the daemon only when it belongs to the current user and no process answers.
-
-A focus request can be queued before macOS accepts it. Ownership, session lock, dialogs or a changing Space can cause a command to be refused. Clients must handle empty responses and nonzero exits. See [API.md](API.md) for the bounded wire protocol.
-
-## Motion, borders or capture look wrong
-
-Record which mode is running and whether capture permission is granted. Lite and Engine have different rendering paths. Do not infer SIP-on compatibility from a run made with SIP off. Disable optional capture animation or use ordinary AX placement if the current build reports the capability unavailable. User transparency and the hidden-window Mission Control pool remain unfinished; keep opacity at `1` and hidden-window overview off for a conservative reproduction.
-
-For a motion bug, provide a short real recording with the first frame, retarget and landing visible. Check whether body/border diverge, content resizes late or the final frame snaps. A settings screenshot cannot prove runtime motion.
-
-Lite's current discovery path does not guarantee placement before the first displayed frame; a brief TextEdit entrance flash has been observed. Apple's [window-created notification](https://developer.apple.com/documentation/applicationservices/kaxwindowcreatednotification) does not specify ordering before presentation; faster notification-based discovery remains a timing hypothesis. Captured proxies also contain a static image during motion. Distinguish these limits from a client that remains parked after landing, which needs recovery.
-
-## Mission Control cards are missing
-
-The current Engine build has shown missing cards for ordinary visible managed windows even with the hidden-window pool disabled. Keeping that pool off does not resolve this known limitation. Exit Mission Control normally and check the actual desktop windows; working focus after exit does not prove the cards were present. If a window remains invisible on the desktop, follow the restoration steps above. Keep the state and matching Engine resources until visibility is confirmed.
+Keep opacity at `1` and hidden-window Mission Control off for a simple reproduction.
+Both transparency and hidden-window overview are unfinished. Visible managed windows
+can also have missing Mission Control cards. Exit normally and inspect desktop windows;
+use restoration above if a window stays invisible. For motion bugs, record a short clip
+showing the start and landing, and say whether content, border or final size jumps.
 
 ## Installation or removal fails
 
-Read the first error rather than repeatedly rebuilding. Check the macOS/Swift requirements and command-line tools, writable `~/Applications`, the existing configuration and the selected checkout. The installed app bundles base configuration resources; Engine still needs its matching external native resources. Keep the checkout for the matching uninstaller; a separately built development menu companion still depends on its checkout. See [packaging](../hook/swift/PACKAGING.md) for the difference between the local menu bundle and a standalone installer.
-
-Run the matching `./uninstall.sh` from the same checkout. It must restore managed windows before deleting the app. If restoration is pending, keep the app, state and checkout and follow the recovery message. User preferences/backups should be kept unless you intentionally remove them afterwards. An uninstall does not automatically reverse independently configured Engine security settings; follow [Engine reversal](../README.md#current-limits).
-
-## What to include in a report
-
-Include macOS version, build/commit, mode, permission status, the smallest relevant config, exact steps, expected/actual behavior, recovery outcome and whether the behavior reproduced in another mode. Include sanitized IPC/native/capture evidence where possible. Remove window titles, personal paths, app contents and credentials. Mark unverified steps as unverified instead of filling them in from assumptions.
+Read the first error. Check Command Line Tools, Swift, Python and writable
+`~/Applications`. Keep the source folder: the app still uses it.
+Run the matching `./uninstall.sh`; pending restoration must finish before removal.
+Remove separately installed services using [rollback steps](INSTALL.md#rollback-and-uninstall).
+Report `sw_vers`, chip, `csrutil status`, **About → Copy Diagnostics**, steps and
+expected/actual behavior. Keep private titles, files and credentials out of the report.

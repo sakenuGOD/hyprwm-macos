@@ -1,6 +1,6 @@
 # Configuration
 
-The default runtime uses the qualified native engine. Lite applicability below describes experimental adapters included in this source tree; see [current limits](../README.md#current-limits).
+Tiling requires the native engine on macOS 26.7.1 (25G241), Apple silicon. See [installation](INSTALL.md).
 
 HyprWM reads `~/.config/hyprwm/hyprwm.conf`. Set `HYPRWM_CONFIG` to an explicit file path to use another document. The settings UI and daemon share this file. Save to reload; the watcher observes the containing directory as well as the file, so atomic-save editors are supported. A 65 ms debounce coalesces writes. Invalid assignments produce line-numbered warnings while independent valid assignments remain usable.
 
@@ -25,15 +25,15 @@ Each section opener, assignment and closing brace goes on its own line. Dotted a
 
 ## Defaults and precedence
 
-The tables describe the portable baseline in [`hyprland.lua`](../hook/config/defaults/.config/hypr/hyprland.lua), generated text defaults in [`TextConfig.swift`](../hook/swift/Sources/HyprCore/TextConfig.swift), and consumer fallbacks. An existing configuration remains authoritative. On legacy first startup, `TextConfig.read` can also migrate `hook/config/runtime.json` and `swift-runtime.json`; those may contain local overrides and are not portable defaults. Environment overrides take precedence where listed below. The installed app reads its bundled base without Lua. An external development `HYPRWM_HOOK` can rebuild `hypr_cfg.json` through `hypr_shim.lua` when the Lua inputs are newer; that path requires Lua and the matching source configuration.
+The tables describe the portable baseline in [`hyprland.lua`](../hook/config/defaults/.config/hypr/hyprland.lua), generated text defaults in [`TextConfig.swift`](../hook/swift/Sources/HyprCore/TextConfig.swift), and runtime fallbacks. An existing configuration remains authoritative. On legacy first startup, `TextConfig.read` can also migrate `hook/config/runtime.json` and `swift-runtime.json`; those may contain local overrides and are not portable defaults. Environment overrides take precedence where listed below. The installed app reads its bundled base without Lua. An external development `HYPRWM_HOOK` can rebuild `hypr_cfg.json` through `hypr_shim.lua` when the Lua inputs are newer; that path requires Lua and the matching source configuration.
 
-The schema is [`runtime.schema.json`](../hook/config/runtime.schema.json). Swift adds `runtime.enabled`, `runtime.menu_bar`, `runtime.startup_animation` and rule role/subrole fields while loading it. Parsing a field is distinct from a renderer consuming it. Engine consumers below refer to the native path; Lite capabilities require their own desktop validation.
+The schema is [`runtime.schema.json`](../hook/config/runtime.schema.json). Swift adds `runtime.enabled`, `runtime.menu_bar`, `runtime.startup_animation` and rule role/subrole fields while loading it. Parsing a field is distinct from a renderer consuming it. The tables below describe the native engine in this branch.
 
 ## Runtime, layout, focus and drag
 
 All numeric distances are macOS points unless the name says milliseconds.
 
-| Key | Default | Example / allowed value | Actual consumer |
+| Key | Default | Example / allowed value | Used by |
 | --- | --- | --- | --- |
 | `version` | `1` | `version = 1` | `NativeRuntimeConfig.build` validates the document version. |
 | `time_scale` | `1` | `time_scale = 1.5` (`0.1…4`) | `NativeRuntimeConfig.build` scales geometry animation timing; `HYPRWM_TIME_SCALE` overrides it. |
@@ -44,15 +44,15 @@ All numeric distances are macOS points unless the name says milliseconds.
 | `runtime.overview_hidden_windows` | `false` | `runtime.overview_hidden_windows = false` | `RuntimeOptions.load` → overview policy. Experimental hidden-window Mission Control path; leave off unless separately verified. |
 | `runtime.prehide` | `false` | `runtime.prehide = false` | `LiveEngine` publishes native prehide policy; `WM` first-map path reads it. `HYPRWM_PREHIDE=0/1` overrides it. |
 | `runtime.hold_max_ms` | `200` | `runtime.hold_max_ms = 200` (`0…2000`) | `LiveEngine` publishes the native first-frame hold bound. `HYPRWM_HOLD` overrides it in seconds. |
-| `runtime.capture_sampling` | `false` | `runtime.capture_sampling = false` | `WM` gates window-edge color image sampling. It does not enable Lite proxy animation capture. |
+| `runtime.capture_sampling` | `false` | `runtime.capture_sampling = false` | `WM` gates window-edge color image sampling. It is off by default. |
 | `runtime.pointer_focus_pause_ms` | `100` | `runtime.pointer_focus_pause_ms = 100` (`0…2000`) | `WM.pointerFocus` delay after relevant native focus activity. |
 | `layout.gaps_in` | `5` | `layout.gaps_in = 8` (`0…100`) | `HyprConfig.gaps` → `Dwindle.withGaps`. Applied to each interior tile edge on both axes: adjacent margins combine, so `5` normally leaves `10 pt` between clients. |
-| `layout.gaps_out` | top `8`, right/bottom/left `12` | `layout.gaps_out = 12` or `layout.gaps_out.top = 16` (`0…200`) | `HyprConfig.gaps` → layout inset. A scalar applies to every side; side fields are `top`, `right`, `bottom`, `left`. Consumer fallback is `20` on an absent side. |
+| `layout.gaps_out` | top `8`, right/bottom/left `12` | `layout.gaps_out = 12` or `layout.gaps_out.top = 16` (`0…200`) | `HyprConfig.gaps` → layout inset. A scalar applies to every side; side fields are `top`, `right`, `bottom`, `left`. Runtime fallback is `20` on an absent side. |
 | `layout.default_split_ratio` | `1` | `layout.default_split_ratio = 1.2` (`0.1…1.9`) | `HyprConfig.makeDwindle` divides by two for new splits: `1` gives a 50/50 split. Existing ratios are not balanced by this setting. |
 | `layout.split_width_multiplier` | `1` | `layout.split_width_multiplier = 1` (`0.1…10`) | `Dwindle` chooses split orientation using aspect ratio. |
 | `layout.minimum_policy` | `native` | `native` or `ratio` | `Dwindle` minimum-size policy. `native` considers learned client minimums; `ratio` preserves split ratios. |
 | `focus.follow_mouse` | `1` | `focus.follow_mouse = 0` (integer `0/1`) | `WM.pointerFocus`; `0` disables pointer-driven tile focus. |
-| `focus.focus_on_close` | `0` (consumer fallback) | integer `0…2` | `FocusPolicy.focusAfterClose`: `0` nearest surviving tile, `1` tile under pointer with nearest fallback, `2` previous focused tile with nearest fallback. |
+| `focus.focus_on_close` | `0` (runtime fallback) | integer `0…2` | `FocusPolicy.focusAfterClose`: `0` nearest surviving tile, `1` tile under pointer with nearest fallback, `2` previous focused tile with nearest fallback. |
 | `focus.no_focus_fallback` | `false` | `focus.no_focus_fallback = true` | `FocusPolicy.focusAfterClose` disables fallback selection when true. |
 | `drag.mode` | `swap` | `swap` or `insert` | `RuntimeOptions.load` → `WMProduction` titlebar-throw policy. |
 | `drag.throw_distance_pt` | `32` | `drag.throw_distance_pt = 32` (`8…400`) | `WMProduction` minimum titlebar-throw displacement. |
@@ -61,11 +61,11 @@ All numeric distances are macOS points unless the name says milliseconds.
 
 ## Appearance
 
-[`Appearance.swift`](../hook/swift/Sources/HyprCore/Appearance.swift) parses border, shadow and glow values; `Channel` and `LiveEngine` send them to the native renderer. A valid appearance control does not establish that its visual result has passed live QA. In particular, user transparency remains unfinished.
+[`Appearance.swift`](../hook/swift/Sources/HyprCore/Appearance.swift) parses border, shadow and glow values; `Channel` and `LiveEngine` send them to the native renderer. Some appearance settings are not finished yet. In particular, window transparency is unreliable.
 
 Colors use `rgb(RRGGBB)`, `rgba(RRGGBBAA)` or `0xAARRGGBB`. Alpha is the final byte for `rgba`, the first for `0x`.
 
-| Key | Portable default | Example / bounds | Consumer / limitation |
+| Key | Portable default | Example / bounds | Used by / limitation |
 | --- | --- | --- | --- |
 | `appearance.rounding` | `18` | `appearance.rounding = 18` (`0…100`) | `Appearance.radius` → native effects packet. |
 | `appearance.rounding_power` | `2.6` | `appearance.rounding_power = 2.6` (`1…10`) | `Appearance.roundingPower` → native corner shape. |
@@ -83,30 +83,11 @@ Colors use `rgb(RRGGBB)`, `rgba(RRGGBBAA)` or `0xAARRGGBB`. Alpha is the final b
 | `appearance.shadow.offset` | `[0,10]` | two numbers, each `-2000…2000` | Shadow packet x/y displacement. |
 | `appearance.shadow.color` | `rgba(00000077)` | color string | Active shadow packet color. |
 | `appearance.shadow.color_inactive` | `rgba(00000044)` | color string | Inactive shadow packet color; absent field inherits active color. |
-| `appearance.glow.enabled` | `true` in portable baseline | boolean | `Appearance.glowOn` → native glow enable. Consumer fallback is `false`. |
+| `appearance.glow.enabled` | `true` in portable baseline | boolean | `Appearance.glowOn` → native glow enable. Runtime fallback is `false`. |
 | `appearance.glow.range` | `18` | `appearance.glow.range = 18` (`0…200`) | Native effects packet extent. |
 | `appearance.glow.render_power` | `3` | number `1…10` | Native effects packet falloff. |
 | `appearance.glow.color` | `rgba(ffb4a433)` | color string | Active glow color. |
 | `appearance.glow.color_inactive` | `rgba(ffb4a400)` | color string | Inactive glow color; absent field inherits active color. |
-
-## Lite applicability
-
-The shared parser accepts the same document for both modes. The Lite adapter has a narrower rendering surface; accepted configuration does not imply a foreign macOS window can be styled through public AX APIs. These are source-level capabilities, not a live acceptance claim.
-
-| Keys | Lite behavior |
-| --- | --- |
-| Layout, focus, drag, rules, runtime enable, text reload | Shared policy is used through the Lite adapters; verify actual app behavior separately. |
-| Border size, active colors/angle, inactive color | Consumed by overlay borders and proxy borders. |
-| `appearance.rounding` | Rounds overlay/proxy edges; does not change a foreign application's native corner shape. |
-| `appearance.rounding_power`, `appearance.shadow.*`, `appearance.glow.*` | **Accepted, not yet effective in Lite:** no corresponding overlay rendering consumer. |
-| `appearance.active_opacity`, `inactive_opacity`, `fullscreen_opacity`, rule `opacity` | **Accepted, not effective as user transparency in Lite:** foreign clients remain opaque. Internal zero-alpha commands mean parking/hiding, not public control of another process's window alpha. |
-| `runtime.prehide`, `hold_max_ms`, `window_resize_mode`, `capture_sampling` | **Accepted, not effective in Lite:** native first-frame/resize/edge-sampling knobs. Lite capture availability comes from Screen Recording permission and the capture capability. |
-| `runtime.overview_hidden_windows` | Forced off in Lite; virtual workspaces do not enable the native hidden-window Mission Control pool. |
-| `animations.windowsIn`, `windowsMove`, `windowsOut` and geometry curves | Used by captured-proxy motion when capture is available. Denial/failure falls back to direct AX placement. |
-| `animations.border.duration_ms` / enabled | Controls overlay border color transition duration. Moving-proxy border fades use the configured Bezier curve; idle border fades use Core Animation’s default timing, and spring color interpolation is not implemented. |
-| `animations.fadeShadow`, `fadeGlow` | **Accepted, not yet effective in Lite:** no shadow/glow render path. |
-| `animations.fadeIn`, `fadeOut` | No independent foreign-client fade curve. Opening alpha requests trigger the proxy entrance; cached close proxy duration is bounded by `windowsOut` and `fadeOut` durations. |
-| `animations.fadeSwitch` | Does not provide fractional foreign-client focus opacity in Lite. |
 
 ## Curves and animations
 
@@ -127,7 +108,7 @@ animations {
 }
 ```
 
-| Curve field | Default / example | Consumer and bounds |
+| Curve field | Default / example | Used by and bounds |
 | --- | --- | --- |
 | `curves.<name>.type` | required: `bezier` or `spring` | `NativeRuntimeConfig.build` → `HyprConfig.curves`; names begin with a letter and contain at most 64 letters/digits/`_`/`-`. |
 | `curves.<name>.points` | required for bezier: `[[0.25,1],[0.5,1]]` | Exactly two `[x,y]` pairs; x `0…1`, y `-10…10`. |
@@ -140,15 +121,15 @@ Portable named curves are `smooth` (`[[0.25,1],[0.5,1]]`), `snappy` (`[[0.2,0.9]
 
 The following fields apply to **each event listed in the next table**. Unspecified fields inherit from the nearest configured ancestor, finally `global`. `animations.enabled` is a master boolean, default `true`.
 
-| Event field | Default | Example / actual consumer |
+| Event field | Default | Example / used by |
 | --- | --- | --- |
 | `animations.<event>.enabled` | inherited, normally `true` | `animations.windowsMove.enabled = false`; `HyprConfig.anim` gates that event. Angle events default off. |
 | `animations.<event>.curve` | inherited | `animations.windowsOut.curve = snappy`; resolved by `HyprConfig.curves`. |
 | `animations.<event>.duration_ms` | inherited; table below | `animations.windowsOut.duration_ms = 260` (`0…10000`); Bezier timing only. |
 | `animations.<event>.time_scale` | geometry: top-level `time_scale`; others: `1` | `animations.windowsMove.time_scale = 1.2` (`0.1…4`); scales duration or spring parameters. |
-| `animations.<event>.style` | inherited, normally empty | Custom style is supported only on `global`, `windows`, `windowsIn`, `windowsOut`. Use empty, `fade`, `popin N%`, `slidefade N%`, `slidefadevert N%`, N `0…100`. Native open/close consumers use fade/popin scale; other styles have no separate Swift choreography. A style on other events is rejected by semantic validation. |
+| `animations.<event>.style` | inherited, normally empty | Custom style is supported only on `global`, `windows`, `windowsIn`, `windowsOut`. Use empty, `fade`, `popin N%`, `slidefade N%`, `slidefadevert N%`, N `0…100`. Native open/close handlers use fade/popin scale; other styles have no separate Swift choreography. A style on other events is rejected by semantic validation. |
 
-| Event(s) | Portable default | Consumer / status |
+| Event(s) | Portable default | Used by / status |
 | --- | --- | --- |
 | `global` | enabled, `smooth`, `800 ms` | Inheritance root. |
 | `windows` | inherits global | Parent of window events. |
@@ -162,14 +143,14 @@ The following fields apply to **each event listed in the next table**. Unspecifi
 | `border` | `smooth`, `600 ms` | `Channel.configureAppearance` border transition. |
 | `fadeShadow` | inherits fade (`smooth`, `800 ms`) | `Channel.configureAppearance` shadow transition. |
 | `fadeGlow` | inherits fade (`smooth`, `800 ms`) | `Channel` effects update duration. |
-| `borderangle`, `shadowangle`, `glowangle` | disabled, built-in `default`, `100 ms` | **Accepted, not yet effective:** no angle animation consumer. |
-| `layers`, `layersIn`, `layersOut` | global inheritance | **Accepted, not yet effective:** no macOS layer choreography consumer. |
-| `fadeDim`, `fadeDpms` | fade inheritance | **Accepted, not yet effective:** no dim/DPMS event consumer. |
-| `fadeLayers`, `fadeLayersIn`, `fadeLayersOut` | fade inheritance | **Accepted, not yet effective:** no layer fade consumer. |
-| `fadePopups`, `fadePopupsIn`, `fadePopupsOut` | fade inheritance | **Accepted, not yet effective:** no popup fade consumer. |
-| `zoomFactor`, `monitorAdded` | global inheritance | **Accepted, not yet effective:** no corresponding event consumer. |
-| `workspaces`, `workspacesIn`, `workspacesOut` | global inheritance | **Accepted, not yet effective in the native path:** no consumer of these animation records. Workspace command support is separate. |
-| `specialWorkspace`, `specialWorkspaceIn`, `specialWorkspaceOut` | workspace inheritance | **Accepted, not yet effective:** no special-workspace animation consumer. |
+| `borderangle`, `shadowangle`, `glowangle` | disabled, built-in `default`, `100 ms` | **Accepted, not yet effective:** no angle animation handler. |
+| `layers`, `layersIn`, `layersOut` | global inheritance | **Accepted, not yet effective:** no macOS layer choreography handler. |
+| `fadeDim`, `fadeDpms` | fade inheritance | **Accepted, not yet effective:** no dim/DPMS event handler. |
+| `fadeLayers`, `fadeLayersIn`, `fadeLayersOut` | fade inheritance | **Accepted, not yet effective:** no layer fade handler. |
+| `fadePopups`, `fadePopupsIn`, `fadePopupsOut` | fade inheritance | **Accepted, not yet effective:** no popup fade handler. |
+| `zoomFactor`, `monitorAdded` | global inheritance | **Accepted, not yet effective:** no corresponding event handler. |
+| `workspaces`, `workspacesIn`, `workspacesOut` | global inheritance | **Accepted, not yet effective in the native path:** no handler of these animation records. Workspace command support is separate. |
+| `specialWorkspace`, `specialWorkspaceIn`, `specialWorkspaceOut` | workspace inheritance | **Accepted, not yet effective:** no special-workspace animation handler. |
 
 ## Rules and shortcuts
 
@@ -183,7 +164,7 @@ windowrule = {"name":"quiet","match":{"class":"^Calculator$"},"no_anim":true}
 bind = CTRL ALT, H, focus, left
 ```
 
-| Rule field (`windowrule = {...}` / `window_rules` array) | Default | Consumer / example |
+| Rule field (`windowrule = {...}` / `window_rules` array) | Default | Used by / example |
 | --- | --- | --- |
 | `name` | absent | Diagnostic/UI label, at most 128 characters; `"calculator"`. |
 | `enabled` | `true` | `WindowProperties.matches`; false skips a rule. |
@@ -192,7 +173,7 @@ bind = CTRL ALT, H, focus, left
 | `match.role`, `match.subrole` | absent | `WindowProperties.matches` against AX role/subrole, e.g. `"^AXWindow$"` / `"^AXDialog$"`. Unknown/empty metadata never satisfies either a positive or negative match. |
 | `float` | unchanged | WM classification; `true` floats, `false` permits tiling when otherwise eligible. A matched float classification is latched for that observed window lifetime in the running daemon; see below. |
 | `ignore` | `false` | `WM.ignored`/`releaseIgnored` excludes a window from management. |
-| `no_anim` | `false` | `WM.windowPolicy` suppresses core-managed move/open/hide/restore/focus animation. The Lite external-close proxy path does not currently consult this rule. |
+| `no_anim` | `false` | `WM.windowPolicy` suppresses core-managed move/open/hide/restore/focus animation. |
 | `no_follow_mouse` | `false` | `WM.windowPolicy` suppresses pointer focus for that window. |
 | `opacity` | no override | `WindowProperties.opacity` → WM alpha. Number `0…1`, or up to three values for active/inactive/fullscreen, e.g. `"1 0.9 1"`; suffix a value with `override` to replace rather than multiply the global opacity. Transparency is unfinished. |
 
@@ -202,12 +183,58 @@ At most 128 rules are accepted, each with at least one condition and regex lengt
 
 Readable `bind` syntax uses `SUPER`/`CMD`/`COMMAND` = **Command**, `ALT`/`OPTION` = **Option**, `CTRL`/`CONTROL` = **Control**, plus `SHIFT`. At least Command, Option or Control is required. This differs from the legacy Lua baseline's modifier translation; use the actual macOS key names when editing text. Supported named keys include letters, digits, arrows, punctuation, Return, Tab, Space, Escape, Backspace and F1–F12; `code:0…127` selects a Carbon keycode.
 
-| Binding object field (`bind = {...}` / `hotkeys` array) | Default | Actual consumer |
+| Binding object field (`bind = {...}` / `hotkeys` array) | Default | Used by |
 | --- | --- | --- |
-| `id` | readable bind generates `2048 + ordinal` | Baseline identity `0…4095`; `NativeHotkeys.apply` or `LiteHotkeys.reload` resolves an override. IDs alone refer to the active mode's baseline; include `command` when moving bindings between modes. |
+| `id` | readable bind generates `2048 + ordinal` | Baseline identity `0…4095`; `NativeHotkeys.apply` resolves an override. Include `command` when sharing bindings. |
 | `keycode` | required by text schema | Carbon code `0…127`, e.g. H = `4`. |
 | `modifiers` | required by text schema | Carbon mask: Command `256`, Shift `512`, Option `2048`, Control `4096`; combine with addition. |
 | `enabled` | `true` | The active hotkey handler skips disabled bindings. |
 | `command` | baseline action if omitted | Array of `1…32` strings, each at most 512 characters. Matches an existing action or adds a binding when chord fields are supplied; not a shell program. |
 
-At most 256 overrides are accepted. Duplicate enabled chords are refused. Lite registers its built-in baseline and overrides through Carbon in the runtime. Engine needs its native binding baseline and separate hotkey watcher; parsing a `bind` line alone does not start that watcher. Engine also registers a separate fixed Control–Option–P panic shortcut through Carbon; editing ordinary binding overrides does not remap or disable that safety chord. Another application can already own a Carbon chord; Lite reports the registration conflict count in `status.lite.hotkey_conflicts`. Settings → Hotkeys shows the configured bindings. See [API.md](API.md) for supported command arguments and [MIGRATING.md](MIGRATING.md) for foreign modifier conversion.
+At most 256 overrides are accepted. Duplicate enabled chords are refused.
+Ordinary global shortcuts require the separate keyboard helper; a `bind` line does
+not start it. The fixed Control–Option–P safety shortcut is registered separately
+and cannot be disabled by binding overrides. Another application can own a chord,
+so check **Settings → Keyboard Shortcuts** and test the actual action.
+See [CLI.md](CLI.md) for supported commands.
+
+## Import from another window manager
+
+Stop your other automatic tiler before starting HyprWM. After installation, run:
+
+```sh
+~/.local/bin/hyprwm import /path/to/hyprland.conf
+```
+
+Import reads a regular UTF-8 file up to 256 KiB as data. It merges supported values
+and backs up an existing config as `hyprwm.conf.backup-<UUID>` before replacement.
+It never executes the source. Unsupported lines produce warnings; if no settings
+map, import fails and preserves your file. Review the warnings and resulting config.
+To undo, pause or quit HyprWM and copy the sibling backup over `hyprwm.conf`.
+
+The filename helps select the format. Import `yabairc` and `skhdrc` separately.
+Includes, shell execution and arbitrary environment expansion are not supported.
+
+| Source | Imported settings | Limits |
+| --- | --- | --- |
+| Hyprland (`hyprland.conf`) | Gaps, border size, rounding, opacity, pointer focus, supported bindings and float/tile rules. | Linux classes often need macOS app-name edits. Monitor rules, plugins, shell commands and workspace dispatchers are skipped. |
+| AeroSpace (`aerospace.toml`) | Scalar gaps and supported main-mode bindings; some app-name/title float rules. | Different horizontal/vertical inner gaps, accordion layouts, named workspaces, app-ID conditions and binding modes do not map. |
+| yabai (`yabairc`) | Supported `yabai -m config` appearance/gap values and simple app/title float rules. | Other shell commands are skipped; the file is not executed. |
+| skhd (`skhdrc`) | Supported chords that call known yabai window actions. | Shell sequences and unsupported actions are skipped. |
+| i3/sway | Gaps, border width, supported focus/move/floating/fullscreen/close bindings and simple float rules. | Linux workspaces, output rules, services and startup commands do not map. |
+| Amethyst (`.amethyst.yml`) | Window margin and scalar screen padding. | Layout lists, app floating lists and shortcuts do not map. `mouse-follows-focus` is not pointer focus. |
+| Rectangle | No automatic import. | Detection reports unsupported entries; configure supported actions manually. |
+
+Imported `SUPER`/`Mod4` means **Command**, `ALT`/`Mod1` means **Option** and `CTRL`
+means **Control**. The source Lua defaults use their own older translation;
+readable `hyprwm.conf` uses the macOS mapping above.
+
+For example, Hyprland `bind = SUPER, H, movefocus, l` maps to:
+
+```conf
+bind = CMD, H, focus, left
+```
+
+Set `layout.gaps_in`, `layout.gaps_out.<side>` and `appearance.border.size` directly
+for manual conversion. Use `hyprwm --print-config` to check parsed values, then test
+tiling and keyboard input with throwaway windows. See [troubleshooting](TROUBLESHOOTING.md).

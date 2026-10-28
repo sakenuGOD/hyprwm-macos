@@ -1,7 +1,8 @@
-# Native integration sources
+# Native integration
 
-This directory contains the native animation engine, Swift daemon, platform bridges, configuration and reference tooling. See the [project README](../README.md) for source builds and the [Swift package](swift/README.md) for runtime interfaces.
-
-Building Swift does not install the native engine. Native deployment requires a separately qualified image for the exact macOS build and framework UUIDs. The legacy native build script is incomplete for the current presentation entry points and also needs an external effects source package.
-
-Preserve the running desktop when investigating failures. Use the manager’s pause and restoration commands; retain unresolved ownership records. Do not restart WindowServer, Dock, loginwindow or client applications to recover an animation, and do not change boot security settings as an installation step.
+This directory contains the Swift daemon, WindowServer engine, platform bridges,
+configuration and test reference models. Start with the [project README](../README.md).
+The engine supports only macOS 26.7.1 (25G241) on Apple silicon and needs privileged
+setup. Building Swift does not install it. See [installation](../docs/INSTALL.md)
+and the [Swift package](swift/README.md). Keep native addresses, framework UUIDs
+and recovery guards unchanged unless you can verify them on the supported build.
