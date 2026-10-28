@@ -119,7 +119,7 @@ struct CurveGraph:View {
                 Canvas {context,size in
                     var grid=Path();for i in 0...4 {let x=15+w*Double(i)/4,y=10+h*Double(i)/4;grid.move(to:CGPoint(x:x,y:10));grid.addLine(to:CGPoint(x:x,y:10+h));grid.move(to:CGPoint(x:15,y:y));grid.addLine(to:CGPoint(x:15+w,y:y))};context.stroke(grid,with:.color(.secondary.opacity(0.12)),lineWidth:1)
                     var line=Path()
-                    for i in 0...160 { let t=Double(i)/160, y=response(t);let point=CGPoint(x:15+w*horizontal(t),y:10+h*(1-y));if i==0{line.move(to:point)}else{line.addLine(to:point)} };context.stroke(line,with:.color(.accentColor),style:StrokeStyle(lineWidth:2.5,lineCap:.round))
+                    for i in 0...160 { let t=Double(i)/160, y=response(t);let point=CGPoint(x:15+w*CGFloat(horizontal(t)),y:10+h*CGFloat(1-y));if i==0{line.move(to:point)}else{line.addLine(to:point)} };context.stroke(line,with:.color(.accentColor),style:StrokeStyle(lineWidth:2.5,lineCap:.round))
                 }
                 if value["type"] as? String == "bezier", let points=value["points"] as? [[Double]] {
                     ForEach(0..<2,id:\.self){index in
