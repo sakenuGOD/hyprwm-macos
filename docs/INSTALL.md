@@ -2,186 +2,243 @@
 
 ## Before you start
 
-HyprWM is experimental. Tiling requires a native engine inside WindowServer,
-**macOS 26.7.1 (25G241), Apple silicon, fully disabled SIP,
-and admin rights**. A failure can disrupt the desktop. Save your work first.
-Building the Swift app only needs macOS 14+, Xcode Command Line Tools, Swift 5.9+,
-Python 3 and Git. Before building, check `sw_vers -productVersion`,
-`sw_vers -buildVersion` and `uname -m`: they must print `26.7.1`, `25G241` and `arm64`.
-Keep the cloned folder; the installed app still uses it. Never share generated
-native images or state files, reuse them on another Mac, or commit them to Git.
+HyprWM is experimental. Tiling runs a native engine inside WindowServer and needs
+**macOS 26.7.1 (25G241), Apple silicon, fully disabled SIP and admin rights**.
+A failure can disrupt the desktop. Save your work first.
+
+Check the Mac before building:
+
+```sh
+sw_vers -productVersion
+sw_vers -buildVersion
+uname -m
+csrutil status
+```
+
+The first three must print `26.7.1`, `25G241` and `arm64`. Other builds, Rosetta and
+enabled or partially disabled SIP are refused. Building only the Swift app needs
+macOS 14+, Xcode Command Line Tools, Swift 5.9+, Python 3 and Git.
+
+Never share generated native images or state files, reuse them on another Mac,
+or commit them to Git. Keep the checkout for setup, updates and manual recovery.
 
 ## Disable SIP in Recovery
 
 The native engine needs debugger access to WindowServer, which SIP protects.
 The supported setup is **SIP fully disabled**. Disabling only debugging
-restrictions has not been verified for this engine. HyprWM's tools never change
-SIP for you. To follow Apple's full-disable procedure, shut down your Apple
-silicon Mac, hold its power button until startup options appear, choose
-**Options → Continue**, then open **Utilities → Terminal** in Recovery.
-Run `csrutil disable`, restart, then run `csrutil status` in a normal Terminal.
-It must report `System Integrity Protection status: disabled.` before native setup.
-This reduces system protection; re-enable it with `csrutil enable` in Recovery
-and restart when you stop experimenting. See [Apple's SIP instructions](https://developer.apple.com/documentation/security/disabling-and-enabling-system-integrity-protection),
+restrictions has not been verified for this engine. HyprWM never changes SIP.
+
+Shut down the Apple silicon Mac, hold its power button until startup options
+appear, choose **Options → Continue**, then open **Utilities → Terminal** in
+Recovery. Run `csrutil disable`, restart, and run `csrutil status` in a normal
+Terminal. It must report `System Integrity Protection status: disabled.`
+
+This reduces system protection. Re-enable it with `csrutil enable` in Recovery and
+restart when you stop using the native engine. See [Apple's SIP instructions](https://developer.apple.com/documentation/security/disabling-and-enabling-system-integrity-protection),
 [protected task access](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.cs.debugger)
 and [Apple silicon Recovery steps](https://support.apple.com/102518).
 
-## Build and install the app
+## Recommended setup
+
+Run as your desktop user, without putting `sudo` before setup:
 
 ```sh
 git clone https://github.com/sakenuGOD/hyprwm-macos.git
 cd hyprwm-macos
-./install.sh
+./setup.sh
 ```
 
-This builds an ad-hoc signed app in `~/Applications/HyprWM.app` and CLI wrappers in
-`~/.local/bin`. It preserves configuration and leaves the app stopped.
+If Git opens the Command Line Tools installer during cloning, finish installation
+and repeat the clone. Setup requests missing Command Line Tools and waits until
+clang, Swift, LLDB and the SDK work. If Git or Python 3.9+ is still unavailable,
+it installs the missing package through an existing Homebrew. If Homebrew is also
+absent, setup stops with instructions. Default shortcuts do not need Lua.
 
-## Native engine
+Setup checks the host and conflicting window managers; builds and installs the app;
+builds or validates the local native and workspace images; prepares and activates
+the native engine, or keeps a verified active session; installs the keyboard
+helper; waits for Accessibility; and installs automatic startup services.
+It supplies paths and SHA-256 values itself. Each privileged action explains its
+purpose before requesting `sudo`.
 
-On a first install there is nothing to stop. If HyprWM is already running, quit
-it normally through its menu, and quit any separate HyprWM menu companion before
-preparation or activation. Do not run another manager during these steps.
-Build as your normal user:
+A first install has no HyprWM session to stop. Setup preserves a verified running
+HyprWM session and its configuration. Conflicting window managers receive a normal
+quit or service-stop request only after confirmation; none is forcibly killed.
+An unrecognized installation or incomplete native attempt is retained for recovery.
+
+| Option | Effect |
+| --- | --- |
+| `./setup.sh --dry-run` | Inspect the host, existing files and planned actions without installing, requesting permissions or starting services. |
+| `./setup.sh --yes` | Accept normal shutdown of conflicting window managers. `sudo` and macOS permission dialogs remain interactive. |
+| `./setup.sh --no-open` | Suppress explicit app and Settings opening. Accessibility must already be granted; requested automatic startup services still start their backend. |
+| `./setup.sh --no-autostart` | Skip the native-session LaunchDaemon and backend LaunchAgent. The keyboard LaunchAgent is still installed. Use the manual fallback to start future sessions. |
+
+## Permissions and keyboard shortcuts
+
+Enable **HyprWM** in **System Settings → Privacy & Security → Accessibility**.
+Setup opens the pane and waits for the actual permission state. If access is still
+missing after ten minutes, grant it and rerun setup.
+
+Global shortcuts use Carbon's `RegisterEventHotKey`. The keyboard helper needs
+neither Accessibility nor Input Monitoring. The app needs Accessibility to manage
+windows. The optional shortcut recorder in Settings may need keyboard access under
+Input Monitoring; that permission is separate from running existing shortcuts.
+
+Defaults include **Control–Option–arrows** for focus,
+**Control–Option–Shift–arrows** for move, **Control–Option–F** for floating and
+**Option–F** for fullscreen layout. **Control–Option–P** pauses or resumes tiling
+independently of the helper. See **HyprWM Settings → Keyboard Shortcuts** for
+registration status and active bindings. A macOS shortcut or another app can
+reserve a chord.
+
+Successful setup checks the running manager, keyboard registrations and default
+services, then prints `Tiling:ON, hotkeys:ON, autostart:ON`. Check actual window
+focus and movement as well; a responding socket alone cannot show that input works.
+
+## Automatic startup and manual fallback
+
+Default setup installs these services:
+
+| Service | Purpose |
+| --- | --- |
+| `dev.hyprwm.native-session.<uid>` root LaunchDaemon | Prepare the engine for the current WindowServer and coordinate the native workspace bridge. |
+| `dev.hyprwm.backend.<uid>` user LaunchAgent | Start or adopt the user's HyprWM backend when the native session is ready. |
+| `org.hyprwm.keyboard` user LaunchAgent | Generate missing default bindings and run the Carbon keyboard helper. |
+
+They are designed to start tiling and shortcuts at login after reboot. Setup verifies
+the current session; it does not reboot to verify the next login. There is normally
+no manual native preparation after reboot. If automatic startup fails, inspect:
+
+```sh
+python3 scripts/install_autostart.py status --uid "$(id -u)"
+python3 scripts/install_keyboard.py status
+~/.local/bin/hyprwmctl status
+```
+
+Use `./scripts/hyprwm-up` only as a manual fallback. It checks the real host and saved
+images, keeps a verified active session, or requests startup through the existing
+services. It refuses an unconfirmed native attempt rather than repeating it.
+If you chose `--no-autostart`, the same fallback starts the next session manually.
+Read the first refusal and retain all state if recovery is required.
+
+The installer verifies cached sources, output files and the local macOS build
+before reuse. An unsupported update leaves tiling off. Do not edit state files or
+reuse addresses to bypass a refusal.
+
+## Files and logs
+
+| Path | Contents |
+| --- | --- |
+| `~/Applications/HyprWM.app` | Installed app and bundled resources. |
+| `~/.local/bin/hyprwm`, `~/.local/bin/hyprwmctl` | Command wrappers. |
+| `~/.config/hyprwm/hyprwm.conf` | Your text settings; preserved by setup and removal. |
+| `~/Library/Application Support/HyprWM/setup` | Local setup state and reusable build images. |
+| `/Library/Application Support/HyprWM/native-session-<uid>` | Protected automatic-startup code, state and recovery files. |
+| `~/Library/Application Support/HyprWM/keyboard` | Keyboard helper and registration status. |
+| `~/Library/Application Support/HyprWM/lifecycle.json` | User-service process state. |
+| `~/Library/Application Support/HyprWM/runtime` | Installed app's persistent window state. |
+| `/tmp/hyprwm.log` | Daemon startup and runtime log. |
+| `~/Library/Logs/HyprWM/keyboard.log` | Keyboard helper log. |
+
+Read the native service log with:
+
+```sh
+sudo tail -n 80 "/Library/Application Support/HyprWM/native-session-$(id -u)/runtime/native-service.log"
+```
+
+Use `tail -n 80 /tmp/hyprwm.log` for the daemon and
+`tail -n 80 "$HOME/Library/Logs/HyprWM/keyboard.log"` for shortcuts. Remove private
+paths, window titles and other personal data before sharing logs.
+
+## Manual setup without automatic startup
+
+For a complete setup that you start manually after reboot, use:
+
+```sh
+./setup.sh --no-autostart
+```
+
+`install.sh` remains an app-only installer. It builds an ad-hoc signed app and CLI
+wrappers, preserves configuration and does not launch the app or install the global
+keyboard helper. The following low-level steps are for a **fresh native session**.
+If HyprWM is already running, quit it and any separate menu companion normally
+before using these steps. Do not run them against an existing native engine;
+use setup to keep that session instead.
 
 ```sh
 HYPRWM_NATIVE_WORK=$(mktemp -d "${TMPDIR:-/tmp}/hyprwm-native.XXXXXX")
 python3 hook/tools/build_native.py --output-dir "$HYPRWM_NATIVE_WORK/image"
-```
-
-This builds the engine and checks its image. Prepare a disabled engine in the current WindowServer:
-
-```sh
-sudo /usr/bin/python3 hook/tools/prepare_native.py --image-dir "$HYPRWM_NATIVE_WORK/image" --owner-uid "$(id -u)"
-```
-
-Set the first variable below to the **printed** `prepared.json` path. Activate it and select its state for the app:
-
-```sh
-HYPRWM_NATIVE_PREPARED=/private/tmp/hyprwm-native-prepared-REPLACE/prepared.json
+HYPRWM_NATIVE_PREPARATION=$(sudo -H /Library/Developer/CommandLineTools/usr/bin/python3 -E -S scripts/setup_hyprwm.py --prepare-native-json --image-dir "$HYPRWM_NATIVE_WORK/image" --uid "$(id -u)")
+HYPRWM_NATIVE_PREPARED=$(printf '%s\n' "$HYPRWM_NATIVE_PREPARATION" | python3 -c 'import json,sys; print(json.load(sys.stdin)["prepared"])')
 HYPRWM_NATIVE_STATE="$HOME/.local/share/hyprwm/native/engine.state"
-sudo /usr/bin/python3 hook/tools/activate_native.py activate --prepared "$HYPRWM_NATIVE_PREPARED" --engine-state "$HYPRWM_NATIVE_STATE" --owner-uid "$(id -u)" --control-socket /tmp/hyprwm.ctl
+sudo -H /Library/Developer/CommandLineTools/usr/bin/python3 -E -S hook/tools/activate_native.py activate --prepared "$HYPRWM_NATIVE_PREPARED" --engine-state "$HYPRWM_NATIVE_STATE" --owner-uid "$(id -u)" --control-socket /tmp/hyprwm.ctl
 ./install.sh --engine-state "$HYPRWM_NATIVE_STATE"
+python3 scripts/install_keyboard.py install
+open "$HOME/Applications/HyprWM.app"
 ```
 
-Keep the printed **state file from activation** and its rollback command.
-Set up the keyboard helper below, then open `~/Applications/HyprWM.app`, grant
-Accessibility, and check `~/.local/bin/hyprwmctl status`.
-Startup checks the build, framework identities, channel and placement before enabling tiling.
-An unsupported build or refused task access leaves tiling off. Do not bypass a refusal.
-For a custom `HYPRWM_CTL`, pass the same absolute path as `--control-socket`.
-Updates preserve the selected engine state; `HYPRWM_ENGINE_STATE` can override it explicitly.
+The preparation wrapper returns the actual `prepared.json` path as JSON; no path
+needs editing. Preparation needs `sudo` to attach to WindowServer and activation
+needs it to publish that exact engine. Keep the state file and rollback command
+printed by activation. Grant app Accessibility and check `~/.local/bin/hyprwmctl status`.
+This block does not install the native workspace bridge or native login services;
+`./setup.sh` supplies those automatically.
 
-## Global keyboard shortcuts
-
-`install.sh` does not build or start the keyboard helper. For global focus and
-move shortcuts, run this from the cloned folder as your normal user:
+To run only the keyboard helper in a Terminal instead of its LaunchAgent, stop
+your existing helper normally first, then build and run:
 
 ```sh
 clang -fobjc-arc -framework Carbon -framework AppKit -o hook/keys/hyprkeys hook/keys/hyprkeys.m
-test -e hook/config/hypr_cfg.json || cp hook/config/portable-defaults.json hook/config/hypr_cfg.json
-python3 hook/keys/binds.py
+python3 hook/keys/binds.py --source hook/config/portable-defaults.json --missing-only
 ./hook/keys/hyprkeys
 ```
 
-The second command supplies defaults only when no configuration is present.
-Existing configuration is preserved; newer custom Lua files require `lua` when
-generating shortcuts. The helper reads `/tmp/hyprkeys.json` and connects to
-`/tmp/hyprwm.ctl`; it currently uses only that default socket.
-
-Keep this Terminal open, and open HyprWM.app from Finder or another Terminal.
-Use **Control–Option–arrows** to focus and **Control–Option–Shift–arrows** to move
-windows. Stop the helper with **Control–C** in its Terminal before starting another
-copy. Regenerate bindings and restart it after a reboot.
-
-The helper uses macOS's public hotkey API and needs neither Accessibility nor
-Input Monitoring permission. The app needs **System Settings → Privacy & Security
-→ Accessibility → HyprWM** enabled. Shortcuts reserved by macOS or another app may
-be unavailable; inspect the helper's Terminal output and **Settings → Keyboard
-Shortcuts**.
-
-## After a reboot
-
-Repeat preparation and activation for the new WindowServer, using fresh runtime state.
-You can reuse the built image on the same supported build. Repeat `./install.sh --engine-state …`
-if the selected state path changes. Never replay old addresses or edit a state file to force acceptance.
-
-## Autostart (optional)
-
-Autostart requires reviewed engine and workspace images, the release executable,
-and the keyboard helper. It installs a root LaunchDaemon and user LaunchAgent:
-
-```sh
-python3 hook/tools/build_workspaces.py --output-dir /absolute/private/workspace-build
-python3 scripts/install_autostart.py inspect --root /absolute/reviewed/checkout
-sudo /usr/bin/python3 -S scripts/install_autostart.py install \
-  --uid "$(id -u)" --root /absolute/reviewed/checkout --hook /absolute/existing/hook \
-  --manager-executable /absolute/canonical/release/hyprwm-swift --manager-sha256 REVIEWED_MANAGER_SHA256 \
-  --toolgraph-sha256 REVIEWED_TOOLGRAPH_SHA256 \
-  --native-image /absolute/private/native-image/probe-eh.dylib --native-sha256 REVIEWED_NATIVE_IMAGE_SHA256 \
-  --workspace-image-dir /absolute/private/workspace-build
-python3 scripts/install_autostart.py status --uid "$(id -u)"
-```
-
-Replace paths and hashes with reviewed values; `inspect` supplies `toolgraph_sha256`.
-Use a resolved executable path, not Swift's `.build/release` symlink. Inputs must be
-owned by root or your user, with no symlinks or shared write access. The workspace
-builder includes the process-identity helper. For older builds, supply both
-`--identity-helper /absolute/helper.dylib` and `--identity-sha256 REVIEWED_HELPER_SHA256`.
-To adopt an existing session, add `--adopt-activation /private/tmp/.../activation.json`
-and, if its workspace bridge is active, `--adopt-workspaces /private/tmp/hyprwm-workspace-bootstrap-STATE`.
-Without adoption, stop every manager before setup. Keep a separately installed toolbar service.
-An interrupted native attempt stops automatic retries; retain its state for recovery.
-Check actual tiling and shortcuts after your next reboot; installation alone cannot verify them.
-
-### Native workspace switching
-
-With one verified daemon running, publish the separately built workspace bridge:
-
-```sh
-sudo /usr/bin/python3 -I -S hook/tools/bootstrap_workspaces.py --image-dir /absolute/private/workspace-build --owner-uid "$(id -u)" --manager-executable /absolute/path/to/running/hyprwm-swift --manager-sha256 APPROVED_EXECUTABLE_SHA256 --replace-stale
-```
-
-Use the actual executable hash and canonical path. Add `--control-socket /absolute/socket`
-for a custom socket. Keep the printed state directory. To resume an interrupted setup,
-replace `--image-dir …` with `--resume /private/tmp/hyprwm-workspace-bootstrap-STATE`
-and keep the approved manager arguments. A changed Dock or WindowServer is refused.
-`--replace-stale` preserves a current Dock session. The raw socket command `workspace N`
-selects an existing ordinary desktop; check `workspace_public.acknowledged` and `space`
-in status before treating a queued reply as complete. The shell CLI wrapper does not expose it.
+Leave the Terminal open and press **Control–C** there to stop the helper. Do not run
+a second copy alongside the installed keyboard service. Default generation needs
+no Lua; explicitly using `HYPR_HOME` for a custom Lua configuration requires `lua`.
 
 ## Updating
 
-Save your configuration, current executable and its SHA-256 before updating.
-For a simple update, restore windows, quit through the menu, update the checkout,
-run `./install.sh`, and reopen the app. Keep the same engine-state selection.
-For an update that preserves hidden windows, request `./scripts/hyprwmctl handover`.
+A live session is preserved by setup; rebuilding does not replace its running app.
+If saved automatic-startup code differs from the new source, setup stops and keeps
+it. Save your work and configuration before replacing an existing installation.
+Restore windows and remove its owned services and app, then update and set up again:
+
+```sh
+~/.local/bin/hyprwmctl restore-all
+./uninstall.sh
+git pull --ff-only
+./setup.sh
+```
+
+Continue only after restoration and removal succeed. Configuration, state and app
+backups are preserved. An unfinished restoration must finish before an update.
+
+Advanced updates that preserve hidden windows use `./scripts/hyprwmctl handover`.
 Continue only after `handover ready: state preserved; terminate this exact process with SIGHUP`.
-Verify that daemon's PID, start time and executable, send SIGHUP only to it, and wait for exit.
-Replace the executable atomically and restart in the same user/Accessibility context,
-with the same hook, state and socket paths and `HYPRWM_ADOPT_ENGINE=1`.
-Do not run two native-channel writers. Recheck status, hidden windows and actual input.
-If startup refuses, keep the saved state and restore the old executable and environment.
+Verify that daemon's PID, start time and executable, send SIGHUP only to it, and wait
+for exit. Replace the executable atomically and restart with the same hook, state,
+socket and Accessibility context, with `HYPRWM_ADOPT_ENGINE=1`. Do not run two
+writers to the native channel. If startup refuses, restore the saved executable
+and environment and keep the state.
 
 ## Rollback and uninstall
 
 ```sh
 ~/.local/bin/hyprwmctl restore-all
 ./uninstall.sh
-sudo /usr/bin/python3 -S scripts/install_autostart.py remove --uid "$(id -u)"
 ```
 
-Only run the autostart removal command if you installed it. Pending restoration
-preserves the app and state; let it finish before deleting anything. Native removal
-also needs a completed manager handover and the state file from activation:
+Removal stops the owned native and user login services before removing the app,
+CLI wrappers and keyboard service. It explains the privileged service-removal
+action before `sudo`. Configuration, app backups and recovery files are retained.
+Pending restoration keeps the installation in place; let it finish before deleting
+anything. A separate toolbar service keeps its own lifecycle.
 
-```sh
-sudo /usr/bin/python3 hook/tools/activate_native.py retire --receipt /private/tmp/REPLACE/activation.json
-```
-
-Use the exact rollback command printed by activation. Retained engine mappings stay
-in the running WindowServer. Do not restart WindowServer, Dock or applications to recover.
-Autostart removal retains its protected code and recovery files. Re-enable SIP in Recovery when done.
+For a manual native setup, use the exact rollback command printed by activation.
+It needs a completed manager handover and the state file from activation. Engine
+mappings remain in the running WindowServer. Do not restart WindowServer, Dock or
+applications to recover. Re-enable SIP in Recovery and restart when finished.
 
 ## Optional: toolbar and application menus
 

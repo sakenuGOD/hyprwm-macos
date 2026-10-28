@@ -18,7 +18,7 @@
 >   Other builds are refused at startup.
 > - It needs **System Integrity Protection (SIP) fully disabled**
 >   and `sudo` for setup. Use a machine you are comfortable experimenting on.
-> - Repeat native setup after every reboot or WindowServer restart.
+> - Setup installs automatic startup services by default; keep their recovery files.
 > - A native-engine failure can disrupt your desktop. Save your work first.
 
 ## Features
@@ -55,7 +55,7 @@ Tiling stays off without the native engine. There is no Lite mode in this branch
 
 ## Install
 
-0. **Check the Mac before building.** In Terminal, run:
+0. **Check the Mac and SIP before building.** Run:
 
    ```sh
    sw_vers -productVersion
@@ -64,84 +64,58 @@ Tiling stays off without the native engine. There is no Lite mode in this branch
    csrutil status
    ```
 
-   The first three must print `26.7.1`, `25G241` and `arm64`. The native engine
-   refuses other macOS builds. The supported SIP setup is **fully disabled**;
-   disabling only debugging restrictions has not been verified.
-
-   If SIP is enabled, shut down the Mac, hold the power button until startup
-   options appear, choose **Options → Continue**, then **Utilities → Terminal**.
-   Run `csrutil disable` in Recovery, restart, and confirm `csrutil status` reports
-   `System Integrity Protection status: disabled.` before continuing.
-   This reduces system protection. Re-enable it later with `csrutil enable` in
-   Recovery, then restart. See [Apple's SIP instructions](https://developer.apple.com/documentation/security/disabling-and-enabling-system-integrity-protection)
+   The first three must print `26.7.1`, `25G241` and `arm64`. SIP must be **fully
+   disabled**; debugging-only changes have not been verified. If needed, shut down,
+   hold the power button until startup options appear, choose **Options → Continue**,
+   then **Utilities → Terminal**. Run `csrutil disable` in Recovery, restart, and
+   confirm `csrutil status` reports `System Integrity Protection status: disabled.`
+   This reduces system protection. Re-enable it with `csrutil enable` in Recovery
+   and restart when you stop using the native engine. See [Apple's SIP instructions](https://developer.apple.com/documentation/security/disabling-and-enabling-system-integrity-protection)
    and [Apple silicon Recovery steps](https://support.apple.com/102518).
 
-1. Clone the repository, then build and install the app:
+1. **Clone and run setup as your normal user:**
 
    ```sh
    git clone https://github.com/sakenuGOD/hyprwm-macos.git
    cd hyprwm-macos
-   ./install.sh
+   ./setup.sh
    ```
 
-2. Read [native engine setup](docs/INSTALL.md#native-engine) before running privileged commands.
-   These are the three engine steps; replace the prepared-state path with the one printed by preparation:
+   Setup builds the app and native engine, installs global shortcuts and automatic
+   startup, and opens the app. It requests missing Command Line Tools and waits for
+   installation; if Git or Python is still missing, it uses an existing Homebrew.
+   Defaults do not need Lua. Each privileged action explains why it needs `sudo`.
+   If cloning opens the Command Line Tools installer, finish it and repeat the clone.
 
-   ```sh
-   HYPRWM_NATIVE_WORK=$(mktemp -d "${TMPDIR:-/tmp}/hyprwm-native.XXXXXX")
-   python3 hook/tools/build_native.py --output-dir "$HYPRWM_NATIVE_WORK/image"
-   sudo /usr/bin/python3 hook/tools/prepare_native.py --image-dir "$HYPRWM_NATIVE_WORK/image" --owner-uid "$(id -u)"
-   HYPRWM_NATIVE_PREPARED=/private/tmp/hyprwm-native-prepared-REPLACE/prepared.json
-   HYPRWM_NATIVE_STATE="$HOME/.local/share/hyprwm/native/engine.state"
-   sudo /usr/bin/python3 hook/tools/activate_native.py activate --prepared "$HYPRWM_NATIVE_PREPARED" --engine-state "$HYPRWM_NATIVE_STATE" --owner-uid "$(id -u)" --control-socket /tmp/hyprwm.ctl
-   ./install.sh --engine-state "$HYPRWM_NATIVE_STATE"
-   ```
+2. **Allow Accessibility for HyprWM** in **System Settings → Privacy & Security →
+   Accessibility** when setup opens it. Setup waits for access. The keyboard helper
+   uses Carbon's `RegisterEventHotKey` and needs neither Accessibility nor Input
+   Monitoring. The optional shortcut recorder in Settings may need Input Monitoring.
 
-3. Set up the [global keyboard helper](#global-keyboard-helper) for focus and move shortcuts.
-   Open `~/Applications/HyprWM.app` and grant **Accessibility** access when prompted.
-   Add `~/.local/bin` to your `PATH` to use `hyprwm` and `hyprwmctl` by name.
+3. **Try the default shortcuts** with two ordinary application windows open:
 
-**Keep this folder; the installed app still uses it.** The installer preserves your configuration and does not launch the app.
-See [INSTALL.md](docs/INSTALL.md) for SIP, updates, autostart and rollback.
+   | Shortcut | Action |
+   | --- | --- |
+   | Control–Option–arrows | Focus a neighboring tile. |
+   | Control–Option–Shift–arrows | Move the focused tile. |
+   | Control–Option–F | Toggle floating. |
+   | Option–F | Toggle fullscreen layout. |
+   | Option–Shift–Return | Toggle maximized layout. |
+   | Control–Option–P | Pause/resume tiling; fixed global safety shortcut. |
 
-## Default shortcuts
+   Check **HyprWM Settings → Keyboard Shortcuts** for the helper's registration
+   status and your active bindings. Successful setup prints
+   `Tiling:ON, hotkeys:ON, autostart:ON`.
 
-These menu shortcuts are defined in [MenuBar.swift](hook/swift/Sources/hyprwm-swift/MenuBar.swift).
-Use the menu if macOS does not deliver a menu shortcut globally.
+4. **Automatic startup is enabled by default.** The services are designed to prepare
+   the engine and start HyprWM and its keyboard helper when you log in after a
+   reboot. Setup checks the current session; it does not reboot to test the next
+   login. If automatic startup fails, use `./scripts/hyprwm-up` as a manual fallback
+   and follow the [startup checks and logs](docs/TROUBLESHOOTING.md#automatic-startup-fails-after-a-reboot).
 
-| Shortcut | Action |
-| --- | --- |
-| Control–Option–P | Pause/resume tiling; also registered globally as the safety shortcut. |
-| Option–Command–R | Retile windows. |
-| Option–Command–W | Restore hidden windows. |
-| Option–Command–= | Balance layout. |
-| Command–, | Open Settings. |
-| Option–Command–Q | Quit HyprWM and restore managed windows. |
-
-### Global keyboard helper
-
-The separate keyboard helper provides **Control–Option–arrows** to focus and
-**Control–Option–Shift–arrows** to move windows. `install.sh` does not build or
-start it. From the cloned folder, run these commands as your normal user:
-
-```sh
-clang -fobjc-arc -framework Carbon -framework AppKit -o hook/keys/hyprkeys hook/keys/hyprkeys.m
-test -e hook/config/hypr_cfg.json || cp hook/config/portable-defaults.json hook/config/hypr_cfg.json
-python3 hook/keys/binds.py
-./hook/keys/hyprkeys
-```
-
-The helper stays in that Terminal window; open the app from Finder or another
-Terminal window. Keep the helper running while using its shortcuts, and press
-**Control–C** in its Terminal to stop it. Stop an existing helper normally before
-starting another copy. The helper reads `/tmp/hyprkeys.json` and connects to the
-default `/tmp/hyprwm.ctl` socket. Repeat generation and start after a reboot.
-
-The helper uses macOS's public hotkey API and needs neither Accessibility nor
-Input Monitoring permission. **HyprWM.app still needs Accessibility** under
-**System Settings → Privacy & Security → Accessibility**. If you use newer custom
-Lua files, install `lua` before regenerating shortcuts. Check **Settings → Keyboard
-Shortcuts** for your active bindings; macOS or another app may reserve a shortcut.
+Keep the checkout for updates and manual recovery. Add `~/.local/bin` to `PATH` to
+use `hyprwm` and `hyprwmctl` by name. See [INSTALL.md](docs/INSTALL.md) for setup
+options, manual installation, logs and removal.
 
 ## Configuration
 
@@ -183,7 +157,6 @@ so updating macOS can make it refuse to start.
 
 This is a source-only experimental release. There is no prebuilt binary.
 
-- [Installation still needs the source folder](https://github.com/sakenuGOD/hyprwm-macos/issues/8).
 - [Hidden windows in Mission Control are unfinished](https://github.com/sakenuGOD/hyprwm-macos/issues/9); the Beta option is off by default.
 - [Window transparency is unreliable](https://github.com/sakenuGOD/hyprwm-macos/issues/10).
 - [Focus after closing windows, modal dialogs and Zen tabs needs work](https://github.com/sakenuGOD/hyprwm-macos/issues/11).

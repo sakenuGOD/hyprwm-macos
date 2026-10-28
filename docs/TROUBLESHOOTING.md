@@ -3,14 +3,75 @@
 Start with `~/.local/bin/hyprwm doctor` and `~/.local/bin/hyprwmctl status`.
 Remove private paths and window information before sharing diagnostics.
 
+## Unsupported macOS build
+
+Run `sw_vers -buildVersion` and `uname -m`. Setup requires exact build **25G241**
+(macOS 26.7.1) and a native **arm64** process on Apple silicon. Other builds and
+Rosetta are refused. Do not edit the build check, addresses or state to bypass it.
+`./setup.sh --dry-run` reports the host without changing it.
+
+## SIP is enabled or only partly disabled
+
+Run `csrutil status`. The supported setup requires
+`System Integrity Protection status: disabled.` Enabled, custom and unverified
+states stop setup before native operations. Partial debugging-only changes have
+not been verified. Follow [the Recovery instructions](INSTALL.md#disable-sip-in-recovery),
+restart and check status again. Setup never changes SIP.
+
+## Accessibility is missing
+
+Enable the current `~/Applications/HyprWM.app` in **System Settings → Privacy &
+Security → Accessibility**. Setup waits for the actual permission state; if it
+stopped waiting, enable access and rerun `./setup.sh`. For source launches, enable
+the process named by macOS. Check `~/.local/bin/hyprwm doctor` for permission state.
+
+## Global shortcuts do nothing
+
+Open **HyprWM Settings → Keyboard Shortcuts** and inspect the helper's registration
+status. Run:
+
+```sh
+python3 scripts/install_keyboard.py status
+tail -n 80 "$HOME/Library/Logs/HyprWM/keyboard.log"
+```
+
+The helper should be loaded and ready with all expected shortcuts registered.
+Check duplicate chords, shortcuts reserved by macOS or another app, and any second
+keyboard helper. `./setup.sh` installs the user keyboard service; `install.sh` alone
+does not. The helper uses Carbon's `RegisterEventHotKey` and needs neither
+Accessibility nor Input Monitoring. The optional recorder in Settings may need
+Input Monitoring. The app still needs Accessibility to manage windows.
+**Control–Option–P** is the app's separate fixed safety shortcut.
+
+Text bindings use `SUPER` = Command, `ALT` = Option and `CTRL` = Control; imported
+Hyprland defaults use `SUPER` = Option. See [imports](CONFIG.md#import-from-another-window-manager).
+
+## Automatic startup fails after a reboot
+
+Default setup installs native, backend and keyboard startup services. Inspect
+current service state before trying manual preparation:
+
+```sh
+python3 scripts/install_autostart.py status --uid "$(id -u)"
+python3 scripts/install_keyboard.py status
+~/.local/bin/hyprwmctl status
+sudo tail -n 80 "/Library/Application Support/HyprWM/native-session-$(id -u)/runtime/native-service.log"
+tail -n 80 /tmp/hyprwm.log
+```
+
+Use `./scripts/hyprwm-up` as the manual fallback. It checks the host and saved
+images and asks existing services to start only when safe. If it reports an
+incomplete native attempt, retain the saved files and read the first error;
+repeating preparation can make recovery harder. If you selected `--no-autostart`,
+manual startup is expected. Do not restart WindowServer, Dock or apps to recover.
+Setup verifies the current session and does not reboot to test a later login.
+
 ## Nothing tiles
 
-Check `sw_vers -buildVersion`: the engine requires **25G241, Apple silicon**, SIP
-debugging restrictions disabled and a prepared engine for the current WindowServer.
-Follow [native setup](INSTALL.md#native-engine); repeat it after a reboot.
-In **System Settings → Privacy & Security → Accessibility**, enable your current
-`~/Applications/HyprWM.app`. For source launches, enable the process named by macOS.
-Relaunch after changing permissions. A responding socket alone cannot verify tiling.
+Check the five cases above, `~/.local/bin/hyprwm doctor` and
+`~/.local/bin/hyprwmctl status`. The engine must belong to the current WindowServer.
+A responding socket alone cannot verify tiling: test focus and movement on two
+ordinary application windows and inspect `/tmp/hyprwm.log` if either fails.
 
 ## A window is invisible or hidden
 
@@ -49,14 +110,6 @@ See [settings and limits](CONFIG.md). Some parsed settings have no effect yet.
 Float rules stay attached to a window until HyprWM restarts, even after the rule is
 removed; saved explicit floating state can also keep a window floating.
 
-## A shortcut does nothing
-
-Check **Settings → Keyboard Shortcuts**, duplicate chords, and Input Monitoring.
-Ordinary global shortcuts need the separate keyboard helper; the app installer
-does not start it. The fixed Control–Option–P safety shortcut works independently.
-Text bindings use `SUPER` = Command, `ALT` = Option, `CTRL` = Control.
-See [imports](CONFIG.md#import-from-another-window-manager) for modifier differences.
-
 ## The socket is unavailable or a command is refused
 
 Start one daemon. Match `HYPRWM_CTL` in its environment and your client; the default
@@ -75,7 +128,7 @@ showing the start and landing, and say whether content, border or final size jum
 ## Installation or removal fails
 
 Read the first error. Check Command Line Tools, Swift, Python and writable
-`~/Applications`. Keep the source folder: the app still uses it.
+`~/Applications`. Keep the checkout for updates and manual recovery.
 Run the matching `./uninstall.sh`; pending restoration must finish before removal.
 Remove separately installed services using [rollback steps](INSTALL.md#rollback-and-uninstall).
 Report `sw_vers`, chip, `csrutil status`, **About → Copy Diagnostics**, steps and

@@ -2,15 +2,21 @@
 
 ## 0.1.1 — 2026-10-28
 
-- Added checks before installation for macOS 26.7.1, build 25G241 and Apple silicon.
-- Clarified that the supported native setup uses **SIP fully disabled**, with
-  Recovery instructions and a `csrutil status` check. Debugging-only SIP changes
-  have not been verified for this engine.
-- Added complete manual keyboard-helper build and start commands, default focus
-  and move shortcuts, and permission requirements. The app installer does not
-  build or start the helper.
-- Clarified that only an existing HyprWM session needs to quit before native setup.
-- Removed the outdated Swift test failure warning for closed issue
+- Added `./setup.sh` to check dependencies, build the app and native engine, select
+  paths automatically, and preserve existing configuration and verified sessions.
+- Enabled automatic startup by default through a native-session LaunchDaemon and
+  backend and keyboard LaunchAgents. Added `./scripts/hyprwm-up` as a manual fallback.
+- Added a no-Lua default keyboard setup, registration status and keyboard logs.
+  Global shortcuts use Carbon and need no Input Monitoring; app Accessibility and
+  optional shortcut-recorder access are shown separately.
+- Added `--dry-run`, `--yes`, `--no-open` and `--no-autostart` setup options.
+- Bundled app resources, kept persistent app state outside the signed app, and
+  included owned startup services in normal uninstall.
+- Documented exact macOS 26.7.1 / 25G241 / Apple silicon requirements, fully disabled
+  SIP and Recovery steps. Partial debugging-only SIP changes remain unverified.
+- Replaced the installation walkthrough with five steps and added build, SIP,
+  Accessibility, shortcut and reboot-startup troubleshooting.
+- Removed the outdated Swift test warning for closed issue
   [#21](https://github.com/sakenuGOD/hyprwm-macos/issues/21).
 
 ## 0.1.0 — 2026-10-28
