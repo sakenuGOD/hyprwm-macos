@@ -40,6 +40,7 @@ static void refreshHotkeyApplications(void) {
     unregisterBindings();registerBindings(gBinds,NO);
     NSLog(@"[hyprkeys] application rules: suspended modifiers %@; %lu keyboard shortcuts registered",
           gDisabledHotkeyModifiers,(unsigned long)gHotKeyRefs.count);
+    publishKeyboardStatus();
 }
 static BOOL installHotkeyApplicationRules(void) {
     NSString *path=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/HyprWM/hotkey-rules.json"];

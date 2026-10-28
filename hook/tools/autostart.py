@@ -14,6 +14,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import plistlib
 import pwd
 import re
 import select
@@ -573,7 +574,43 @@ def native_service(config):
             return 75
 
 
-def user_lifecycle(config):
+def user_keyboard(config, lifecycle):
+    """The exact desktop user validates its agent; root never imports user code."""
+    need(os.getuid() == config['uid'] and os.geteuid() == config['uid'], 'Exact configured desktop user required')
+    base = Path(config['home']) / 'Library/Application Support/HyprWM/keyboard'
+    agent = Path(config['home']) / 'Library/LaunchAgents/org.hyprwm.keyboard.plist'
+    receipt = base / 'receipt.json'
+    if not receipt.exists() and not receipt.is_symlink():
+        need(not agent.exists() and not agent.is_symlink(), 'Keyboard LaunchAgent lacks its installation receipt; preserved')
+        return False
+    owners = (0, config['uid'])
+    value = json.loads(read(receipt, owners, 65536))
+    names = ('hyprkeys', 'binds.py', 'portable-defaults.json', 'manage.py')
+    need(value.get('installer') == 'hyprwm-keyboard-install-v1' and value.get('base') == str(base) and
+         set(value.get('files', {})) == set(names), 'Unrecognized keyboard receipt; preserved')
+    for name in names:
+        need(sha(read(base / name, owners, 4 * 1024 * 1024)) == value['files'][name],
+             'Changed keyboard installation file; preserved: ' + name)
+    data = read(agent, owners, 65536)
+    need(sha(data) == value.get('plist_sha256'), 'Changed keyboard LaunchAgent; preserved')
+    launch = plistlib.loads(data)
+    arguments = launch.get('ProgramArguments')
+    environment = launch.get('EnvironmentVariables', {})
+    need(launch.get('Label') == 'org.hyprwm.keyboard' and isinstance(arguments, list) and len(arguments) == 3 and
+         lifecycle.python_executable(arguments[0]) and Path(arguments[0]).is_absolute() and
+         arguments[1:] == [str(base / 'manage.py'), 'run'] and environment.get('HOME') == config['home'] and
+         environment.get('HYPRWM_KEYBOARD_STATE') == str(base) and
+         environment.get('HYPRWM_KEYS_BINDINGS') == value.get('bindings'), 'Unexpected keyboard LaunchAgent identity; preserved')
+    # launchd ordering is not guaranteed at login. Prepare the baseline before
+    # Swift applies ~/.config/hyprwm/hyprwm.conf, without starting a second helper.
+    result = subprocess.run([arguments[0], '-S', arguments[1], 'prepare', '--json'],
+                            env={**os.environ, 'HOME': config['home'], 'PYTHONDONTWRITEBYTECODE': '1'},
+                            check=True, capture_output=True, text=True, timeout=15)
+    need(json.loads(result.stdout).get('prepared') is True, 'Keyboard baseline preparation was not confirmed')
+    return True
+
+
+def user_lifecycle(config, *, prepare_keyboard=True):
     need(os.getuid() == config['uid'] and os.geteuid() == config['uid'], 'Exact configured desktop user required')
     hook = canonical(Path(config['hook']), (0, config['uid']), directory=True)
     manager = canonical(Path(config['manager']), (0, config['uid']))
@@ -585,7 +622,9 @@ def user_lifecycle(config):
     lifecycle = module('hyprwm_frozen_lifecycle', graph_hook / 'lifecycle.py')
     processes = lifecycle.DarwinProcesses()
     store = lifecycle.RecordStore(Path(config['home']) / 'Library/Application Support/HyprWM', hook)
-    service = lifecycle.Lifecycle(hook, processes, lifecycle.Control('/tmp/hyprwm.ctl', processes), store)
+    external_keyboard = user_keyboard(config, lifecycle) if prepare_keyboard else False
+    service = lifecycle.Lifecycle(hook, processes, lifecycle.Control('/tmp/hyprwm.ctl', processes), store,
+                                  manage_hotkeys=not external_keyboard)
     return lifecycle, service, store
 
 
@@ -705,7 +744,7 @@ def main():
         elif args.action == 'user-service':
             code = user_service(config)
         else:
-            _, service, store = user_lifecycle(config)
+            _, service, store = user_lifecycle(config, prepare_keyboard=False)
             with store.lock():
                 result = service.stop()
             print(json.dumps(result)); code = 0

@@ -4,13 +4,15 @@
 On macOS, SUPER maps to Option, CTRL to Control and ALT to Command.
 Unsupported actions are skipped.
 """
+import argparse
 import json
 import os
+from pathlib import Path
+import stat
 import sys
+import tempfile
 
 HOOK = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(HOOK, "config"))
-import hyprcfg  # noqa: E402
 
 MOD = {"SUPER": 0x0800, "CTRL": 0x1000, "SHIFT": 0x0200, "ALT": 0x0100}   # Carbon
 KEY = {
@@ -83,10 +85,27 @@ def action_to_cmd(a, desc=""):
     return None
 
 
-def main():
+def source_bindings(source=None):
+    """Portable setup does not execute Lua or read another user's dotfiles."""
+    if source:
+        return json.loads(Path(source).read_text())["binds"]
+    if os.environ.get("HYPR_HOME"):
+        sys.path.insert(0, os.path.join(HOOK, "config"))
+        import hyprcfg
+        return hyprcfg.load()["binds"]
+    cache = Path(HOOK) / "config/hypr_cfg.json"
+    if not cache.exists():
+        cache = Path(HOOK) / "config/portable-defaults.json"
+    document = json.loads(cache.read_text())
+    if not document.get("load_ok"):
+        raise ValueError("Hotkey defaults did not load successfully")
+    return document["binds"]
+
+
+def convert(bindings):
     out, skipped = [], []
     seen = set()
-    for b in hyprcfg.load()["binds"]:
+    for b in bindings:
         desc = b.get("opts", {}).get("description") or b["keys"]
         cmd = action_to_cmd(b["action"], desc)
         # ALT = Command: keep standard macOS shortcuts ⌘H/⌘M/⌘Tab/⌘Space.
@@ -114,10 +133,67 @@ def main():
     out.append({"keycode": KEY["t"], "mods": MOD["CTRL"] | MOD["SUPER"] | MOD["SHIFT"], "cmd": ["retile"],
                 "desc": "Retile windows", "keys": "CTRL + SUPER + SHIFT + T"})
 
-    json.dump(out, open("/tmp/hyprkeys.json", "w"), ensure_ascii=False, indent=1)
+    return out, skipped
+
+
+def owned_bytes(path):
+    """The legacy /tmp document is shared with Swift, never through a symlink."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or
+                info.st_mode & 0o022 or info.st_nlink != 1 or info.st_size > 262144):
+            raise ValueError("Unsafe hotkey document; existing file was preserved")
+        data = os.read(fd, 262145)
+        if len(data) > 262144:
+            raise ValueError("Oversized hotkey document")
+        return data, (info.st_dev, info.st_ino, info.st_mtime_ns)
+    finally:
+        os.close(fd)
+
+
+def publish(path, rows, missing_only=False):
+    path = Path(path)
+    before = owned_bytes(path)
+    if before is not None and missing_only:
+        # NativeHotkeys owns the accepted baseline while the daemon runs.
+        if not isinstance(json.loads(before[0]), list):
+            raise ValueError("Invalid existing hotkey document; preserved")
+        return False
+    data = (json.dumps(rows, ensure_ascii=False, indent=1) + "\n").encode()
+    if len(data) > 262144:
+        raise ValueError("Oversized hotkey document")
+    fd, temporary = tempfile.mkstemp(prefix=".hyprkeys-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if owned_bytes(path) != before:
+            raise ValueError("Hotkey document changed during generation; preserved")
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    return True
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", type=Path, help="Portable JSON defaults, without Lua")
+    parser.add_argument("--output", type=Path, default=Path("/tmp/hyprkeys.json"))
+    parser.add_argument("--missing-only", action="store_true", help="Keep the active Swift baseline")
+    args = parser.parse_args()
+    out, skipped = convert(source_bindings(args.source))
+    changed = publish(args.output, out, args.missing_only)
     for b in out:
         print("+ %-28s %s" % (b["keys"], b["desc"]))
     print("\nTotal: %d; skipped: %d" % (len(out), len(skipped)))
+    if not changed:
+        print("Existing owned hotkey document retained")
 
 
 if __name__ == "__main__":

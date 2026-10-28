@@ -1,23 +1,29 @@
-// Горячие клавиши для нашего тайлинга — штатный системный механизм (RegisterEventHotKey).
-// Нажатие -> строка команды в сокет демона hyprwm. Сочетания берутся из /tmp/hyprkeys.json, который собирает keys/binds.py из дотфайлов Hyprland.
-// Публичный API, разрешения «Универсального доступа» не нужны; чужие процессы не трогаем.
-// Сборка: clang -fobjc-arc -framework Carbon -framework AppKit -o hyprkeys hyprkeys.m
+// Global tiling shortcuts use the standard system mechanism (RegisterEventHotKey).
+// A key press sends a command to the HyprWM daemon socket. Bindings come from /tmp/hyprkeys.json.
+// Public API; no Accessibility permission required and no other processes modified.
+// Build: clang -fobjc-arc -framework Carbon -framework AppKit -o hyprkeys hyprkeys.m
 #import <AppKit/AppKit.h>
 #import <Carbon/Carbon.h>
 #import <sys/socket.h>
 #import <sys/un.h>
 #import <unistd.h>
 #import <errno.h>
+#import <sys/stat.h>
 #include <math.h>
 
 static NSArray *gBinds;      // [{keycode, mods, cmd:[args...], desc}]
-#define CTL "/tmp/hyprwm.ctl"   // сокет демона hook/hyprwm.py
+static NSString *controlPath(void) {
+    return NSProcessInfo.processInfo.environment[@"HYPRWM_CTL"] ?: @"/tmp/hyprwm.ctl";
+}
+#define CTL (controlPath().fileSystemRepresentation)
 
-static dispatch_queue_t gQ;           // одна последовательная очередь: команды уходят строго по порядку
-static dispatch_source_t gRepeat;     // автоповтор зажатого бинда (repeating в дотфайле)
+static dispatch_queue_t gQ;           // One serial queue preserves command order.
+static dispatch_source_t gRepeat;     // Auto-repeat while a repeating binding is held.
 static UInt32 gBindingGeneration, gNextBindingGeneration;
 static BOOL hotkeyModifiersDisabled(unsigned mods);
 static BOOL hotkeyBindingDisabled(unsigned key,unsigned mods);
+static void publishKeyboardStatus(void);
+static BOOL gReloadRejected;
 #define REPEAT_DELAY 0.280            // input.lua: repeat_delay 280
 #define REPEAT_RATE 40.0              //            repeat_rate 40
 
@@ -49,7 +55,7 @@ static void sendLine(NSDictionary *b) {
     dispatch_async(gQ, ^{
         int fd = socket(AF_UNIX, SOCK_STREAM, 0);
         struct sockaddr_un a = {.sun_family = AF_UNIX};
-        strlcpy(a.sun_path, CTL, sizeof a.sun_path);
+        if(strlcpy(a.sun_path, CTL, sizeof a.sun_path)>=sizeof a.sun_path){close(fd);NSLog(@"[hyprkeys] control socket path is too long");return;}
         char reply[512] = "Cannot connect to the HyprWM daemon.";
         if (connect(fd, (struct sockaddr *)&a, sizeof a) == 0) {
             size_t sent = 0;
@@ -95,8 +101,11 @@ static OSStatus onHotKey(EventHandlerCallRef call, EventRef ev, void *ctx) {
 static NSMutableArray<NSValue *> *gHotKeyRefs;
 static NSData *gAcceptedData;
 static NSData *gAttemptedData;
+static NSString *bindingPath(void) {
+    return NSProcessInfo.processInfo.environment[@"HYPRWM_KEYS_BINDINGS"] ?: @"/tmp/hyprkeys.json";
+}
 static NSData *readBindingData(void) {
-    NSFileHandle *file=[NSFileHandle fileHandleForReadingAtPath:@"/tmp/hyprkeys.json"];
+    NSFileHandle *file=[NSFileHandle fileHandleForReadingAtPath:bindingPath()];
     if(!file)return nil;
     NSData *data=[file readDataUpToLength:262145 error:nil];
     [file closeFile];
@@ -148,13 +157,24 @@ static BOOL acceptBindings(NSData *data,BOOL strict) {
     if(!registerBindings(candidate,strict)){registerBindings(previous,NO);return NO;}
     gBinds=candidate;gAcceptedData=data;return YES;
 }
+static BOOL reloadBindingData(NSData *data) {
+    if([data isEqual:gAcceptedData]) {
+        BOOL recovered=gReloadRejected;
+        gReloadRejected=NO;gAttemptedData=nil;
+        return recovered;
+    }
+    if([data isEqual:gAttemptedData])return NO;
+    gAttemptedData=data;gReloadRejected=!acceptBindings(data,YES);
+    if(!gReloadRejected)NSLog(@"[hyprkeys] configuration reloaded: %lu bindings",(unsigned long)gBinds.count);
+    return YES;
+}
 static void installBindingReload(void) {
     dispatch_source_t timer=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_global_queue(QOS_CLASS_UTILITY,0));
     dispatch_source_set_timer(timer,dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),NSEC_PER_SEC,200*NSEC_PER_MSEC);
     dispatch_source_set_event_handler(timer,^{
         NSData *data=readBindingData();
         if(!data || data.length>262144)return;
-        dispatch_async(dispatch_get_main_queue(),^{if([data isEqual:gAcceptedData] || [data isEqual:gAttemptedData])return;gAttemptedData=data;if(acceptBindings(data,YES))NSLog(@"[hyprkeys] configuration reloaded: %lu bindings",(unsigned long)gBinds.count);});
+        dispatch_async(dispatch_get_main_queue(),^{if(reloadBindingData(data))publishKeyboardStatus();});
     });
     dispatch_resume(timer);
     // The application owns this source for its lifetime; no per-event allocations/timers.
@@ -163,10 +183,45 @@ static void installBindingReload(void) {
 
 #include "hotkey_rules.h"
 
+// Registration evidence is refreshed by this run loop, not inferred from a PID.
+// Carbon hotkeys do not require Accessibility or Input Monitoring permission.
+static void publishKeyboardStatus(void) {
+    NSString *directory=NSProcessInfo.processInfo.environment[@"HYPRWM_KEYBOARD_STATE"] ?:
+        [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/HyprWM/keyboard"];
+    NSFileManager *manager=NSFileManager.defaultManager;
+    if(![manager fileExistsAtPath:directory])
+        [manager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:nil];
+    struct stat info;
+    if(lstat(directory.fileSystemRepresentation,&info) || !S_ISDIR(info.st_mode) || info.st_uid!=getuid() || (info.st_mode&0077))return;
+    NSUInteger expected=0,suspended=0;
+    for(NSDictionary *row in gBinds) {
+        if([row[@"event"] isEqual:@"wheel"] || (row[@"enabled"] && ![row[@"enabled"] boolValue]))continue;
+        if(hotkeyBindingDisabled([row[@"keycode"] unsignedIntValue],[row[@"mods"] unsignedIntValue]))suspended++;
+        else expected++;
+    }
+    NSDictionary *status=@{@"schema":@1,@"backend":@"carbon",@"permission":@"not_required",
+        @"pid":@(getpid()),@"updated":@([NSDate.date timeIntervalSince1970]),@"registered":@(gHotKeyRefs.count),
+        @"expected":@(expected),@"suspended":@(suspended),@"bindings":@(gBinds.count),
+        @"reload_rejected":@(gReloadRejected),@"bindings_path":bindingPath(),
+        @"executable":[NSProcessInfo.processInfo.arguments[0] stringByStandardizingPath]};
+    NSData *data=[NSJSONSerialization dataWithJSONObject:status options:0 error:nil];
+    NSString *path=[directory stringByAppendingPathComponent:@"status.json"];
+    // Atomic replacement cannot follow a pre-existing status-file symlink.
+    if(data && [data writeToFile:path options:NSDataWritingAtomic error:nil])
+        [manager setAttributes:@{NSFilePosixPermissions:@0600} ofItemAtPath:path error:nil];
+}
+static void installKeyboardStatus(void) {
+    publishKeyboardStatus();
+    static dispatch_source_t timer;
+    timer=dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER,0,0,dispatch_get_main_queue());
+    dispatch_source_set_timer(timer,dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),2*NSEC_PER_SEC,200*NSEC_PER_MSEC);
+    dispatch_source_set_event_handler(timer,^{publishKeyboardStatus();});dispatch_resume(timer);
+}
+
 int main(void) {
     @autoreleasepool {
         NSData *d = readBindingData();
-        if (!d) { NSLog(@"[hyprkeys] Missing /tmp/hyprkeys.json; generate the hotkey configuration first."); return 1; }
+        if (!d) { NSLog(@"[hyprkeys] Missing %@; generate the hotkey configuration first.",bindingPath()); return 1; }
 
         gQ = dispatch_queue_create("hyprkeys.send", DISPATCH_QUEUE_SERIAL);
         EventTypeSpec spec[2] = { { kEventClassKeyboard, kEventHotKeyPressed },
@@ -181,8 +236,9 @@ int main(void) {
         NSLog(@"[hyprkeys] application rules: suspended modifiers %@; %lu keyboard shortcuts registered",
               gDisabledHotkeyModifiers ?: [NSSet set],(unsigned long)gHotKeyRefs.count);
         installBindingReload();
+        installKeyboardStatus();
         [NSApplication sharedApplication];
-        NSApp.activationPolicy = NSApplicationActivationPolicyAccessory;   // без иконки в Dock
+        NSApp.activationPolicy = NSApplicationActivationPolicyAccessory;   // No Dock icon.
         [NSApp run];
     }
     return 0;

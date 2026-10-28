@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import SwiftUI
 
 struct AppRulesSettings: View {
@@ -40,9 +41,26 @@ struct HotkeySettings:View {
     @State private var bindings:[[String:Any]]=[]
     @State private var recording:Int?
     @State private var conflict:String?
+    @State private var helperSummary="Checking keyboard service…"
+    @State private var helperReady=false
+    @State private var inputMonitoring=CGPreflightListenEventAccess()
     var overrides:[[String:Any]] {store.document["hotkeys"] as? [[String:Any]] ?? []}
     var body:some View {
         Section("Keyboard Shortcuts") {
+            HStack {
+                Label(helperSummary,systemImage:helperReady ? "checkmark.circle.fill":"keyboard")
+                    .foregroundStyle(helperReady ? Color.green:Color.secondary)
+                Spacer()
+                Button("Refresh"){load();refreshKeyboardStatus()}.buttonStyle(.borderless)
+            }
+            Text("Global shortcuts use Carbon and require no keyboard monitoring permission.").font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Text("Accessibility");Spacer()
+                if store.trusted {Text("Allowed").foregroundStyle(.secondary)}
+                else {Button("Allow…"){store.requestAccess()}}
+            }
+            HStack {Text("Input Monitoring");Spacer();Text(inputMonitoring ? "Allowed":"Not granted").foregroundStyle(.secondary)}
+            Text("HyprWM needs Accessibility to manage windows. Shortcut recording may need keyboard access in System Settings.").font(.caption).foregroundStyle(.secondary)
             if bindings.isEmpty {Text("Connect to HyprWM to edit its active mode’s shortcuts.").foregroundStyle(.secondary)}
             ForEach(bindings.indices.filter{bindings[$0]["event"] as? String != "wheel"},id:\.self){index in
                 let record=effective(index)
@@ -60,7 +78,41 @@ struct HotkeySettings:View {
             if let conflict {Text(conflict).foregroundStyle(.orange).font(.caption)}
         }
         Section {Text("Click a shortcut to record it. Press Escape to cancel. Include ⌘, ⌥, or ⌃.").font(.caption).foregroundStyle(.secondary)}
-            .onAppear{load()}
+            .onAppear{load();refreshKeyboardStatus()}
+            .onReceive(Timer.publish(every:2,on:.main,in:.common).autoconnect()){_ in refreshKeyboardStatus()}
+    }
+    private func refreshKeyboardStatus() {
+        inputMonitoring=CGPreflightListenEventAccess()
+        let directory=ProcessInfo.processInfo.environment["HYPRWM_KEYBOARD_STATE"] ??
+            NSHomeDirectory()+"/Library/Application Support/HyprWM/keyboard"
+        DispatchQueue.global(qos:.utility).async {
+            let path=directory+"/status.json",fd=Darwin.open(path,O_RDONLY|O_NOFOLLOW|O_NONBLOCK)
+            var record:[String:Any]?
+            if fd>=0 {
+                var info=stat()
+                if fstat(fd,&info)==0,info.st_uid==getuid(),info.st_mode&S_IFMT==S_IFREG,
+                   info.st_mode&0o022==0,info.st_size>=0,info.st_size<=65536 {
+                    let file=FileHandle(fileDescriptor:fd,closeOnDealloc:true)
+                    let data=(try?file.read(upToCount:65537)) ?? Data()
+                    if data.count<=65536 {record=(try?JSONSerialization.jsonObject(with:data)) as? [String:Any]}
+                    try?file.close()
+                } else {Darwin.close(fd)}
+            }
+            var message="Keyboard service status unavailable",ready=false
+            if let value=record,let updated=value["updated"] as? Double,
+               value["backend"] as? String=="carbon",value["schema"] as? Int==1,
+               let registered=value["registered"] as? Int,let expected=value["expected"] as? Int,
+               registered>=0,expected>=registered {
+                let age=Date().timeIntervalSince1970-updated
+                if age<0 || age>6 {message="Keyboard service is not reporting"}
+                else if value["reload_rejected"] as? Bool==true {message="Shortcut update rejected; previous shortcuts retained"}
+                else if registered<expected {message="\(registered) of \(expected) shortcuts registered; check keyboard.log"}
+                else if expected==0 {message="No shortcuts active"}
+                else {message="Keyboard service running · \(registered) shortcuts registered";ready=true}
+            }
+            let summary=message,isReady=ready
+            DispatchQueue.main.async {helperSummary=summary;helperReady=isReady}
+        }
     }
     private func load() {
         store.send("status") { result in

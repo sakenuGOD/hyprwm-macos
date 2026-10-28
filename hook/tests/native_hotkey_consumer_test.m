@@ -58,6 +58,20 @@ int main(void){@autoreleasepool{
     CHECK(!acceptBindings([NSMutableData dataWithLength:262145],YES));CHECK([gAcceptedData isEqual:original]);
     CHECK(!validateBindingRows([NSArray arrayWithObjects:(id[]){left} count:1].description));
     NSMutableArray *tooMany=[NSMutableArray array];for(int i=0;i<4097;i++)[tooMany addObject:left];CHECK(!validateBindingRows(tooMany));
+    NSData *malformed=[@"{" dataUsingEncoding:NSUTF8StringEncoding];
+    beforeRegisters=registers;beforeUnregisters=unregisters;
+    CHECK(reloadBindingData(malformed));CHECK(gReloadRejected && [gAttemptedData isEqual:malformed]);
+    CHECK(!reloadBindingData(malformed));
+    CHECK(reloadBindingData(original));CHECK(!gReloadRejected && !gAttemptedData);
+    CHECK(registers==beforeRegisters && unregisters==beforeUnregisters && [gAcceptedData isEqual:original]);
+    CHECK(!reloadBindingData(original));
+    failingKey=7;
+    CHECK(reloadBindingData(rejected));CHECK(gReloadRejected && [gAcceptedData isEqual:original]);
+    beforeRegisters=registers;beforeUnregisters=unregisters;
+    CHECK(!reloadBindingData(rejected));CHECK(registers==beforeRegisters && unregisters==beforeUnregisters);
+    CHECK(reloadBindingData(original));CHECK(!gReloadRejected && !gAttemptedData);
+    CHECK(registers==beforeRegisters && unregisters==beforeUnregisters);
+    CHECK(reloadBindingData(rejected));CHECK(!gReloadRejected && [gAcceptedData isEqual:rejected]);
     CHECK(acceptBindings(encode(@[]),YES));CHECK(registered.count==0);
     puts([[NSString stringWithFormat:@"%u checks passed; no OS hotkey registration, socket, GUI or metadata writes",checks] UTF8String]);
 }return 0;}

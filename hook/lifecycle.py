@@ -236,11 +236,13 @@ class RecordStore:
 
 
 class Lifecycle:
-    def __init__(self, hook, processes, control, store, *, spawn=None, clock=time.monotonic, sleep=time.sleep):
+    def __init__(self, hook, processes, control, store, *, spawn=None, clock=time.monotonic, sleep=time.sleep,
+                 manage_hotkeys=True):
         self.hook = Path(hook).resolve()
         self.processes, self.control, self.store = processes, control, store
         self.spawn = spawn or self._spawn
         self.clock, self.sleep = clock, sleep
+        self.manage_hotkeys = manage_hotkeys
 
     def swift(self):
         available = [path.resolve() for mode in ('release', 'debug')
@@ -361,7 +363,7 @@ class Lifecycle:
                 raise LifecycleError('daemon process already exists but control is unavailable; no second daemon launched')
             # A reboot removes the temporary baseline. Swift applies configured
             # overrides during startup, before it can publish the control socket.
-            if (runtime == 'swift' and self.spawn == self._spawn and keys.is_file()
+            if (self.manage_hotkeys and runtime == 'swift' and self.spawn == self._spawn and keys.is_file()
                     and not any(self.role(row) == 'hotkeys' for row in census)
                     and not os.path.lexists('/tmp/hyprkeys.json')):
                 with open_log('/tmp/hyprkeys.log') as output:
@@ -382,14 +384,14 @@ class Lifecycle:
             if current is None:
                 raise LifecycleError('daemon not ready; ownership record retained, no process was killed')
         notes = []
-        if not any(self.role(row) == 'hotkeys' for row in census) and keys.is_file():
+        if self.manage_hotkeys and not any(self.role(row) == 'hotkeys' for row in census) and keys.is_file():
             # Existing hotkeys are left alone: rewriting their config is not an idempotent start.
             if self.spawn == self._spawn and not prepared_keys:
                 with open_log('/tmp/hyprkeys.log') as output:
                     subprocess.run([sys.executable, str(self.hook / 'keys/binds.py')], check=True,
                                    cwd=self.hook.parent, stdout=output, stderr=output)
             self.launch('hotkeys', [str(keys)], '/tmp/hyprkeys.log', record)
-        elif not keys.is_file():
+        elif self.manage_hotkeys and not keys.is_file():
             notes.append('hotkeys binary is not built')
         if menu and not any(self.role(row) == 'menu' for row in census):
             available = self.swift()
@@ -406,6 +408,8 @@ class Lifecycle:
                 'enabled': data.get('enabled', True), 'notes': notes}
 
     def start_hotkeys(self):
+        if not self.manage_hotkeys:
+            return {'ok': True, 'action': 'hotkeys', 'externally_managed': True}
         record = self.store.load()
         if any(self.role(row) == 'hotkeys' for row in self.census()):
             return {'ok': True, 'action': 'hotkeys', 'already_running': True}
