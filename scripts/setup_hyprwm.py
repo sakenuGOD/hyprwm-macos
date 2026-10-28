@@ -215,11 +215,40 @@ def native_cache(path, *, host=True):
     return provenance
 
 
-def workspace_cache(path):
+def workspace_cache(path, identity_helper=None, identity_sha256=None):
     installer = module('hyprwm_setup_installer', ROOT / 'scripts/install_autostart.py')
     files = installer.approved_workspaces(path, os.getuid(), ROOT)
-    identity, specification = installer.approved_identity(argparse.Namespace(identity_helper=None, identity_sha256=None, workspace_image_dir=path), files, os.getuid())
+    identity, specification = installer.approved_identity(argparse.Namespace(identity_helper=identity_helper, identity_sha256=identity_sha256, workspace_image_dir=path), files, os.getuid())
     return dict(files={name: hashlib.sha256(data).hexdigest() for name, data in files.items()}, identity_helper=specification)
+
+
+
+def protected_workspaces(paths):
+    """Root-owned receipts authorize reuse of their exact split workspace/helper graph."""
+    uid = os.getuid()
+    home = Path(paths['home']).expanduser().resolve()
+    if home != Path(pwd.getpwuid(uid).pw_dir).resolve():
+        return None
+    installer = module('hyprwm_setup_protected_workspaces', ROOT / 'scripts/install_autostart.py')
+    config = installer.service.load_config(paths['autostart'] / 'config.json')
+    need(config['uid'] == uid and config.get('home') == str(home), 'Existing autostart belongs to another desktop owner or HOME.')
+    base = Path(config['base'])
+    directory = base / 'graph/workspaces'
+    helper = base / 'graph/identity' / installer.service.IDENTITY_FILE
+    digest = config['identity_helper']['sha256']
+    validated = workspace_cache(directory, helper, digest)
+    need(validated['files'] == config['workspace_files'] and validated['identity_helper'] == config['identity_helper'],
+         'Protected workspace/identity graph differs from its owned receipt.')
+    return dict(config=config, directory=directory, identity_helper=helper, identity_sha256=digest, validation=validated)
+
+
+def retain_protected_workspaces(protected, active, status):
+    need(active_runtime_proof(active, status), 'Protected workspace reuse requires the authenticated current manager.')
+    config = protected['config']
+    need(config['manager'] == active['manager'] and config['hook'] == active['hook'] and
+         config['native_sha256'] == active['native_sha256'] and config['manager_sha256'] == sha(active['manager']),
+         'Protected workspace graph belongs to a different native image or manager.')
+    return protected
 
 
 def build_native(paths, receipt):
@@ -246,7 +275,16 @@ def build_native(paths, receipt):
     return destination
 
 
-def build_workspaces(paths, receipt):
+def build_workspaces(paths, receipt, protected=None):
+    if protected is not None:
+        directory = protected['directory']
+        workspace_cache(directory, protected['identity_helper'], protected['identity_sha256'])
+        receipt.update(workspace_image_dir=str(directory),
+                       workspace_identity_helper=str(protected['identity_helper']),
+                       workspace_identity_sha256=protected['identity_sha256'])
+        save_receipt(paths, receipt)
+        print('Reusing the exact protected workspace images and reviewed identity helper.', flush=True)
+        return directory
     if receipt.get('workspace_image_dir'):
         cached = Path(receipt['workspace_image_dir'])
         try:
@@ -579,6 +617,13 @@ def dry_run(args):
         for key in ('native_image_dir', 'workspace_image_dir'):
             if state.get(key):
                 directory = Path(state[key])
+                protected = None
+                if key == 'workspace_image_dir' and state.get('workspace_identity_helper'):
+                    protected = protected_workspaces(paths)
+                    if protected is None:
+                        report['artifacts'][key] = dict(path=str(directory), available=False,
+                                                       detail='Protected workspace cache is unavailable for an isolated HOME.')
+                        continue
                 entries = {}
                 if directory.is_dir() and not directory.is_symlink():
                     for file in directory.iterdir():
@@ -586,7 +631,15 @@ def dry_run(args):
                             entries[file.name] = sha(file)
                 report['artifacts'][key] = dict(path=str(directory), sha256=entries)
                 try:
-                    validation = native_cache(directory, host=actual['system'] == 'Darwin' and actual['build'] == BUILD) if key == 'native_image_dir' else workspace_cache(directory)
+                    if key == 'native_image_dir':
+                        validation = native_cache(directory, host=actual['system'] == 'Darwin' and actual['build'] == BUILD)
+                    elif state.get('workspace_identity_helper'):
+                        need(protected is not None, 'Protected workspace cache is unavailable for this HOME.')
+                        need(directory == protected['directory'] and state['workspace_identity_helper'] == str(protected['identity_helper']) and
+                             state.get('workspace_identity_sha256') == protected['identity_sha256'], 'Saved workspace identity does not match the protected installation.')
+                        validation = protected['validation']
+                    else:
+                        validation = workspace_cache(directory)
                     report['artifacts'][key]['validation'] = validation
                     report['artifacts'][key]['host_verified'] = key != 'native_image_dir' or (actual['system'] == 'Darwin' and actual['build'] == BUILD)
                 except (OSError, ValueError, RuntimeError, KeyError) as error:
@@ -612,15 +665,20 @@ def setup(args):
     print('[1/7] Verifying actual host, account and conflicting managers.', flush=True)
     check_host(observe_host(), live=True)
     need(os.environ.get('HYPRWM_CTL', '/tmp/hyprwm.ctl') == '/tmp/hyprwm.ctl', 'One-command setup uses the canonical /tmp/hyprwm.ctl control endpoint.')
-    conflicts(args.yes)
     paths = locations()
     receipt = read_receipt(paths['state'])
+    existing_service = paths['autostart'] / 'config.json'
+    protected = protected_workspaces(paths) if existing_service.exists() else None
+    conflicts(args.yes)
     if args.up and receipt.get('autostart') is False:
         args.no_autostart = True
     # Inspect before rebuilding: a running native session must be adopted.
     active = sudo([__file__, '--inspect-active', '--uid', os.getuid()], 'inspect existing native/workspace publications without attaching', json_result=True)['active']
     running = manager_status()
-    existing_service = paths['autostart'] / 'config.json'
+    if protected is not None and active_runtime_proof(active, running):
+        protected = retain_protected_workspaces(protected, active, running)
+    elif protected is not None:
+        need(args.up, 'Existing autostart is not currently ready; use scripts/hyprwm-up to recover its owned services without a competing native attachment.')
     if args.up and existing_service.exists():
         status = run_json([sys.executable, '-B', ROOT / 'scripts/install_autostart.py', 'status', '--uid', os.getuid()])
         print('Autostart status: ' + json.dumps(status.get('status', {}), sort_keys=True), flush=True)
@@ -653,7 +711,7 @@ def setup(args):
         run(['/usr/bin/swift', 'build', '-c', 'release', '--package-path', ROOT / 'hook/swift'])
     print('[3/7] Validating/building the local native and approved workspace images.', flush=True)
     native = build_native(paths, receipt)
-    workspaces = build_workspaces(paths, receipt)
+    workspaces = build_workspaces(paths, receipt, protected)
     image_sha = sha(native / 'probe-eh.dylib')
     if active:
         need(active['native_sha256'] == image_sha,
@@ -743,6 +801,8 @@ def setup(args):
                          '--adopt-activation', active['activation']]
             if active.get('workspace_receipt'):
                 arguments += ['--adopt-workspaces', active['workspace_receipt']]
+            if protected is not None:
+                arguments += ['--identity-helper', protected['identity_helper'], '--identity-sha256', protected['identity_sha256']]
             sudo(arguments, ('upgrade the owned frozen graph and ONLY its two supervisors; preserve the current native engine, manager, menus and keyboard' if action == 'upgrade' else
                              'freeze the reviewed graph and install the root native-session LaunchDaemon plus user backend LaunchAgent; adopt existing publications'))
     elif not args.no_open and not running:
