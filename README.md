@@ -41,7 +41,7 @@ Closing animations and some focus cases still need work. See [known issues](#sta
 | ![General settings](docs/screenshots/general.png) | ![Appearance settings](docs/screenshots/appearance.png) |
 | ![Menu bar controls](docs/screenshots/menu.png) | ![Advanced settings](docs/screenshots/advanced.png) |
 
-[Watch the 76-second demo](docs/media/showcase.mp4) · [View the poster](docs/media/poster.png)
+[Watch the 48-second demo](docs/media/showcase.mp4) · [View the poster](docs/media/poster.png)
 
 ## Requirements
 
