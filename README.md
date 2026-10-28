@@ -153,7 +153,6 @@ This is a source-only experimental release. There is no prebuilt binary.
 - [Some animation settings are accepted without a visible effect](https://github.com/sakenuGOD/hyprwm-macos/issues/18).
 - [Inactive app appearance is inconsistent](https://github.com/sakenuGOD/hyprwm-macos/issues/19).
 - [The layout can be lost after locking the screen](https://github.com/sakenuGOD/hyprwm-macos/issues/20).
-- [Three existing Swift test failures](https://github.com/sakenuGOD/hyprwm-macos/issues/21) need review.
 - Experimental, off by default: native toolbar, configure-stream.
 
 ## Development

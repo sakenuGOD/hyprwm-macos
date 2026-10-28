@@ -13,8 +13,6 @@ Use macOS 14+, Xcode Command Line Tools with Swift 5.9+, Python 3 and Git:
 git diff --check
 ```
 
-The suite currently has [three known failures](https://github.com/sakenuGOD/hyprwm-macos/issues/21). Preserve their coverage while resolving the code/reference mismatches.
-
 The test wrapper generates ignored layout scenarios from the Python reference.
 Keep `hook/swift/REFERENCE_*.py`; they are test inputs, not runtime prototypes.
 Run relevant checks once per affected change. Documentation needs valid commands and links.
