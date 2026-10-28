@@ -1,4 +1,4 @@
-# Extracted system images and analysis databases
+# Local research and agent files
 extracted/
 ghidra_proj/
 scripts/sl_map.tsv

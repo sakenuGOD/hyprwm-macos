@@ -303,7 +303,7 @@ if __name__=='__main__':
     parser.add_argument('--identity-library',type=Path,default=ROOT/'hook/build/libmanaged_process_identity.dylib')
     parser.add_argument('--permission',type=Path,default=ROOT/'hook/workspace-public-permission.json')
     parser.add_argument('--empty-sid',type=int,default=3);parser.add_argument('--empty-ordinal',type=int,default=3)
-    parser.add_argument('--empty-uuid',default='D759D39B-B3CC-4FB3-9088-D9BA38927A7B')
+    parser.add_argument('--empty-uuid',default='00000000-0000-0000-0000-000000000002')
     parser.add_argument('--catalog-proof',type=Path);parser.add_argument('--creator-receipt',type=Path)
     parser.add_argument('--manager-image',type=Path)
     parser.add_argument('--output',type=Path,required=True);args=parser.parse_args()

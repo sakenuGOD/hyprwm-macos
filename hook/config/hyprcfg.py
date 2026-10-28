@@ -1,19 +1,18 @@
-"""Конфиг Hyprland пользователя -> значения для нашего WM.
+"""Read Hyprland settings for HyprWM.
 
-Дотфайлы исполняются как есть (hypr_shim.lua), результат кэшируется в hook/config/hypr_cfg.json
-и пересобирается, если какой-то .lua в дотфайлах новее кэша. Путь к дотфайлам: $HYPR_HOME
-или ~/arch-nebula/dotfiles/home.
+Run Lua files through hypr_shim.lua and cache the result in hypr_cfg.json.
+Rebuild when a source Lua file is newer. HYPR_HOME overrides config/defaults.
 """
 import json
 import os
 import subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-HOME = os.environ.get("HYPR_HOME", os.path.expanduser("~/arch-nebula/dotfiles/home"))
+HOME = os.environ.get("HYPR_HOME", os.path.join(HERE, "defaults"))
 HYPR = os.path.join(HOME, ".config", "hypr")
 CACHE = os.path.join(HERE, "hypr_cfg.json")
 
-# дерево анимаций Hyprland (лист -> родитель) для наследования настроек
+# Hyprland animation tree (leaf -> parent) for inherited settings
 PARENT = {
     "windows": "global", "windowsIn": "windows", "windowsOut": "windows", "windowsMove": "windows",
     "layers": "global", "layersIn": "layers", "layersOut": "layers",
@@ -27,14 +26,14 @@ PARENT = {
     "specialWorkspace": "workspaces", "specialWorkspaceIn": "specialWorkspace",
     "specialWorkspaceOut": "specialWorkspace",
 }
-# умолчания hyprutils/Hyprland (AnimationTree.cpp): global = (1, 8, "default"); *angle выключены
+# hyprutils/Hyprland defaults (AnimationTree.cpp): global = (1, 8, "default"); *angle disabled
 DEFAULTS = {
     "global": {"enabled": True, "speed": 8, "bezier": "default"},
     "borderangle": {"enabled": False, "speed": 1, "bezier": "default"},
     "shadowangle": {"enabled": False, "speed": 1, "bezier": "default"},
     "glowangle": {"enabled": False, "speed": 1, "bezier": "default"},
 }
-# встроенная кривая Hyprland "default"
+# Built-in Hyprland "default" curve
 BUILTIN_CURVES = {"default": {"type": "bezier", "points": [[0, 0.75], [0.15, 1.0]]}}
 
 _cfg = None
@@ -58,7 +57,7 @@ def load(force=False):
                        check=True, capture_output=True)
     _cfg = json.load(open(CACHE))
     if not _cfg.get("load_ok"):
-        raise RuntimeError("конфиг Hyprland не загрузился: %s" % _cfg.get("load_error"))
+        raise RuntimeError("Hyprland config failed to load: %s" % _cfg.get("load_error"))
     return _cfg
 
 
@@ -81,8 +80,8 @@ def dwindle():
 
 
 def animation(leaf):
-    """Итоговые настройки листа как в Hyprland: узел, заданный в конфиге, переопределяет ВСЁ
-    (enabled, speed, кривая, style); не заданный лист берёт значения ближайшего заданного предка.
+    """Resolve a leaf as in Hyprland: a configured node overrides all settings
+    (enabled, speed, curve, style); otherwise use the nearest configured ancestor.
     -> {enabled, speed, kind: spring|bezier, curve, style, node}"""
     anims = {a.get("leaf"): a for a in load()["animations"]}
     node = leaf
@@ -99,7 +98,7 @@ def animation(leaf):
 
 
 def curves():
-    """Все кривые: {имя: {type, points | mass/stiffness/damping}} вкл. встроенную default."""
+    """All curves: {name: {type, points | mass/stiffness/damping}}, including default."""
     out = dict(BUILTIN_CURVES)
     for name, c in load()["curves"].items():
         if c.get("type") == "spring":
@@ -111,7 +110,7 @@ def curves():
 
 
 def spring(leaf):
-    """(mass, stiffness, damping) пружины листа, если лист на spring-кривой; иначе None."""
+    """Return (mass, stiffness, damping) for a spring leaf, or None."""
     a = animation(leaf)
     if a["kind"] != "spring":
         return None
@@ -139,11 +138,11 @@ def _rgba(s):
     if s.startswith("0x"):                              # 0xAARRGGBB
         v = int(s, 16)
         return ((v >> 16 & 255) / 255, (v >> 8 & 255) / 255, (v & 255) / 255, (v >> 24 & 255) / 255)
-    raise ValueError("цвет: " + s)
+    raise ValueError("color: " + s)
 
 
 def border():
-    """Рамка: ширина, радиус окна, градиент активной (цвета, угол °), цвет неактивной."""
+    """Border width, window radius, active gradient (colors, angle), inactive color."""
     g = general()
     col = g.get("col", {})
     act = col.get("active_border", "rgba(33ccffee)")
@@ -158,7 +157,7 @@ def border():
 
 
 def shadow():
-    """decoration.shadow: (вкл., α активной, α неактивной, range, offset y, render_power)."""
+    """decoration.shadow: (enabled, active alpha, inactive alpha, range, offset y, render_power)."""
     sh = load()["config"].get("decoration", {}).get("shadow", {})
     ca = _rgba(sh.get("color", "rgba(1a1a1aee)"))
     ci = _rgba(sh.get("color_inactive", sh.get("color", "rgba(1a1a1aee)")))

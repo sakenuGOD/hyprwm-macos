@@ -64,12 +64,12 @@ public final class HyprConfig {
         for (i, (name, _)) in sortedCurves().enumerated() where i < 16 { curveIDs[name] = i }
     }
 
-    /// hyprcfg.load(): rebuild hypr_cfg.json through the Lua shim when older than the newest dotfile .lua.
-    /// rebuild=false only reads, for tests and dry runs.
+    /// Load config/defaults unless HYPR_HOME selects another home directory.
+    /// Rebuild the cache through the Lua shim when a source .lua file is newer.
+    /// Set rebuild=false to read only, for tests and dry runs.
     public static func load(configDir: String, rebuild: Bool = true, timeScale: Double = 1.2) throws -> HyprConfig {
         let cache = configDir + "/hypr_cfg.json"
-        let personal = NSHomeDirectory() + "/arch-nebula/dotfiles/home"
-        let implicit = FileManager.default.fileExists(atPath: personal + "/.config/hypr") ? personal : configDir + "/defaults"
+        let implicit = configDir + "/defaults"
         let home = ProcessInfo.processInfo.environment["HYPR_HOME"] ?? implicit
         let fm = FileManager.default
         if rebuild {

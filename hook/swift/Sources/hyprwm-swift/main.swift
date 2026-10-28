@@ -29,7 +29,8 @@ func findHook() -> String {
         if FileManager.default.fileExists(atPath: u.path + "/config/hypr_shim.lua") { return u.path }
         u = u.deletingLastPathComponent()
     }
-    return NSHomeDirectory() + "/Developer/re-tools/hook"
+    FileHandle.standardError.write(Data("HyprWM could not find its resources. Reinstall with ./install.sh or set HYPRWM_HOOK.\n".utf8))
+    exit(1)
 }
 
 let hook = findHook()

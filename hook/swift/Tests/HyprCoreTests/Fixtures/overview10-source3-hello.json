@@ -21,7 +21,7 @@
     "native_completion_proven": false,
     "started": 0,
     "endpoint": "/private/tmp/re-tools-overview10-501-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/actor.sock",
-    "image_path": "/Users/example/Developer/re-tools/cache/continuation-20261014/product-polish-overview10-source3/libhypr-overview-pool10-v3.dylib",
+    "image_path": "/Users/example/Library/Caches/hyprwm/continuation-20261014/product-polish-overview10-source3/libhypr-overview-pool10-v3.dylib",
     "retained_results": 4,
     "latest_mutation_seq": 320
   },

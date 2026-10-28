@@ -8,6 +8,12 @@
   },
   {
    "enabled": true,
+   "leaf": "windowsMove",
+   "speed": 5,
+   "spring": "drift"
+  },
+  {
+   "enabled": true,
    "leaf": "windowsIn",
    "speed": 4.5,
    "spring": "bounce",
@@ -19,18 +25,6 @@
    "leaf": "windowsOut",
    "speed": 2.6,
    "style": "popin 92%"
-  },
-  {
-   "enabled": true,
-   "leaf": "windowsMove",
-   "speed": 5,
-   "spring": "drift"
-  },
-  {
-   "bezier": "smooth",
-   "enabled": true,
-   "leaf": "border",
-   "speed": 6
   },
   {
    "bezier": "smooth",
@@ -53,53 +47,7 @@
   {
    "bezier": "smooth",
    "enabled": true,
-   "leaf": "fadeDim",
-   "speed": 4
-  },
-  {
-   "bezier": "overshot",
-   "enabled": true,
-   "leaf": "layersIn",
-   "speed": 3.4,
-   "style": "popin 94%"
-  },
-  {
-   "bezier": "snappy",
-   "enabled": true,
-   "leaf": "layersOut",
-   "speed": 2.2,
-   "style": "fade"
-  },
-  {
-   "bezier": "smooth",
-   "enabled": true,
-   "leaf": "fadeLayersIn",
-   "speed": 2.6
-  },
-  {
-   "bezier": "smooth",
-   "enabled": true,
-   "leaf": "fadeLayersOut",
-   "speed": 2.2
-  },
-  {
-   "enabled": true,
-   "leaf": "workspaces",
-   "speed": 4.2,
-   "spring": "drift",
-   "style": "slidefade 12%"
-  },
-  {
-   "bezier": "overshot",
-   "enabled": true,
-   "leaf": "specialWorkspace",
-   "speed": 4,
-   "style": "slidefadevert 14%"
-  },
-  {
-   "bezier": "smooth",
-   "enabled": true,
-   "leaf": "zoomFactor",
+   "leaf": "border",
    "speed": 6
   }
  ],
@@ -115,7 +63,7 @@
    },
    "keys": "CTRL + SUPER + down",
    "opts": {
-    "description": "[OmniWM] Фокус: down"
+    "description": "[HyprWM] Focus: down"
    }
   },
   {
@@ -129,59 +77,7 @@
    },
    "keys": "CTRL + SUPER + SHIFT + down",
    "opts": {
-    "description": "[OmniWM] Переставить окно: down"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "preselect d"
-    ],
-    "dsp": "layout"
-   },
-   "keys": "CTRL + SUPER + ALT + down",
-   "opts": {
-    "description": "[OmniWM] Сторона для следующего окна: down"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     {
-      "direction": "left"
-     }
-    ],
-    "dsp": "focus"
-   },
-   "keys": "CTRL + SUPER + left",
-   "opts": {
-    "description": "[OmniWM] Фокус: left"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     {
-      "direction": "left"
-     }
-    ],
-    "dsp": "window.move"
-   },
-   "keys": "CTRL + SUPER + SHIFT + left",
-   "opts": {
-    "description": "[OmniWM] Переставить окно: left"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "preselect l"
-    ],
-    "dsp": "layout"
-   },
-   "keys": "CTRL + SUPER + ALT + left",
-   "opts": {
-    "description": "[OmniWM] Сторона для следующего окна: left"
+    "description": "[HyprWM] Move: down"
    }
   },
   {
@@ -195,7 +91,7 @@
    },
    "keys": "CTRL + SUPER + right",
    "opts": {
-    "description": "[OmniWM] Фокус: right"
+    "description": "[HyprWM] Focus: right"
    }
   },
   {
@@ -209,19 +105,7 @@
    },
    "keys": "CTRL + SUPER + SHIFT + right",
    "opts": {
-    "description": "[OmniWM] Переставить окно: right"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "preselect r"
-    ],
-    "dsp": "layout"
-   },
-   "keys": "CTRL + SUPER + ALT + right",
-   "opts": {
-    "description": "[OmniWM] Сторона для следующего окна: right"
+    "description": "[HyprWM] Move: right"
    }
   },
   {
@@ -235,7 +119,7 @@
    },
    "keys": "CTRL + SUPER + up",
    "opts": {
-    "description": "[OmniWM] Фокус: up"
+    "description": "[HyprWM] Focus: up"
    }
   },
   {
@@ -249,99 +133,35 @@
    },
    "keys": "CTRL + SUPER + SHIFT + up",
    "opts": {
-    "description": "[OmniWM] Переставить окно: up"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "preselect u"
-    ],
-    "dsp": "layout"
-   },
-   "keys": "CTRL + SUPER + ALT + up",
-   "opts": {
-    "description": "[OmniWM] Сторона для следующего окна: up"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "preselect none"
-    ],
-    "dsp": "layout"
-   },
-   "keys": "CTRL + SUPER + Escape",
-   "opts": {
-    "description": "[OmniWM] Сбросить сторону"
+    "description": "[HyprWM] Move: up"
    }
   },
   {
    "action": {
     "args": [
      {
-      "relative": true,
-      "x": 60,
-      "y": 0
+      "direction": "left"
      }
     ],
-    "dsp": "window.resize"
+    "dsp": "focus"
    },
-   "keys": "SUPER + SHIFT + right",
+   "keys": "CTRL + SUPER + left",
    "opts": {
-    "description": "[OmniWM] Ниже",
-    "repeating": true
+    "description": "[HyprWM] Focus: left"
    }
   },
   {
    "action": {
     "args": [
      {
-      "relative": true,
-      "x": -60,
-      "y": 0
+      "direction": "left"
      }
     ],
-    "dsp": "window.resize"
+    "dsp": "window.move"
    },
-   "keys": "SUPER + SHIFT + left",
+   "keys": "CTRL + SUPER + SHIFT + left",
    "opts": {
-    "description": "[OmniWM] Ниже",
-    "repeating": true
-   }
-  },
-  {
-   "action": {
-    "args": [
-     {
-      "relative": true,
-      "x": 0,
-      "y": 60
-     }
-    ],
-    "dsp": "window.resize"
-   },
-   "keys": "SUPER + SHIFT + up",
-   "opts": {
-    "description": "[OmniWM] Ниже",
-    "repeating": true
-   }
-  },
-  {
-   "action": {
-    "args": [
-     {
-      "relative": true,
-      "x": 0,
-      "y": -60
-     }
-    ],
-    "dsp": "window.resize"
-   },
-   "keys": "SUPER + SHIFT + down",
-   "opts": {
-    "description": "[OmniWM] Ниже",
-    "repeating": true
+    "description": "[HyprWM] Move: left"
    }
   },
   {
@@ -353,30 +173,7 @@
    },
    "keys": "CTRL + SUPER + Return",
    "opts": {
-    "description": "[OmniWM] Деление: рядом / друг над другом"
-   }
-  },
-  {
-   "action": {
-    "lua": true
-   },
-   "keys": "SUPER + SHIFT + B",
-   "opts": {
-    "description": "[OmniWM] Равные пропорции"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     {
-      "mode": "maximized"
-     }
-    ],
-    "dsp": "window.fullscreen"
-   },
-   "keys": "SUPER + SHIFT + Return",
-   "opts": {
-    "description": "[OmniWM] Развернуть окно / вернуть"
+    "description": "[HyprWM] Toggle split direction"
    }
   },
   {
@@ -390,120 +187,7 @@
    },
    "keys": "CTRL + SUPER + F",
    "opts": {
-    "description": "[OmniWM] Плавающее / в раскладку"
-   }
-  },
-  {
-   "action": {
-    "args": [],
-    "dsp": "window.close"
-   },
-   "keys": "SUPER + Q",
-   "opts": {
-    "description": "[OmniWM] Закрыть окно"
-   }
-  },
-  {
-   "action": {
-    "lua": true
-   },
-   "keys": "SUPER + SHIFT + Q",
-   "opts": {
-    "description": "[OmniWM] Завершить приложение"
-   }
-  },
-  {
-   "action": {
-    "lua": true
-   },
-   "keys": "SUPER + W",
-   "opts": {
-    "description": "[OmniWM] Скрыть окно"
-   }
-  },
-  {
-   "action": {
-    "lua": true
-   },
-   "keys": "SUPER + SHIFT + W",
-   "opts": {
-    "description": "[OmniWM] Вернуть скрытое"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "uwsm app -- kitty"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + Return",
-   "opts": {
-    "description": "[OmniWM] Новый терминал"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "uwsm app -- openrunner"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + R",
-   "opts": {
-    "description": "[OmniWM] OpenRunner"
-   }
-  },
-  {
-   "action": {
-    "lua": true
-   },
-   "keys": "SUPER + M",
-   "opts": {
-    "description": "[OmniWM] Spotify"
-   }
-  },
-  {
-   "action": {
-    "lua": true
-   },
-   "keys": "SUPER + grave",
-   "opts": {
-    "description": "[OmniWM] Выпадающий терминал"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-palette"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "CTRL + SUPER + space",
-   "opts": {
-    "description": "[OmniWM] Палитра команд"
-   }
-  },
-  {
-   "action": {
-    "args": [],
-    "dsp": "window.drag"
-   },
-   "keys": "SUPER + mouse:272",
-   "opts": {
-    "description": "Тащить окно мышью",
-    "mouse": true
-   }
-  },
-  {
-   "action": {
-    "args": [],
-    "dsp": "window.resize"
-   },
-   "keys": "SUPER + mouse:273",
-   "opts": {
-    "description": "Менять размер мышью",
-    "mouse": true
+    "description": "[HyprWM] Toggle floating"
    }
   },
   {
@@ -517,289 +201,60 @@
    },
    "keys": "SUPER + F",
    "opts": {
-    "description": "Полный экран"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "uwsm app -- zen-browser"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + B",
-   "opts": {
-    "description": "Zen Browser"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "uwsm app -- dolphin"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + E",
-   "opts": {
-    "description": "Файлы (Dolphin)"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "uwsm app -- kitty --class yazi -e yazi"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + SHIFT + E",
-   "opts": {
-    "description": "Файлы в терминале (yazi)"
-   }
-  },
-  {
-   "action": {
-    "lua": true
-   },
-   "keys": "SUPER + T",
-   "opts": {
-    "description": "Telegram"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "uwsm app -- vesktop"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + D",
-   "opts": {
-    "description": "Discord (Vesktop)"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "uwsm app -- code"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + C",
-   "opts": {
-    "description": "VS Code"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "uwsm app -- obsidian"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + O",
-   "opts": {
-    "description": "Obsidian"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "uwsm app -- keepassxc"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + K",
-   "opts": {
-    "description": "KeePassXC"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "uwsm app -- kitty --class btop -e btop"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "CTRL + SUPER + B",
-   "opts": {
-    "description": "btop (диспетчер задач)"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-launcher"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "ALT + space",
-   "opts": {
-    "description": "Лаунчер (⌘Space, как Spotlight)"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-clipboard"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + V",
-   "opts": {
-    "description": "История буфера (текст и картинки)"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-emoji"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + period",
-   "opts": {
-    "description": "Эмодзи и символы"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-calc"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + equal",
-   "opts": {
-    "description": "Калькулятор"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-keys"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + slash",
-   "opts": {
-    "description": "Шпаргалка по хоткеям"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-power"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + X",
-   "opts": {
-    "description": "Меню питания"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "loginctl lock-session"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + L",
-   "opts": {
-    "description": "Заблокировать экран"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "swaync-client -t -sw"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + N",
-   "opts": {
-    "description": "Центр уведомлений"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "swaync-client -d -sw"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + SHIFT + N",
-   "opts": {
-    "description": "Не беспокоить"
-   }
-  },
-  {
-   "action": {
-    "args": [],
-    "dsp": "window.cycle_next"
-   },
-   "keys": "ALT + Tab",
-   "opts": {
-    "description": "Следующее окно (⌘Tab)"
+    "description": "[HyprWM] Fullscreen"
    }
   },
   {
    "action": {
     "args": [
      {
-      "prev": true
+      "mode": "maximized"
      }
     ],
-    "dsp": "window.cycle_next"
+    "dsp": "window.fullscreen"
    },
-   "keys": "ALT + SHIFT + Tab",
+   "keys": "SUPER + SHIFT + Return",
    "opts": {
-    "description": "Предыдущее окно"
+    "description": "[HyprWM] Maximize in workspace"
+   }
+  },
+  {
+   "action": {
+    "args": [
+     []
+    ],
+    "dsp": "window.close"
+   },
+   "keys": "SUPER + Q",
+   "opts": {
+    "description": "[HyprWM] Close window"
    }
   },
   {
    "action": {
     "lua": true
    },
-   "keys": "ALT + H",
+   "keys": "SUPER + W",
    "opts": {
-    "description": "Скрыть окно (⌘H)"
+    "description": "[HyprWM] Hide window"
    }
   },
   {
    "action": {
     "lua": true
    },
-   "keys": "ALT + M",
+   "keys": "SUPER + SHIFT + W",
    "opts": {
-    "description": "Свернуть окно (⌘M)"
+    "description": "[HyprWM] Restore hidden window"
    }
   },
   {
    "action": {
     "lua": true
    },
-   "keys": "ALT + SHIFT + H",
+   "keys": "SUPER + SHIFT + B",
    "opts": {
-    "description": "Вернуть скрытое окно"
-   }
-  },
-  {
-   "action": {
-    "lua": true
-   },
-   "keys": "SUPER + page_up",
-   "opts": {
-    "description": "Предыдущий стол (Ctrl+←)"
-   }
-  },
-  {
-   "action": {
-    "lua": true
-   },
-   "keys": "SUPER + page_down",
-   "opts": {
-    "description": "Следующий стол (Ctrl+→)"
+    "description": "[HyprWM] Balance tiles"
    }
   },
   {
@@ -813,7 +268,7 @@
    },
    "keys": "SUPER + 1",
    "opts": {
-    "description": "Стол 1"
+    "description": "[HyprWM] Workspace 1"
    }
   },
   {
@@ -828,7 +283,7 @@
    },
    "keys": "CTRL + SUPER + 1",
    "opts": {
-    "description": "Окно на стол 1"
+    "description": "[HyprWM] Move to workspace 1"
    }
   },
   {
@@ -842,7 +297,7 @@
    },
    "keys": "SUPER + 2",
    "opts": {
-    "description": "Стол 2"
+    "description": "[HyprWM] Workspace 2"
    }
   },
   {
@@ -857,7 +312,7 @@
    },
    "keys": "CTRL + SUPER + 2",
    "opts": {
-    "description": "Окно на стол 2"
+    "description": "[HyprWM] Move to workspace 2"
    }
   },
   {
@@ -871,7 +326,7 @@
    },
    "keys": "SUPER + 3",
    "opts": {
-    "description": "Стол 3"
+    "description": "[HyprWM] Workspace 3"
    }
   },
   {
@@ -886,7 +341,7 @@
    },
    "keys": "CTRL + SUPER + 3",
    "opts": {
-    "description": "Окно на стол 3"
+    "description": "[HyprWM] Move to workspace 3"
    }
   },
   {
@@ -900,7 +355,7 @@
    },
    "keys": "SUPER + 4",
    "opts": {
-    "description": "Стол 4"
+    "description": "[HyprWM] Workspace 4"
    }
   },
   {
@@ -915,7 +370,7 @@
    },
    "keys": "CTRL + SUPER + 4",
    "opts": {
-    "description": "Окно на стол 4"
+    "description": "[HyprWM] Move to workspace 4"
    }
   },
   {
@@ -929,7 +384,7 @@
    },
    "keys": "SUPER + 5",
    "opts": {
-    "description": "Стол 5"
+    "description": "[HyprWM] Workspace 5"
    }
   },
   {
@@ -944,7 +399,7 @@
    },
    "keys": "CTRL + SUPER + 5",
    "opts": {
-    "description": "Окно на стол 5"
+    "description": "[HyprWM] Move to workspace 5"
    }
   },
   {
@@ -958,7 +413,7 @@
    },
    "keys": "SUPER + 6",
    "opts": {
-    "description": "Стол 6"
+    "description": "[HyprWM] Workspace 6"
    }
   },
   {
@@ -973,7 +428,7 @@
    },
    "keys": "CTRL + SUPER + 6",
    "opts": {
-    "description": "Окно на стол 6"
+    "description": "[HyprWM] Move to workspace 6"
    }
   },
   {
@@ -987,7 +442,7 @@
    },
    "keys": "SUPER + 7",
    "opts": {
-    "description": "Стол 7"
+    "description": "[HyprWM] Workspace 7"
    }
   },
   {
@@ -1002,7 +457,7 @@
    },
    "keys": "CTRL + SUPER + 7",
    "opts": {
-    "description": "Окно на стол 7"
+    "description": "[HyprWM] Move to workspace 7"
    }
   },
   {
@@ -1016,7 +471,7 @@
    },
    "keys": "SUPER + 8",
    "opts": {
-    "description": "Стол 8"
+    "description": "[HyprWM] Workspace 8"
    }
   },
   {
@@ -1031,7 +486,7 @@
    },
    "keys": "CTRL + SUPER + 8",
    "opts": {
-    "description": "Окно на стол 8"
+    "description": "[HyprWM] Move to workspace 8"
    }
   },
   {
@@ -1045,7 +500,7 @@
    },
    "keys": "SUPER + 9",
    "opts": {
-    "description": "Стол 9"
+    "description": "[HyprWM] Workspace 9"
    }
   },
   {
@@ -1060,7 +515,7 @@
    },
    "keys": "CTRL + SUPER + 9",
    "opts": {
-    "description": "Окно на стол 9"
+    "description": "[HyprWM] Move to workspace 9"
    }
   },
   {
@@ -1074,7 +529,7 @@
    },
    "keys": "SUPER + 0",
    "opts": {
-    "description": "Стол 10"
+    "description": "[HyprWM] Workspace 10"
    }
   },
   {
@@ -1089,537 +544,7 @@
    },
    "keys": "CTRL + SUPER + 0",
    "opts": {
-    "description": "Окно на стол 10"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     {
-      "workspace": "previous"
-     }
-    ],
-    "dsp": "focus"
-   },
-   "keys": "SUPER + Tab",
-   "opts": {
-    "description": "Предыдущий стол"
-   }
-  },
-  {
-   "action": {
-    "lua": true
-   },
-   "keys": "SUPER + SHIFT + Tab",
-   "opts": {
-    "description": "Окно на другой монитор"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     {
-      "monitor": "+1"
-     }
-    ],
-    "dsp": "focus"
-   },
-   "keys": "SUPER + CTRL + Tab",
-   "opts": {
-    "description": "Фокус на другой монитор"
-   }
-  },
-  {
-   "action": {
-    "lua": true
-   },
-   "keys": "SUPER + mouse_down",
-   "opts": {
-    "description": "Следующий стол (колесо)"
-   }
-  },
-  {
-   "action": {
-    "lua": true
-   },
-   "keys": "SUPER + mouse_up",
-   "opts": {
-    "description": "Предыдущий стол (колесо)"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-shot area"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + SHIFT + 2",
-   "opts": {
-    "description": "Скриншот области в буфер (как на Mac)"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-shot screen"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + SHIFT + 3",
-   "opts": {
-    "description": "Скриншот экрана"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-shot area-edit"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + SHIFT + 4",
-   "opts": {
-    "description": "Скриншот области → редактор"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-shot screen"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "CTRL + SHIFT + 3",
-   "opts": {
-    "description": "Скриншот экрана (⌘⇧3)"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-shot area"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "CTRL + SHIFT + 4",
-   "opts": {
-    "description": "Скриншот области (⌘⇧4)"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-shot area-edit"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "CTRL + SHIFT + 5",
-   "opts": {
-    "description": "Скриншот области → редактор (⌘⇧5)"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-shot area-edit"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "Print",
-   "opts": {
-    "description": "Скриншот области → редактор"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-shot screen-edit"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SHIFT + Print",
-   "opts": {
-    "description": "Скриншот экрана → редактор"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-record toggle"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + SHIFT + R",
-   "opts": {
-    "description": "Запись экрана старт/стоп"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-ocr"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + SHIFT + O",
-   "opts": {
-    "description": "OCR области (рус+англ) в буфер"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-colorpick"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + SHIFT + C",
-   "opts": {
-    "description": "Пипетка цвета"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "hyprctl switchxkblayout all next"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "CTRL + space",
-   "opts": {
-    "description": "Раскладка us ⇄ ru"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-wall next"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "CTRL + SUPER + W",
-   "opts": {
-    "description": "Следующие обои (и палитра)"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-wall pick"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "CTRL + SUPER + P",
-   "opts": {
-    "description": "Выбрать обои"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-translate"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + SHIFT + T",
-   "opts": {
-    "description": "Перевести выделенный текст"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-vpn toggle"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + SHIFT + V",
-   "opts": {
-    "description": "VPN вкл/выкл (Throne)"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-update --gui"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + SHIFT + U",
-   "opts": {
-    "description": "Обновить систему (со снапшотом)"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-focus toggle"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + SHIFT + F",
-   "opts": {
-    "description": "Рабочий режим: тишина + lo-fi"
-   }
-  },
-  {
-   "action": {
-    "lua": true
-   },
-   "keys": "CTRL + SUPER + Escape",
-   "opts": {
-    "description": "Закрыть скрытый стол (выйти из «зазеркалья»)"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-wake"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + SHIFT + Escape",
-   "opts": {
-    "description": "Разбудить монитор (если экран не включился)"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "swayosd-client --output-volume raise"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "XF86AudioRaiseVolume",
-   "opts": {
-    "description": "Яркость монитора +",
-    "locked": true,
-    "repeating": true
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "swayosd-client --output-volume lower"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "XF86AudioLowerVolume",
-   "opts": {
-    "description": "Яркость монитора +",
-    "locked": true,
-    "repeating": true
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "swayosd-client --output-volume mute-toggle"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "XF86AudioMute",
-   "opts": {
-    "description": "Без звука",
-    "locked": true
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "swayosd-client --input-volume mute-toggle"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "XF86AudioMicMute",
-   "opts": {
-    "description": "Микрофон",
-    "locked": true
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-brightness up"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "XF86MonBrightnessUp",
-   "opts": {
-    "description": "Яркость монитора +",
-    "locked": true,
-    "repeating": true
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-brightness down"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "XF86MonBrightnessDown",
-   "opts": {
-    "description": "Яркость монитора +",
-    "locked": true,
-    "repeating": true
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "swayosd-client --output-volume lower"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + F11",
-   "opts": {
-    "description": "Яркость монитора +",
-    "locked": true,
-    "repeating": true
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "swayosd-client --output-volume raise"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + F12",
-   "opts": {
-    "description": "Яркость монитора +",
-    "locked": true,
-    "repeating": true
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "swayosd-client --output-volume mute-toggle"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + F10",
-   "opts": {
-    "description": "Без звука"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-brightness down"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + F1",
-   "opts": {
-    "description": "Яркость монитора +",
-    "locked": true,
-    "repeating": true
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "nebula-brightness up"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + F2",
-   "opts": {
-    "description": "Яркость монитора +",
-    "locked": true,
-    "repeating": true
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "playerctl play-pause"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "XF86AudioPlay",
-   "opts": {
-    "description": "Плей/пауза",
-    "locked": true
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "playerctl play-pause"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "XF86AudioPause",
-   "opts": {
-    "description": "Плей/пауза",
-    "locked": true
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "playerctl next"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "XF86AudioNext",
-   "opts": {
-    "description": "Следующий трек",
-    "locked": true
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "playerctl previous"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "XF86AudioPrev",
-   "opts": {
-    "description": "Предыдущий трек",
-    "locked": true
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "playerctl play-pause"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + F8",
-   "opts": {
-    "description": "Плей/пауза"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "playerctl next"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + F9",
-   "opts": {
-    "description": "Следующий трек"
-   }
-  },
-  {
-   "action": {
-    "args": [
-     "playerctl previous"
-    ],
-    "dsp": "exec_cmd"
-   },
-   "keys": "SUPER + F7",
-   "opts": {
-    "description": "Предыдущий трек"
+    "description": "[HyprWM] Move to workspace 10"
    }
   }
  ],
@@ -1632,28 +557,10 @@
    "workspace_back_and_forth": true
   },
   "cursor": {
-   "hide_on_key_press": false,
-   "inactive_timeout": 0,
    "no_warps": true
   },
   "decoration": {
    "active_opacity": 1.0,
-   "blur": {
-    "brightness": 0.92,
-    "contrast": 1.0,
-    "enabled": true,
-    "new_optimizations": true,
-    "noise": 0.008,
-    "passes": 2,
-    "popups": true,
-    "popups_ignorealpha": 0.2,
-    "size": 5,
-    "special": true,
-    "vibrancy": 0.22,
-    "vibrancy_darkness": 0.4,
-    "xray": false
-   },
-   "dim_special": 0.0,
    "glow": {
     "color": "rgba(ffb4a433)",
     "color_inactive": "rgba(ffb4a400)",
@@ -1679,17 +586,11 @@
   "dwindle": {
    "default_split_ratio": 1.0,
    "force_split": 0,
-   "precise_mouse_move": true,
    "preserve_split": true,
    "smart_split": false,
    "split_width_multiplier": 1.0
   },
-  "ecosystem": {
-   "no_donation_nag": true,
-   "no_update_news": true
-  },
   "general": {
-   "allow_tearing": true,
    "border_size": 2,
    "col": {
     "active_border": {
@@ -1701,7 +602,6 @@
     },
     "inactive_border": "rgba(53434155)"
    },
-   "extend_border_grab_area": 18,
    "gaps_in": 5,
    "gaps_out": {
     "bottom": 12,
@@ -1709,87 +609,26 @@
     "right": 12,
     "top": 8
    },
-   "gaps_workspaces": 40,
-   "hover_icon_on_border": true,
-   "layout": "dwindle",
-   "resize_on_border": true,
-   "snap": {
-    "enabled": true,
-    "monitor_gap": 16,
-    "window_gap": 12
-   }
+   "layout": "dwindle"
   },
   "input": {
-   "accel_profile": "flat",
-   "float_switch_override_focus": 0,
    "follow_mouse": 1,
-   "kb_layout": "us,ru",
-   "kb_options": "",
-   "numlock_by_default": true,
    "repeat_delay": 280,
-   "repeat_rate": 40,
-   "sensitivity": 0,
-   "touchpad": {
-    "natural_scroll": true
-   }
-  },
-  "misc": {
-   "animate_manual_resizes": true,
-   "animate_mouse_windowdragging": false,
-   "background_color": "rgb(1a1110)",
-   "disable_hyprland_logo": true,
-   "disable_scale_notification": true,
-   "disable_splash_rendering": true,
-   "enable_swallow": true,
-   "focus_on_activate": true,
-   "force_default_wallpaper": 0,
-   "key_press_enables_dpms": true,
-   "middle_click_paste": false,
-   "mouse_move_enables_dpms": true,
-   "on_focus_under_fullscreen": 2,
-   "session_lock_xray": true,
-   "swallow_exception_regex": "^(wev|.*[Yy]azi.*)$",
-   "swallow_regex": "^(kitty)$",
-   "vrr": 2
-  },
-  "render": {
-   "direct_scanout": 0
-  },
-  "scrolling": {
-   "column_width": 0.5,
-   "explicit_column_widths": "0.333, 0.5, 0.667, 1.0",
-   "follow_focus": true,
-   "fullscreen_on_one_column": true
-  },
-  "xwayland": {
-   "force_zero_scaling": true
+   "repeat_rate": 40
   }
  },
  "curves": {
   "bounce": {
-   "dampening": 20,
+   "damping": 20,
    "mass": 1,
    "stiffness": 260,
    "type": "spring"
   },
   "drift": {
-   "dampening": 24,
+   "damping": 24,
    "mass": 1,
    "stiffness": 210,
    "type": "spring"
-  },
-  "linear": {
-   "points": [
-    [
-     0,
-     0
-    ],
-    [
-     1,
-     1
-    ]
-   ],
-   "type": "bezier"
   },
   "overshot": {
    "points": [
@@ -1831,281 +670,13 @@
    "type": "bezier"
   }
  },
- "events": [
-  "monitor.removed",
-  "monitor.added",
-  "hyprland.start",
-  "monitor.added",
-  "window.active",
-  "window.open",
-  "window.active",
-  "window.move_to_workspace"
- ],
+ "events": [],
  "execs": [],
- "layer_rules": [
-  {
-   "blur": true,
-   "ignore_alpha": 0.2,
-   "match": {
-    "namespace": "^waybar$"
-   },
-   "name": "waybar"
-  },
-  {
-   "animation": "popin 92%",
-   "blur": true,
-   "dim_around": true,
-   "ignore_alpha": 0.3,
-   "match": {
-    "namespace": "^rofi$"
-   },
-   "name": "rofi"
-  },
-  {
-   "animation": "slide right",
-   "blur": true,
-   "ignore_alpha": 0.3,
-   "match": {
-    "namespace": "^swaync-control-center$"
-   },
-   "name": "swaync-cc"
-  },
-  {
-   "animation": "slide right",
-   "blur": true,
-   "ignore_alpha": 0.3,
-   "match": {
-    "namespace": "^swaync-notification-window$"
-   },
-   "name": "swaync-notif"
-  },
-  {
-   "animation": "fade",
-   "blur": true,
-   "ignore_alpha": 0.5,
-   "match": {
-    "namespace": "^nebula-radio$"
-   },
-   "name": "nebula-radio"
-  },
-  {
-   "animation": "popin 90%",
-   "blur": true,
-   "ignore_alpha": 0.3,
-   "match": {
-    "namespace": "^swayosd$"
-   },
-   "name": "swayosd"
-  },
-  {
-   "match": {
-    "namespace": "^(selection|hyprpicker)$"
-   },
-   "name": "selection",
-   "no_anim": true
-  },
-  {
-   "match": {
-    "namespace": "^(mpvpaper|wallpaper)$"
-   },
-   "name": "wallpaper",
-   "no_anim": true
-  }
- ],
+ "layer_rules": [],
  "load_error": "nil",
  "load_ok": true,
- "monitors": [
-  {
-   "mode": "1920x1080@165",
-   "output": "DP-2",
-   "position": "0x0",
-   "scale": 1,
-   "transform": 1
-  },
-  {
-   "mode": "2560x1440@180",
-   "output": "DP-1",
-   "position": "1080x371",
-   "scale": 1
-  },
-  {
-   "mode": "preferred",
-   "output": "",
-   "position": "auto",
-   "scale": 1
-  }
- ],
- "unknown": [
-  "env",
-  "env",
-  "env",
-  "env",
-  "timer"
- ],
- "window_rules": [
-  {
-   "match": {
-    "class": ".*"
-   },
-   "name": "suppress-maximize",
-   "suppress_event": "maximize"
-  },
-  {
-   "match": {
-    "class": "^$",
-    "float": true,
-    "fullscreen": false,
-    "pin": false,
-    "title": "^$",
-    "xwayland": true
-   },
-   "name": "fix-xwayland-drags",
-   "no_focus": true
-  },
-  {
-   "center": true,
-   "dim_around": true,
-   "float": true,
-   "match": {
-    "class": "^(org.hyprland.hyprpolkitagent|hyprpolkitagent)$"
-   },
-   "name": "polkit",
-   "pin": true
-  },
-  {
-   "center": true,
-   "float": true,
-   "match": {
-    "title": "^(Open File|Open Files|Save As|Save File|Choose Files|Select a File|Открыть.*|Сохранить.*|File Upload|Выбор файла.*)(.*)$"
-   },
-   "name": "dialogs",
-   "size": [
-    1100,
-    720
-   ]
-  },
-  {
-   "center": true,
-   "float": true,
-   "match": {
-    "modal": true
-   },
-   "name": "modals"
-  },
-  {
-   "float": true,
-   "match": {
-    "class": "^dropterm$"
-   },
-   "move": [
-    480,
-    60
-   ],
-   "name": "dropterm",
-   "size": [
-    1600,
-    800
-   ],
-   "workspace": "special:dropterm"
-  },
-  {
-   "fullscreen": true,
-   "match": {
-    "class": "^org.telegram.desktop$",
-    "title": "^(Media viewer|Просмотр медиа)$"
-   },
-   "name": "telegram-media"
-  },
-  {
-   "float": true,
-   "keep_aspect_ratio": true,
-   "match": {
-    "title": "^(Picture-in-Picture|Картинка в картинке)$"
-   },
-   "move": [
-    "monitor_w-656",
-    "monitor_h-376"
-   ],
-   "name": "pip",
-   "no_shadow": true,
-   "pin": true,
-   "size": [
-    640,
-    360
-   ]
-  },
-  {
-   "idle_inhibit": "fullscreen",
-   "match": {
-    "content": "video"
-   },
-   "name": "video-idle"
-  },
-  {
-   "content": "game",
-   "idle_inhibit": "always",
-   "immediate": true,
-   "match": {
-    "class": "^(steam_app_.*|gamescope|.*\\.exe)$"
-   },
-   "name": "games",
-   "no_blur": true,
-   "no_shadow": true
-  },
-  {
-   "float": true,
-   "match": {
-    "class": "^steam$",
-    "title": "^(Friends List|Steam Settings|Список друзей|Настройки Steam)$"
-   },
-   "name": "steam-float"
-  }
- ],
- "workspace_rules": [
-  {
-   "default": true,
-   "monitor": "DP-1",
-   "persistent": true,
-   "workspace": "1"
-  },
-  {
-   "default": false,
-   "monitor": "DP-1",
-   "persistent": true,
-   "workspace": "2"
-  },
-  {
-   "default": false,
-   "monitor": "DP-1",
-   "persistent": true,
-   "workspace": "3"
-  },
-  {
-   "default": false,
-   "monitor": "DP-1",
-   "persistent": true,
-   "workspace": "4"
-  },
-  {
-   "default": false,
-   "monitor": "DP-1",
-   "persistent": true,
-   "workspace": "5"
-  },
-  {
-   "default": true,
-   "monitor": "DP-2",
-   "workspace": "6"
-  },
-  {
-   "default": false,
-   "monitor": "DP-2",
-   "workspace": "7"
-  },
-  {
-   "default": false,
-   "monitor": "DP-2",
-   "workspace": "8"
-  }
- ]
+ "monitors": [],
+ "unknown": [],
+ "window_rules": [],
+ "workspace_rules": []
 }

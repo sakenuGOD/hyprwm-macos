@@ -5,7 +5,7 @@
 #include <unistd.h>
 
 // Exact local getter ABI provenance (read only, sources not changed):
-// re-tools/hook/swift/Sources/CAX/sys.c:30,37,95,100
+// hook/swift/Sources/CAX/sys.c
 //   extern int SLSMainConnectionID(void);
 // Move ABI verified in local SkyLight SLSMoveWindowsToManagedSpace:
 // enabled branch tail-calls objc_autoreleasePoolPop; no status result is returned.

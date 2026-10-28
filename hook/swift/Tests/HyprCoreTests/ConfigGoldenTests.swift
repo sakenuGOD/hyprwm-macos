@@ -4,6 +4,26 @@
 import XCTest
 
 final class ConfigGoldenTests: XCTestCase {
+    func testLoadUsesDefaultsWithoutHyprHome() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let environment = ProcessInfo.processInfo.environment
+        defer {
+            for key in ["PATH", "HYPR_HOME"] {
+                if let value = environment[key] { setenv(key, value, 1) } else { unsetenv(key) }
+            }
+            try? FileManager.default.removeItem(at: directory)
+        }
+        // Record the home passed to Lua without requiring an installed interpreter.
+        let lua = directory.appendingPathComponent("lua")
+        try Data("#!/bin/sh\nprintf '{\"load_ok\":true,\"home\":\"%s\"}' \"$2\" > \"$3\"\n".utf8).write(to: lua)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: lua.path)
+        setenv("PATH", directory.path, 1)
+        unsetenv("HYPR_HOME")
+        let config = try HyprConfig.load(configDir: directory.path)
+        XCTAssertEqual(config.raw["home"]?.string, directory.path + "/defaults")
+    }
+
     func testGolden() throws {
         let cfg = try Fx.config()
         let g = try Fx.load("config_golden.json")

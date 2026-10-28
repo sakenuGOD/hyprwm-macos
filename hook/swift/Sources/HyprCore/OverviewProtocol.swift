@@ -44,6 +44,7 @@ extension Hidden {
     }
 }
 
+// The endpoint prefix is a protocol name used by an external overview service.
 public struct OverviewBinding: Equatable {
     public let pid: Int
     public let birth: [Int]

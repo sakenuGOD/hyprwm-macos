@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Бинды из дотфайлов Hyprland -> /tmp/hyprkeys.json для keys/hyprkeys.
+"""Convert Hyprland shortcuts to /tmp/hyprkeys.json for keys/hyprkeys.
 
-Раскладка клавиш как на его Линуксе: SUPER = Option, CTRL = Control, ALT = Command
-(на Линуксе keyd уже переставляет их так же — см. комментарий в nebula/binds.lua).
-Берём только те действия, которые наш WM умеет; остальное печатаем как пропущенное.
+On macOS, SUPER maps to Option, CTRL to Control and ALT to Command.
+Unsupported actions are skipped.
 """
 import json
 import os
@@ -24,12 +23,11 @@ KEY = {
 }
 
 
-# Линуксовые программы из exec_cmd -> приложения на маке (нет на маке — бинд пропускается).
-APPS = {"kitty": "Ghostty", "zen-browser": "Zen", "dolphin": "Finder", "vesktop": "Discord",
-        "code": "Visual Studio Code", "obsidian": "Obsidian", "keepassxc": "KeePassXC"}
-# Lua-бинды без dsp: что они делают по описанию в дотфайле
-LUA = {"Скрыть окно": ["hide"], "Вернуть скрытое": ["unhide"], "Равные пропорции": ["balance"],
-       "Завершить приложение": ["quit"], "Spotify": ["exec", "Spotify"], "Telegram": ["exec", "Telegram"]}
+# Example commands mapped to installed macOS apps; skip unavailable apps.
+APPS = {"terminal": "Terminal", "safari": "Safari", "finder": "Finder"}
+# Match descriptions for Lua actions that cannot be read as dispatch calls.
+LUA = {"Hide window": ["hide"], "Restore hidden window": ["unhide"],
+       "Balance tiles": ["balance"], "Quit application": ["quit"]}
 
 
 def installed(app):
@@ -44,21 +42,14 @@ def exec_to_cmd(line):
         w = w[w.index("--") + 1:]
     if not w:
         return None
-    if w[0] == "openrunner":                   # на маке это OpenRunner.app (Линукс-скрипт — его копия)
-        return ["exec", "OpenRunner"] if installed("OpenRunner") else None
     app = APPS.get(w[0])
     if not app or not installed(app):
         return None
-    rest = w[1:]
-    if w[0] == "kitty":
-        if "-e" in rest:                       # kitty --class X -e prog -> Ghostty с программой
-            return ["exec", app, "-e"] + rest[rest.index("-e") + 1:]
-        return ["exec", app, "--new"]
     return ["exec", app]
 
 
 def action_to_cmd(a, desc=""):
-    """Действие Hyprland -> команда демона hyprwm. None, если наш WM этого пока не умеет."""
+    """Convert a Hyprland action to a daemon command; return None if unsupported."""
     if isinstance(a, dict) and a.get("lua"):
         for k, v in LUA.items():
             if k in desc:

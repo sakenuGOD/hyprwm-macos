@@ -62,7 +62,7 @@ int main(int argc,const char **argv){@autoreleasepool{
     DSOwnSpaces *actor=[DSOwnSpaces new];NSMutableArray *objects=[NSMutableArray new],*rows=[NSMutableArray new];NSArray *ids=@[@11,@42,@103,@890,@2048];
     for(NSUInteger n=0;n<ids.count;n++){DSOwnSpace *s=[DSOwnSpace new];s.spid=[ids[n]unsignedLongLongValue];s.uuid=n?[NSString stringWithFormat:@"owned-uuid-%lu",(unsigned long)n]:@"";[objects addObject:s];[rows addObject:@{@"sid":ids[n],@"uuid":s.uuid,@"type":@0}];}
     actor.objects=objects;actor.current=objects[0];DSFixtureActor=actor;DSFixtureActorClass=DSOwnSpaces.class;DSFixtureSpaceClass=DSOwnSpace.class;
-    DSFixtureCatalog=@{@"display":@"A153F1CB-1FEA-4D06-B86F-C51369AC1795",@"spaces":rows,@"current":@11,@"active":@11};NSDictionary *original=DSFixtureCatalog;
+    DSFixtureCatalog=@{@"display":@"00000000-0000-0000-0000-000000000001",@"spaces":rows,@"current":@11,@"active":@11};NSDictionary *original=DSFixtureCatalog;
     char folder[]="/private/tmp/hypr-ds-fixture.XXXXXX";if(!mkdtemp(folder))return 2;NSString *directory=@(folder),*path=[directory stringByAppendingPathComponent:@"s"];
     NSDictionary *install=@{@"op":@"install",@"owner":DSIdentity(getpid()),@"peer":DSIdentity(getpid()),@"generation":@{},@"nonce":[@"f" stringByPaddingToLength:64 withString:@"f" startingAtIndex:0],@"epoch":@"own-current-lifetime",@"socket":path};
     NSDictionary *result=DSOwnRun(install);CHECK([result[@"ok"]boolValue],@"explicit_constructor_free_install");

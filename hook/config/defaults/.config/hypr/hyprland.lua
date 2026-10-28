@@ -38,22 +38,22 @@ for _, a in ipairs {
 } do hl.animation(a) end
 
 local function bind(keys, action, desc, opts)
-    opts = opts or {}; opts.description = "[OmniWM] " .. desc
+    opts = opts or {}; opts.description = "[HyprWM] " .. desc
     hl.bind(keys, action, opts)
 end
 for key, direction in pairs { left = "left", right = "right", up = "up", down = "down" } do
-    bind("CTRL + SUPER + " .. key, hl.dsp.focus { direction = direction }, "Фокус: " .. direction)
-    bind("CTRL + SUPER + SHIFT + " .. key, hl.dsp.window.move { direction = direction }, "Перенос: " .. direction)
+    bind("CTRL + SUPER + " .. key, hl.dsp.focus { direction = direction }, "Focus: " .. direction)
+    bind("CTRL + SUPER + SHIFT + " .. key, hl.dsp.window.move { direction = direction }, "Move: " .. direction)
 end
-bind("CTRL + SUPER + Return", hl.dsp.layout("togglesplit"), "Изменить направление деления")
-bind("CTRL + SUPER + F", hl.dsp.window.float { action = "toggle" }, "Плавающее окно")
-bind("SUPER + F", hl.dsp.window.fullscreen { mode = "fullscreen" }, "Полный экран")
-bind("SUPER + SHIFT + Return", hl.dsp.window.fullscreen { mode = "maximized" }, "Развернуть в рабочей области")
-bind("SUPER + Q", hl.dsp.window.close {}, "Закрыть окно")
+bind("CTRL + SUPER + Return", hl.dsp.layout("togglesplit"), "Toggle split direction")
+bind("CTRL + SUPER + F", hl.dsp.window.float { action = "toggle" }, "Toggle floating")
+bind("SUPER + F", hl.dsp.window.fullscreen { mode = "fullscreen" }, "Fullscreen")
+bind("SUPER + SHIFT + Return", hl.dsp.window.fullscreen { mode = "maximized" }, "Maximize in workspace")
+bind("SUPER + Q", hl.dsp.window.close {}, "Close window")
 -- Native keys use the descriptions; the actions also work in the Lua runtime.
 bind("SUPER + W", function()
     hl.dispatch(hl.dsp.window.move { workspace = "special:hidden", follow = false })
-end, "Скрыть окно")
+end, "Hide window")
 bind("SUPER + SHIFT + W", function()
     local parked = hl.get_windows { workspace = "special:hidden" }
     local window = parked[#parked]
@@ -62,7 +62,7 @@ bind("SUPER + SHIFT + W", function()
             workspace = hl.get_active_workspace().id, follow = true })
         hl.dispatch(hl.dsp.focus { window = "address:" .. window.address })
     end
-end, "Вернуть скрытое")
+end, "Restore hidden window")
 bind("SUPER + SHIFT + B", function()
     local active = hl.get_active_window()
     for _, window in ipairs(hl.get_workspace_windows(hl.get_active_workspace().id)) do
@@ -72,9 +72,9 @@ bind("SUPER + SHIFT + B", function()
         end
     end
     if active then hl.dispatch(hl.dsp.focus { window = "address:" .. active.address }) end
-end, "Равные пропорции")
+end, "Balance tiles")
 for i = 1, 10 do
     local key = i == 10 and "0" or tostring(i)
-    bind("SUPER + " .. key, hl.dsp.focus { workspace = i }, "Стол " .. i)
-    bind("CTRL + SUPER + " .. key, hl.dsp.window.move { workspace = i, follow = true }, "Перенести на стол " .. i)
+    bind("SUPER + " .. key, hl.dsp.focus { workspace = i }, "Workspace " .. i)
+    bind("CTRL + SUPER + " .. key, hl.dsp.window.move { workspace = i, follow = true }, "Move to workspace " .. i)
 end
