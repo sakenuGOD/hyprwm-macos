@@ -5,6 +5,14 @@ static NSArray *gHotkeyAppObservers;
 static BOOL hotkeyModifiersDisabled(unsigned mods) {
     return [gDisabledHotkeyModifiers containsObject:@(mods)];
 }
+static BOOL hotkeyBindingDisabled(unsigned key,unsigned mods) {
+    return hotkeyModifiersDisabled(mods) || [gDisabledHotkeyModifiers containsObject:@[@(mods),@(key)]];
+}
+static void addDisabledHotkeyRule(NSMutableSet *disabled,NSDictionary *rule) {
+    NSArray *keys=rule[@"keycodes"];
+    if(!keys){[disabled addObject:rule[@"modifiers"]];return;}
+    for(NSNumber *key in keys)[disabled addObject:@[rule[@"modifiers"],key]];
+}
 static NSSet *disabledHotkeyModifiers(void) {
     NSMutableSet *disabled=[NSMutableSet set];
     for(NSDictionary *rule in gHotkeyAppRules) {
@@ -12,14 +20,14 @@ static NSSet *disabledHotkeyModifiers(void) {
         if(frontmost) {
             NSRunningApplication *app=NSWorkspace.sharedWorkspace.frontmostApplication;
             if(app && !app.terminated && app.bundleIdentifier && [frontmost containsObject:app.bundleIdentifier])
-                [disabled addObject:rule[@"modifiers"]];
+                addDisabledHotkeyRule(disabled,rule);
             continue;
         }
         for(NSString *bundle in rule[@"while_running"]) {
             BOOL running=NO;
             for(NSRunningApplication *app in [NSRunningApplication runningApplicationsWithBundleIdentifier:bundle])
                 if(!app.terminated) {running=YES;break;}
-            if(running) {[disabled addObject:rule[@"modifiers"]];break;}
+            if(running) {addDisabledHotkeyRule(disabled,rule);break;}
         }
     }
     return disabled;
@@ -45,6 +53,16 @@ static BOOL installHotkeyApplicationRules(void) {
         if(![rule isKindOfClass:NSDictionary.class])return NO;
         NSInteger mods;
         if(!repeatInteger(rule[@"modifiers"],-1,65535,&mods) || mods<0 || (mods&~0x1b00))return NO;
+        id keys=rule[@"keycodes"];
+        if(keys) {
+            if(![keys isKindOfClass:NSArray.class] || ![keys count] || [keys count]>128)return NO;
+            NSMutableSet *seen=[NSMutableSet set];
+            for(id value in keys) {
+                NSInteger key;
+                if(!repeatInteger(value,-1,127,&key) || key<0 || [seen containsObject:@(key)])return NO;
+                [seen addObject:@(key)];
+            }
+        }
         if((rule[@"while_running"]!=nil)==(rule[@"while_frontmost"]!=nil))return NO;
         id bundles=rule[@"while_frontmost"]?:rule[@"while_running"];
         if(![bundles isKindOfClass:NSArray.class] || ![bundles count] || [bundles count]>16)return NO;

@@ -17,6 +17,7 @@ static dispatch_queue_t gQ;           // одна последовательна
 static dispatch_source_t gRepeat;     // автоповтор зажатого бинда (repeating в дотфайле)
 static UInt32 gBindingGeneration, gNextBindingGeneration;
 static BOOL hotkeyModifiersDisabled(unsigned mods);
+static BOOL hotkeyBindingDisabled(unsigned key,unsigned mods);
 #define REPEAT_DELAY 0.280            // input.lua: repeat_delay 280
 #define REPEAT_RATE 40.0              //            repeat_rate 40
 
@@ -128,7 +129,7 @@ static BOOL registerBindings(NSArray *rows,BOOL strict) {
     if(!gHotKeyRefs)gHotKeyRefs=[NSMutableArray array];
     for(NSUInteger i=0;i<rows.count;i++) {
         NSDictionary *b=rows[i];if([b[@"event"] isEqual:@"wheel"] || (b[@"enabled"] && ![b[@"enabled"] boolValue]))continue;
-        if(hotkeyModifiersDisabled([b[@"mods"] unsignedIntValue]))continue;
+        if(hotkeyBindingDisabled([b[@"keycode"] unsignedIntValue],[b[@"mods"] unsignedIntValue]))continue;
         EventHotKeyID hid={.signature=generation,.id=(UInt32)i};EventHotKeyRef ref=NULL;
         OSStatus status=RegisterEventHotKey([b[@"keycode"] unsignedIntValue],[b[@"mods"] unsignedIntValue],hid,GetApplicationEventTarget(),0,&ref);
         if(status==noErr)[gHotKeyRefs addObject:[NSValue valueWithPointer:ref]];

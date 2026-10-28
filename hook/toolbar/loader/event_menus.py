@@ -79,10 +79,16 @@ def macho_images(path):
   if not rows:raise ValueError('no supported installed ARM64 main-image UUID')
   return rows
 
+def grant_includes_logic(grant):
+ all_apps=grant.get('all_applications',False);except_logic=grant.get('all_applications_except_logic',False)
+ if type(all_apps)!=bool or type(except_logic)!=bool or all_apps==except_logic:raise ValueError('exactly one explicit all-applications menu policy required')
+ return all_apps
+
 class InstalledBundles:
- def __init__(self,logic_info=None,logic_sha=None):
-  # Logic remains exempt on hosts where it has never been installed. Optional
-  # installed metadata can tighten this identity, never change the exemption.
+ def __init__(self,logic_info=None,logic_sha=None,*,include_logic=False):
+  if type(include_logic)!=bool:raise ValueError('explicit Boolean menu policy required')
+  self.include_logic=include_logic
+  # Optional installed metadata preserves the identity used by legacy grants.
   self.logic_info=None;self.logic_id='com.apple.logic10'
   if logic_info is None:
    if logic_sha is not None:raise ValueError('Logic metadata digest requires its path')
@@ -92,7 +98,7 @@ class InstalledBundles:
   if plistlib.loads(self.logic_info.read_bytes()).get('CFBundleIdentifier')!=self.logic_id:raise ValueError('installed Logic bundle identity differs from the exemption')
  def excluded(self,application):
   # This branch precedes any Runtime.identity/inspect/load call on Logic.
-  return application.get('bundle_id')==self.logic_id
+  return not self.include_logic and application.get('bundle_id')==self.logic_id
  def inspect(self,application):
   bundle=Path(application['bundle_path']).resolve(strict=True);info=bundle/'Contents/Info.plist'
   s=info.stat()
@@ -101,7 +107,7 @@ class InstalledBundles:
   if bundle_id!=application.get('bundle_id') or not isinstance(bundle_id,str) or not bundle_id or not isinstance(name,str) or '/' in name:raise ValueError('event/bundle identifier or executable mismatch')
   executable=(bundle/'Contents/MacOS'/name).resolve(strict=True)
   if str(executable)!=application['executable']:raise ValueError('installed bundle executable mismatch')
-  if bundle_id==self.logic_id:raise ValueError('Logic is exempt before any runtime contact')
+  if self.excluded({'bundle_id':bundle_id}):raise ValueError('Logic is exempt before any runtime contact')
   return {'bundle_id':bundle_id,'bundle_path':str(bundle),'executable':str(executable),'images':macho_images(executable)}
 
 class Runtime(Protocol):
@@ -121,7 +127,8 @@ class Runtime(Protocol):
 
 class MenuManager:
  def __init__(self,directory,grant,key,bundles:InstalledBundles,runtime:Runtime):
-  if len(key)<32 or grant.get('schema')!=1 or grant.get('all_applications_except_logic') is not True or grant.get('logic_bundle_id')!=bundles.logic_id or not grant.get('epoch') or not grant.get('nonce'):raise ValueError('explicit signed all-apps-except-installed-Logic grant required')
+  include_logic=grant_includes_logic(grant)
+  if len(key)<32 or grant.get('schema')!=1 or grant.get('logic_bundle_id')!=bundles.logic_id or getattr(bundles,'include_logic',False) is not include_logic or not grant.get('epoch') or not grant.get('nonce'):raise ValueError('explicit signed matching application menu policy required')
   if grant.get('allow_activation') is not False or grant.get('allow_input') is not False or grant.get('allow_restart') is not False:raise ValueError('menu-only effect contract required')
   self.root=Path(directory);self.grant=grant;self.secret=key;self.bundles=bundles;self.runtime=runtime
   self.owners={};self.attempts={};self.enabled=grant.get('enabled') is True;self.suspended=False
@@ -177,7 +184,7 @@ class MenuManager:
   owner=envelope['payload']
   if owner.get('epoch')!=self.grant['epoch'] or owner.get('nonce')!=self.grant['nonce'] or owner.get('phase')!='applied':raise ValueError('exact root menu handoff epoch/nonce required')
   descriptor=owner['descriptor']
-  if descriptor.get('bundle_id')==self.bundles.logic_id:raise ValueError('Logic cannot be adopted or changed')
+  if self.bundles.excluded(descriptor):raise ValueError('Logic cannot be adopted or changed')
   i=owner['identity'];self.validate_native(owner['proof'],i,descriptor)
   validator=getattr(self.runtime,'verify_existing_owner',None)
   if not callable(validator) or validator(owner) is not True:raise ValueError('actual immutable retained-handle/token receipt chain required')

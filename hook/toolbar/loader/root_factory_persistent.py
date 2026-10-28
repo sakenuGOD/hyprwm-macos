@@ -9,7 +9,7 @@ HERE=Path(__file__).resolve().parent
 info=HERE.stat()
 if HERE.is_symlink() or info.st_uid!=os.getuid() or info.st_mode&0o022:raise ValueError('trusted owned adapter source directory required')
 if str(HERE) not in sys.path:sys.path.insert(0,str(HERE))
-from event_menus import InstalledBundles,MenuManager,private_json,sha,signed_grant
+from event_menus import InstalledBundles,MenuManager,grant_includes_logic,private_json,sha,signed_grant
 from qualified_runtime import QualifiedRuntime
 from persistent_adapter import PersistentMenuAdapter as NativeMenuAdapter
 from legacy_handoff import envelope
@@ -31,7 +31,7 @@ def create(platform,durable_state=None):
   from host_ready_runtime import HostReadyRuntime
   runtime=HostReadyRuntime(directory/'loader',grant_path,key)
  else:raise ValueError('unsupported explicitly selected native menu launcher')
- bundles=InstalledBundles(grant.get('logic_info_plist'),grant.get('logic_info_sha256'))
+ bundles=InstalledBundles(grant.get('logic_info_plist'),grant.get('logic_info_sha256'),include_logic=grant_includes_logic(grant))
  manager=MenuManager(directory/'state',grant,key,bundles,runtime)
  if durable_state is None:
   def durable_state():return private_json(Path(platform.runtime)/'state.json')

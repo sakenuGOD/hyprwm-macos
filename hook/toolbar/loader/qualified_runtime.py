@@ -6,7 +6,7 @@ the exact event birth; importing this source never discovers or queries a PID.
 from __future__ import annotations
 import ctypes,fcntl,hashlib,importlib.util,json,os,plistlib,socket,stat,subprocess,time,uuid
 from pathlib import Path
-from event_menus import InstalledBundles,PreparationPending,atomic,canonical,identity,private_json,sha,signed_grant
+from event_menus import InstalledBundles,PreparationPending,atomic,canonical,grant_includes_logic,identity,private_json,sha,signed_grant
 
 HERE=Path(__file__).resolve().parent
 LIFECYCLE=HERE.parents[1]/'lifecycle.py'
@@ -38,14 +38,15 @@ class QualifiedRuntime:
  def __init__(self,directory,grant_path,key):
   self.directory=private_directory(directory);self.grant_path=Path(grant_path).resolve(strict=True);self.key=key
   self._grant=self.grant()
-  self.bundles=InstalledBundles(self._grant.get('logic_info_plist'),self._grant.get('logic_info_sha256'))
+  self.bundles=InstalledBundles(self._grant.get('logic_info_plist'),self._grant.get('logic_info_sha256'),include_logic=grant_includes_logic(self._grant))
   self.source_pins={name:sha(HERE/name) for name in ('qualified_runtime.py','generic-driver.txt','qualified-symbols.txt')}
   for name,digest in self._grant['runtime_source_pins'].items():checked_file(HERE/name,digest)
   if self.source_pins!=self._grant['runtime_source_pins']:raise ValueError('complete exact runtime source pins required')
   checked_file(LIFECYCLE,LIFECYCLE_SHA)
  def grant(self):
   v=signed_grant(self.grant_path,self.key)
-  if v.get('schema')!=1 or v.get('all_applications_except_logic') is not True or any(v.get(k) is not False for k in ('allow_activation','allow_input','allow_restart')):raise ValueError('explicit menu-only root grant required')
+  grant_includes_logic(v)
+  if v.get('schema')!=1 or any(v.get(k) is not False for k in ('allow_activation','allow_input','allow_restart')):raise ValueError('explicit menu-only root grant required')
   return v
  def identity(self,pid):return native_identity(pid)
  def generation_retired(self,previous):
@@ -91,7 +92,7 @@ class QualifiedRuntime:
   if type(policy)!=dict or type(policy.get('enabled'))!=bool:raise ValueError('explicit signed first-map policy required')
   revoking=policy['enabled'] is False
   if not revoking and (type(policy.get('server_executable'))!=str or not policy['server_executable'].startswith('/')):raise ValueError('exact first-map server executable required')
-  if d.get('bundle_id')==self.bundles.logic_id or d['executable'] in policy.get('protected_executables',[]):raise ValueError('protected application cannot receive first-map grant')
+  if (not grant_includes_logic(grant) and d.get('bundle_id')==self.bundles.logic_id) or d['executable'] in policy.get('protected_executables',[]):raise ValueError('protected application cannot receive first-map grant')
   if policy.get('mode')=='external-v3':
    if revoking:return False # The WM owns admission; this loader never revokes it.
    server=self.first_map_server(policy)
@@ -177,7 +178,7 @@ class QualifiedRuntime:
   finally:os.close(fd)
  def authorize(self,i,d,request,off=False):
   grant=self.grant()
-  if d.get('bundle_id')==self.bundles.logic_id:raise ValueError('installed Logic is exempt; no attach')
+  if not grant_includes_logic(grant) and d.get('bundle_id')==self.bundles.logic_id:raise ValueError('installed Logic is exempt; no attach')
   gate=getattr(self,'effect_gate',None)
   if not off and callable(gate) and gate() is not True:raise PreparationPending('authenticated session gate closed before native operation')
   if grant.get('qualification_scope')=='own-fixture' and i['executable'] not in grant.get('own_fixture_executables',[]):raise ValueError('own qualification grant cannot target any owner/system process')
