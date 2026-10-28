@@ -75,6 +75,20 @@ static int B15Connect(NSDictionary *binding){
     return fd;
 }
 static BOOL B15Send(int fd,NSDictionary *binding,NSDictionary *command){NSMutableDictionary *request=[command mutableCopy];for(NSString *key in @[@"identity",@"capability",@"lease"])request[key]=binding[key];NSData *json=[NSJSONSerialization dataWithJSONObject:request options:0 error:NULL];if(!json||json.length>8190)return NO;NSMutableData *line=[json mutableCopy];[line appendBytes:"\n" length:1];int noSignal=1;setsockopt(fd,SOL_SOCKET,SO_NOSIGPIPE,&noSignal,sizeof(noSignal));return send(fd,line.bytes,line.length,0)==(ssize_t)line.length;}
+// Native first application-menu heading may use the single U+0014 marker.
+// Normalize only its display label; the original heading ID/epoch still route the submenu.
+static NSDictionary *B15PresentationSnapshot(id value,NSDictionary *binding){
+    if(![value isKindOfClass:NSDictionary.class])return value;
+    id headings=value[@"headings"];if(![headings isKindOfClass:NSArray.class]||![headings count])return value;
+    id first=headings[0];if(![first isKindOfClass:NSDictionary.class]||![first[@"title"] isEqual:@"\x14"])return value;
+    NSDictionary *owner=binding[@"identity"];pid_t pid=[owner[@"pid"] intValue];
+    if(![value[@"identity"] isEqual:owner]||!B15SameBirth(B15Birth(pid),owner))return nil;
+    NSString *name=[NSRunningApplication runningApplicationWithProcessIdentifier:pid].localizedName;
+    if(!boundedString(name,256)||!name.length)return nil;
+    NSMutableDictionary *row=[first mutableCopy];row[@"title"]=name;
+    NSMutableArray *rows=[headings mutableCopy];rows[0]=row;
+    NSMutableDictionary *snapshot=[value mutableCopy];snapshot[@"headings"]=rows;return snapshot;
+}
 static BOOL B15SnapshotValid(id value,NSDictionary *binding){
     if(![value isKindOfClass:NSDictionary.class]||![value[@"schema"] isEqual:@1]||![value[@"version"] isEqual:@7]||!leaseTrue(value[@"ok"])||![value[@"identity"] isEqual:binding[@"identity"]]||![B15UUID(value[@"module_uuid"]) isEqual:B15UUID(binding[@"module_uuid"])])return NO;
     if(!positiveInteger(value[@"epoch"])||![value[@"headings"] isKindOfClass:NSArray.class]||[value[@"headings"] count]>128)return NO;
@@ -147,7 +161,7 @@ static BOOL B15SnapshotValid(id value,NSDictionary *binding){
             if(count<=0){[self closeReader];[self publish:nil reason:@"menu-endpoint-closed" generation:generation];return;}[self.input appendBytes:bytes length:(NSUInteger)count];
             if(self.input.length>131072){[self closeReader];[self publish:nil reason:@"menu-endpoint-overflow" generation:generation];return;}
             while(YES){const uint8_t *buffer=self.input.bytes;NSUInteger index=0;while(index<self.input.length&&buffer[index]!='\n')index++;if(index==self.input.length)break;
-                NSData *line=[self.input subdataWithRange:NSMakeRange(0,index)];[self.input replaceBytesInRange:NSMakeRange(0,index+1) withBytes:NULL length:0];id snapshot=[NSJSONSerialization JSONObjectWithData:line options:0 error:NULL];
+                NSData *line=[self.input subdataWithRange:NSMakeRange(0,index)];[self.input replaceBytesInRange:NSMakeRange(0,index+1) withBytes:NULL length:0];id snapshot=[NSJSONSerialization JSONObjectWithData:line options:0 error:NULL];snapshot=B15PresentationSnapshot(snapshot,binding);
                 if(!B15SnapshotValid(snapshot,binding)||!B15SameBirth(B15Birth([front[@"pid"] intValue]),front)){[self closeReader];[self publish:nil reason:@"menu-owner-or-snapshot-changed" generation:generation];return;}
                 [self cancelFirstSnapshotDeadline];[self publish:snapshot reason:leaseTrue(snapshot[@"suppressed"])?@"native-representation-hidden":@"native-representation-not-hidden" generation:generation];}
         });dispatch_resume(self.reader);
