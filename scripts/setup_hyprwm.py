@@ -348,6 +348,17 @@ def validate_workspace_receipt(directory, uid, active, peer, service, identity):
     return str(directory)
 
 
+def manager_hook(executable, home):
+    executable = Path(executable)
+    candidates = (ROOT / 'hook', Path(home) / 'Applications/HyprWM.app/Contents/Resources/hook',
+                  *executable.parents)
+    for hook in candidates:
+        release = hook / 'swift/.build/release/hyprwm-swift'
+        if release.is_file() and release.resolve(strict=True) == executable:
+            return hook.resolve(strict=True)
+    return None
+
+
 def inspect_active(uid):
     """Read-only root inspection, restricted to existing native receipt roots."""
     need(os.geteuid() == 0 and uid > 0 and not sys.flags.optimize, 'Active inspection requires explicit root and a desktop UID.')
@@ -376,6 +387,7 @@ def inspect_active(uid):
     need(len(candidates) <= 1, 'Multiple current native receipts match; resolve the ambiguous owned session explicitly.')
     active = candidates[0] if candidates else None
     if active:
+        peer = None
         try:
             with socket.socket(socket.AF_UNIX) as connection:
                 connection.settimeout(3)
@@ -385,11 +397,9 @@ def inspect_active(uid):
             need(peer and peer['uid'] == uid, 'Different manager owner')
             active['manager'] = peer['path']
             user_home = Path(pwd.getpwuid(uid).pw_dir)
-            for hook in (ROOT / 'hook', user_home / 'Applications/HyprWM.app/Contents/Resources/hook'):
-                if (hook / 'swift/.build/release/hyprwm-swift').resolve() == Path(peer['path']):
-                    active['hook'] = str(hook.resolve())
-                    break
-            need(active.get('hook'), 'Current manager does not belong to this checkout or its installed app')
+            hook = manager_hook(peer['path'], user_home)
+            need(hook is not None, 'Current manager has no exact matching lifecycle hook')
+            active['hook'] = str(service.canonical(hook, (0, uid), directory=True))
             peer = authenticated_manager(Path(active['manager']), uid)
             active['manager_identity'] = service.actor(peer)
             active['manager_sha256'] = sha(active['manager'])
@@ -397,7 +407,9 @@ def inspect_active(uid):
         except (FileNotFoundError, ConnectionRefusedError):
             pass
         workspaces = []
-        for directory in Path('/private/tmp').glob('hyprwm-workspace-bootstrap-*'):
+        directories = (Path('/private/tmp').glob('hyprwm-workspace-bootstrap-*')
+                       if peer is not None and active.get('manager_verified') else ())
+        for directory in directories:
             try:
                 workspaces.append(validate_workspace_receipt(directory, uid, active, peer, service, prepare_native.identity))
             except (OSError, KeyError, ValueError, RuntimeError):
