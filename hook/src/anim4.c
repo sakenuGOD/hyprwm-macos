@@ -12,7 +12,7 @@
 //
 // The main-thread timer ticks in phase with the selected WS display's vblank.
 // anim_frame is not installed in metalCallbacks: rescheduling would break the phase.
-// Build: build_anim4.sh (flat __TEXT image, no relocations or __DATA references).
+// Build: python3 hook/tools/build_native.py (flat native image).
 #include "chan.h"
 #include "live_edge.h"
 #include "../effects/config_command.h"
