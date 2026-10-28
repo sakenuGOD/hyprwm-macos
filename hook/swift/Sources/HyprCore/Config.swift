@@ -75,6 +75,14 @@ public final class HyprConfig {
         if rebuild {
             let cacheT = (try? fm.attributesOfItem(atPath: cache)[.modificationDate] as? Date)?.timeIntervalSince1970
             if cacheT == nil || cacheT! < newestLua(home + "/.config/hypr") {
+                let searchPath = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
+                let luaAvailable = searchPath.split(separator: ":", omittingEmptySubsequences: false).contains { directory in
+                    fm.isExecutableFile(atPath: (directory.isEmpty ? fm.currentDirectoryPath : String(directory)) + "/lua")
+                }
+                guard luaAvailable else {
+                    throw NSError(domain: "hyprcfg", code: 2, userInfo: [NSLocalizedDescriptionKey:
+                        "lua not found; install it with \"brew install lua\" or set rebuild=false"])
+                }
                 let p = Process()
                 p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
                 p.arguments = ["lua", configDir + "/hypr_shim.lua", home, cache]
