@@ -1,0 +1,22 @@
+name: Build Swift app
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build Swift daemon
+        run: ./scripts/build-hyprwm
+      # The suite has three known source/reference mismatches tracked in #21.
+      # Enable this step when those failures are resolved. It needs no engine setup.
+      # - name: Test Swift daemon
+      #   run: ./scripts/test-hyprwm
