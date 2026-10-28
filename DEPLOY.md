@@ -58,6 +58,111 @@ or WindowServer replacement invalidates it; preserve the refusal and prepare a
 new qualified session. Never replay old addresses, copy a receipt to another
 Mac, or put generated OS code, receipts and private captures in Git.
 
+## Qualified native-session autostart
+
+`scripts/install_autostart.py` installs one root native-session LaunchDaemon and
+one desktop-user backend LaunchAgent. It is an explicit native deployment for
+the qualified build above. Keep the separately installed toolbar LaunchAgent;
+this installer starts the existing lifecycle with `menu=True` to include its
+Swift settings and Quit controls alongside the workspace toolbar. Build the Swift release executable,
+the existing hotkey helper and the approved workspace images before installing.
+It does not build code or alter SIP, boot policy or task-attachment permissions.
+
+Review the service sources and record their identity before running root code:
+
+```sh
+python3 scripts/install_autostart.py inspect --root /absolute/reviewed/checkout
+```
+
+The result includes `toolgraph_sha256`. Pass that reviewed value explicitly,
+along with the approved native linked-image SHA-256 and the exact canonical
+manager executable SHA-256. The native image is the `probe-eh.dylib` produced
+by the qualified native build; workspace images come from `build_workspaces.py`.
+That normal-user builder also produces `ProcessIdentity.dylib` from the
+unchanged, independently pinned public `managed_process_identity.c` source and
+adds its hash to `workspace-images.json`. This arm64, ad-hoc-signed helper has
+no constructors and depends only on libSystem. For an older workspace build,
+pass a separately reviewed helper with both `--identity-helper /absolute/helper.dylib`
+and `--identity-sha256 REVIEWED_HELPER_SHA256`. Installation freezes it under
+`graph/identity/ProcessIdentity.dylib` and verifies its hash, Mach-O loading
+behavior and signature; installation never compiles it as root.
+All input paths must be canonical, owned by root or the desktop user, without
+symlinks or shared write access. Use the resolved release executable path
+instead of Swift's `.build/release` directory symlink.
+
+```sh
+sudo /usr/bin/python3 -S scripts/install_autostart.py install \
+  --uid "$(id -u)" --root /absolute/reviewed/checkout \
+  --hook /absolute/existing/hook \
+  --manager-executable /absolute/canonical/release/hyprwm-swift \
+  --manager-sha256 REVIEWED_MANAGER_SHA256 \
+  --toolgraph-sha256 REVIEWED_TOOLGRAPH_SHA256 \
+  --native-image /absolute/private/native-image/probe-eh.dylib \
+  --native-sha256 REVIEWED_NATIVE_IMAGE_SHA256 \
+  --workspace-image-dir /absolute/private/workspace-build
+```
+
+A running qualified session must be adopted explicitly instead of being
+prepared again. Add `--adopt-activation /private/tmp/.../activation.json` and,
+when the workspace bridge is already published,
+`--adopt-workspaces /private/tmp/hyprwm-workspace-bootstrap-RECEIPT`.
+Adoption checks the root receipts, exact current process births, approved native
+image, state and channel publications, advancing timer, and completed workspace
+lease. It performs no native attachment. Without adoption, no manager may be
+running when the service prepares the first session.
+
+The installer freezes the reviewed tools and images under the root-protected
+`/Library/Application Support/HyprWM/native-session-UID/graph`. The configured
+user hook and its configuration stay in place. At login the root service waits
+for that console owner, an active display and a running canonical WindowServer.
+Each new WindowServer birth gets a new private `engine.state` path. The user
+service waits for root readiness for that exact birth, passes
+`HYPRWM_ENGINE_STATE` explicitly and uses the existing lifecycle to start the
+daemon only after two public C sysctl birth readings and two canonical
+`proc_pidpath` readings match the ready WindowServer's exact PID, UID 88,
+birth timestamp and executable. This retains the birth/executable fence when
+macOS refuses cross-UID `proc_pidinfo` to the desktop user. The root native
+supervisor keeps its existing process identity and running-state checks; the
+helper is loaded only by the desktop user. The lifecycle starts the
+approved daemon, hotkeys and Swift controls companion. The user supervisor
+watches both daemon and controls process exits. An independent controls crash
+restarts the missing companion through the existing lifecycle while preserving
+the running daemon. On daemon departure it waits up to 30 seconds for the
+lifecycle lock, then restarts only if the exact old ownership record remains.
+The existing Quit action removes that record, so intentional Quit stays quit.
+Unconfirmed departure ownership stops automatic restart and retains evidence.
+The root service then waits for the verified
+approved daemon and Dock before running the existing workspace bootstrap with
+`--replace-stale`. A current Dock lease is preserved; an already completed
+bootstrap must be adopted rather than installed twice.
+
+Both jobs use `RunAtLoad` and `KeepAlive` after an unsuccessful exit, with a
+30-second launchd throttle. Prerequisites have bounded startup waits. Once
+ready, the supervisors block on kernel process-exit events instead of polling.
+A durable marker precedes each native attempt. An interrupted or ambiguous
+attempt is quarantined for that WindowServer birth and requires explicit
+receipt-based recovery; launchd never retries an uncertain attachment. Old
+native addresses are never replayed in a new WindowServer. Only an exact owned
+old channel publication may be cleared after its original server has departed.
+
+Inspect readiness and remove the owned services with:
+
+```sh
+python3 scripts/install_autostart.py status --uid "$(id -u)"
+sudo /usr/bin/python3 -S scripts/install_autostart.py remove --uid "$(id -u)"
+```
+
+Removal first disables the two jobs, then uses the existing user lifecycle to
+restore and drain the daemon and stop only its recorded helpers. With the same
+WindowServer still alive, it runs the guarded native activation inverse. A
+pending restore or uncertain native result preserves all runtime files and
+receipts for recovery. Successful removal deletes only its verified launchd
+plists; the protected code graph, audit receipts, retained native mappings and
+workspace evidence remain available. The separate toolbar service keeps its
+own restoration and removal procedure. Status and install acceptance alone do
+not establish reboot behavior: verify readiness and actual tiling, shortcuts,
+toolbar and workspace behavior after a user-authorized reboot/login.
+
 ## Restoring native workspace switching
 
 The workspace bridge is separate from the WindowServer presentation engine.
@@ -211,6 +316,58 @@ It requires a qualified native image advertising the viewport capability;
 older engines refuse the command. Build and qualify that native image using
 the tools above; installing the app alone preserves the existing engine.
 Reset/drop live viewports before stopping or replacing the engine.
+
+## Optional native toolbar
+
+The checkout includes the workspace toolbar, original-menu representation,
+crop controls and an optional owned session supervisor. Build the component
+without launching or installing it:
+
+```sh
+python3 hook/toolbar/build.py --output /absolute/new/toolbar-build
+```
+
+The build produces source hashes, signed app/module outputs and unqualified
+profiles. Menu relocation and workspace actions remain disabled. A build
+receipt does not authorize enabling them or replacing an existing installation.
+For a fresh runtime, `hook/toolbar/manage.py prepare --source
+/absolute/new/toolbar-build --settings-source /absolute/reviewed/toolbar-paths.json`
+stages a disabled installation. The owned settings source must name canonical
+`forest_path` and `wm_executable` paths; optional IPC paths must match the
+intended daemon. Existing toolbar, menu and ownership graphs are preserved and
+require an explicit migration rather than fresh preparation.
+
+Session `configure` requires an explicit owned configuration; `enable` requires
+matching actual local evidence for original menu access, panel placement and
+disable/restore. Menu enable also requires the qualified signed menu graph and
+its separate external-v3 first-map owner. Installing the service does not
+replace those gates. Inspect or disable an already configured session with:
+
+```sh
+python3 hook/toolbar/manage.py status
+python3 hook/toolbar/manage.py disable
+```
+
+App updates and removal preserve a configured toolbar until its owned restore
+and migration checks complete. Full clean-install enable, migration, active
+cropped-content input, fullscreen switching and next-login behavior are not
+established by this source publication. See the [component notes](hook/toolbar/README.md).
+
+The [Telegram main-only appearance sources](hook/toolbar/appearance/README.md)
+are a separate, inactive source export. They omit private controller templates,
+authorization state and binaries; the public session does not load them.
+
+## Experimental configure-stream source
+
+`hook/configure-stream/` and its Swift/C readers are the C1 source candidate.
+The path remains off by default, with no automatic loader or grant renewal.
+No installer or autostart command above enables it. A receiver build or passing
+policy checks does not qualify changed-frame behavior. Loading requires a
+separately reviewed retained loader, exact current process/window bindings,
+protected root grant and disposable native qualification. Keep existing native
+fallbacks and do not treat source publication as permission to create grants or
+activate C1. The [interface contract](hook/configure-stream/ConfigureStream.h)
+records its identity and refusal requirements.
 
 ## Native presentation updates
 

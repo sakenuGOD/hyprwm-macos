@@ -4,6 +4,10 @@ import HyprCore
 
 /// Observes the WM's existing census. It never polls AX or mutates windows.
 final class EcosystemAPI {
+    private struct SessionGate: Equatable {
+        let enabled: Bool
+        let verified: Bool
+    }
     private struct Identity: Equatable {
         let wid: Int
         let pid: Int
@@ -26,6 +30,8 @@ final class EcosystemAPI {
     private var previousSpace: Int?
     private var previousFocus: Int?
     private var previousTilingOrder: [String: [Int]]?
+    private var previousGate: SessionGate?
+    private var previousViewport: JSON?
     private var sequence = 0
 
     init(path: String) throws {
@@ -81,13 +87,17 @@ final class EcosystemAPI {
     }
 
     /// Call on the WM main queue after a normal tick, using its cached snapshot.
-    func observe(windows: [WinInfo], space: Int, focusedWindow: Int?, tilingOrder: [String: [Int]] = [:]) {
+    func observe(windows: [WinInfo], space: Int, focusedWindow: Int?, tilingOrder: [String: [Int]] = [:], enabled: Bool = true, verified: Bool = true, viewport: JSON? = nil) {
+        let gate = SessionGate(enabled: enabled, verified: verified)
         var current: [Int: Identity] = [:]
         for window in windows where window.layer == 0 && window.wid > 0 && window.pid > 0 {
             current[window.wid] = Identity(wid: window.wid, pid: window.pid, space: window.space)
         }
-        defer { previousWindows = current; previousSpace = space; previousFocus = focusedWindow; previousTilingOrder = tilingOrder }
+        defer { previousWindows = current; previousSpace = space; previousFocus = focusedWindow; previousTilingOrder = tilingOrder; previousGate = gate; previousViewport = viewport }
         guard let previous = previousWindows else { return }
+        // A sequenced hint only: consumers re-read status from its exact peer.
+        if previousGate != gate { emit("session_changed", window: nil, space: space) }
+        if previousViewport != viewport { emit("viewport_changed", window: nil, space: space) }
         for wid in previous.keys.sorted() where current[wid]?.pid != previous[wid]?.pid {
             emit("window_closed", window: previous[wid], space: space)
         }
@@ -130,7 +140,7 @@ final class EcosystemAPI {
             var one: Int32 = 1
             setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
             let subscriber = Subscriber(fd: client)
-            subscriber.pending = Data("{\"event\":\"connected\",\"version\":1}\n".utf8)
+            subscriber.pending = Data("{\"event\":\"connected\",\"version\":1,\"capabilities\":[\"session-gate\",\"viewport-events\"]}\n".utf8)
             subscribers.append(subscriber)
         }
         flush()

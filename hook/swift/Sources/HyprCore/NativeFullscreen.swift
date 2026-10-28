@@ -75,6 +75,8 @@ extension WM {
             if let window, window.nativeFullscreen || window.on { continue }
             if let window, window.space == 0 && !nativeConfirmed.contains(wid) { continue }
             if window == nil && sys.winBounds(wid) == nil { continue }
+            // A speculative fullscreen gap must not outlive exact close evidence.
+            if source[wid]==String(space),confirmedCloseDeparture(wid,space:space,windows:windows) { continue }
             let since=nativeReturnSince[wid] ?? sys.now(); returnTimes[wid]=since
             if sys.now()-since < 1 { native.insert(wid); returning.insert(wid) }
         }

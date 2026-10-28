@@ -1,0 +1,41 @@
+ def native_symbol(name):
+  expected={'pthread_main_np':'/usr/lib/system/libsystem_pthread.dylib',
+            'dlopen':'/usr/lib/system/libdyld.dylib','dlsym':'/usr/lib/system/libdyld.dylib',
+            'dlclose':'/usr/lib/system/libdyld.dylib',
+            'malloc':'/usr/lib/system/libsystem_malloc.dylib','free':'/usr/lib/system/libsystem_malloc.dylib'}[name]
+  # Record all returned kinds, but only a genuine Code symbol can authorize a call.
+  values=set();contexts=target.FindSymbols(name,lldb.eSymbolTypeCode);count=contexts.GetSize()
+  rows=[];receipt.setdefault('native_symbol_candidates',{})[name]={'expected_name':name,'expected_image':expected,'count':count,'rows':rows}
+  if count>512:raise RuntimeError('bounded native symbol candidates exceeded: '+name)
+  for index in range(count):
+   context=contexts.GetContextAtIndex(index);module=context.GetModule();symbol=context.GetSymbol()
+   image=path(module.GetFileSpec());actual_name=symbol.GetName();address=symbol.GetStartAddress().GetLoadAddress(target)
+   row={'name':actual_name[:256] if actual_name else None,'symbol_type':int(symbol.GetType()),'image':image[:1024] if image else None,
+        'image_uuid':uuid(module.GetUUIDString() or ''),'address':hex(address),'accepted':False};rows.append(row)
+   if symbol.GetType()!=lldb.eSymbolTypeCode:row['refusal']='non-code-symbol-type';continue
+   if actual_name!=name:row['refusal']='nonexact-symbol-name';continue
+   if image!=expected:row['refusal']='wrong-native-image';continue
+   if not address or address==lldb.LLDB_INVALID_ADDRESS:row['refusal']='invalid-load-address';continue
+   owner=target.ResolveLoadAddress(address).GetModule()
+   if not owner.IsValid() or path(owner.GetFileSpec())!=expected or uuid(owner.GetUUIDString() or '')!=row['image_uuid']:
+    row['refusal']='load-address-owner-mismatch';continue
+   row['accepted']=True;values.add(address)
+  if len(values)!=1:raise RuntimeError('exact native symbol unavailable/ambiguous: '+name+'; exact distinct addresses='+str(len(values)))
+  address=values.pop();receipt.setdefault('native_symbol_selected',{})[name]={'name':name,'image':expected,'address':hex(address)}
+  return address
+ def export_code(name):
+  if name!='hypr_appmenus_v1_json':raise RuntimeError('unreviewed C export refused')
+  contexts=target.FindSymbols(name,lldb.eSymbolTypeCode);count=contexts.GetSize();values=set();rows=[]
+  receipt['export_code_candidates']={'name':name,'count':count,'rows':rows,'expected_image':ARTIFACT,'expected_uuid':MODULE_UUID}
+  if count>512:raise RuntimeError('bounded exact C export candidates exceeded')
+  for index in range(count):
+   context=contexts.GetContextAtIndex(index);module=context.GetModule();symbol=context.GetSymbol()
+   image=path(module.GetFileSpec());address=symbol.GetStartAddress().GetLoadAddress(target)
+   row={'name':symbol.GetName(),'type':int(symbol.GetType()),'image':image,'uuid':uuid(module.GetUUIDString() or ''),'address':hex(address),'accepted':False};rows.append(row)
+   if symbol.GetType()!=lldb.eSymbolTypeCode or symbol.GetName()!=name or image!=ARTIFACT or row['uuid']!=MODULE_UUID:continue
+   if not address or address==lldb.LLDB_INVALID_ADDRESS:continue
+   owner=target.ResolveLoadAddress(address).GetModule()
+   if not owner.IsValid() or path(owner.GetFileSpec())!=ARTIFACT or uuid(owner.GetUUIDString() or '')!=MODULE_UUID:continue
+   row['accepted']=True;values.add(address)
+  if len(values)!=1:raise RuntimeError('exact loaded C export Code address absent/ambiguous')
+  return values.pop()

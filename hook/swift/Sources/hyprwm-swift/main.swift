@@ -376,7 +376,8 @@ timer.setEventHandler {
     }
     wm.tick(socketReady:false)
     if let last=wm.last {ecosystemAPI?.observe(windows:last.wins,space:last.space,focusedWindow:wm.sp(last.space).focus,
-        tilingOrder:Dictionary(uniqueKeysWithValues:wm.spaces.map { ($0.0,Dwindle.leaves($0.1.tree).compactMap(\.wid)) }))}
+        tilingOrder:Dictionary(uniqueKeysWithValues:wm.spaces.map { ($0.0,Dwindle.leaves($0.1.tree).compactMap(\.wid)) }),
+        enabled:wm.enabled,verified:wm.startupCompatibility?["verified"] == .bool(true),viewport:wm.cachedViewportEventState())}
 }
 timer.resume()
 

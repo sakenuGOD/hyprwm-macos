@@ -3,8 +3,208 @@
 import AppKit
 import CAX
 import CSnap
+import CryptoKit
+import Darwin
 import Foundation
 import HyprCore
+
+private enum ConfigureStreamRoot {
+    static func integer(_ value:JSON?) -> Int? {if case let .int(n)?=value{return n};return nil}
+    static func number(_ value:JSON?) -> Double? {guard let n=value?.double,n.isFinite else{return nil};return n}
+    static func hex(_ value:String,_ count:Int) -> Bool {value.utf8.count==count && value.allSatisfy{"0123456789abcdef".contains($0)}}
+    static func uuid(_ value:JSON?) -> String? {
+        guard let text=value?.string,let parsed=UUID(uuidString:text),parsed.uuidString==text else{return nil};return text
+    }
+    static func digest(_ data:Data) -> String {SHA256.hash(data:data).map{String(format:"%02x",$0)}.joined()}
+    static func cohort(_ values:JSON?) -> [Int:String]? {
+        guard let rows=values?.array,!rows.isEmpty,rows.count<=32 else{return nil}
+        var result:[Int:String]=[:]
+        for row in rows {
+            guard let wid=integer(row["wid"]),wid>0,wid<=Int(UInt32.max),result[wid]==nil,
+                  let object=row["object"]?.string,!object.isEmpty,object.count<=16,
+                  hex(object,object.count),let address=UInt64(object,radix:16),address>0,
+                  String(address,radix:16)==object else{return nil}
+            result[wid]=object
+        }
+        return result
+    }
+    static func frame(_ value:JSON?) -> Rect? {
+        guard let values=value?.array,values.count==4 else{return nil}
+        let numbers=values.compactMap{number($0)}
+        guard numbers.count==4,numbers[2]>0,numbers[3]>0 else{return nil}
+        return Rect(numbers[0],numbers[1],numbers[2],numbers[3])
+    }
+    static func stable(_ a:stat,_ b:stat) -> Bool {
+        a.st_dev==b.st_dev && a.st_ino==b.st_ino && a.st_size==b.st_size && a.st_mode==b.st_mode &&
+        a.st_uid==b.st_uid && a.st_nlink==b.st_nlink && a.st_mtimespec.tv_sec==b.st_mtimespec.tv_sec &&
+        a.st_mtimespec.tv_nsec==b.st_mtimespec.tv_nsec && a.st_ctimespec.tv_sec==b.st_ctimespec.tv_sec &&
+        a.st_ctimespec.tv_nsec==b.st_ctimespec.tv_nsec
+    }
+    /// Each component is opened relative to its protected parent, never through
+    /// a symlink or an environment/caller supplied authority override.
+    static func read(_ path:String,maximum:Int,requiredMode:Int?=nil) -> Data? {
+        guard path.hasPrefix("/") else{return nil}
+        let parts=path.split(separator:"/",omittingEmptySubsequences:false).dropFirst().map(String.init)
+        guard !parts.isEmpty,parts.allSatisfy({!$0.isEmpty && $0 != "." && $0 != ".."}) else{return nil}
+        var directory=open("/",O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)
+        guard directory>=0 else{return nil}
+        defer{close(directory)}
+        var rootInfo=stat()
+        guard fstat(directory,&rootInfo)==0,rootInfo.st_uid==0,rootInfo.st_mode&0o022==0 else{return nil}
+        for part in parts.dropLast() {
+            let next=openat(directory,part,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC)
+            guard next>=0 else{return nil}
+            close(directory);directory=next
+            var info=stat()
+            guard fstat(directory,&info)==0,info.st_uid==0,info.st_mode&0o022==0 else{return nil}
+        }
+        guard let name=parts.last else{return nil}
+        let fd=openat(directory,name,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC)
+        guard fd>=0 else{return nil};defer{close(fd)}
+        var before=stat(),after=stat(),named=stat()
+        guard fstat(fd,&before)==0,before.st_mode&S_IFMT==S_IFREG,before.st_uid==0,
+              before.st_mode&0o022==0,before.st_nlink==1,before.st_size>0,before.st_size<=maximum,
+              requiredMode==nil || Int(before.st_mode&0o7777)==requiredMode else{return nil}
+        var data=Data(count:Int(before.st_size)),used=0
+        while used<data.count {
+            let remaining=data.count-used
+            let count=data.withUnsafeMutableBytes{Darwin.read(fd,$0.baseAddress!.advanced(by:used),remaining)}
+            if count<0 && errno==EINTR {continue}
+            guard count>0 else{return nil};used+=count
+        }
+        guard fstat(fd,&after)==0,fstatat(directory,name,&named,AT_SYMLINK_NOFOLLOW)==0,
+              stable(before,after),stable(after,named) else{return nil}
+        return data
+    }
+}
+
+private extension LiveSys {
+    func streamActorCurrent(_ actor:JSON?,pid:Int?=nil,sameUser:Bool=false) -> Bool {
+        guard let actor,let birth=actor["birth"]?.array,birth.count==4,
+              let process=ConfigureStreamRoot.integer(birth[0]),process>1,process<=Int(Int32.max),pid==nil || pid==process,
+              let uid=ConfigureStreamRoot.integer(birth[1]),uid>=0,uid<=Int(UInt32.max),!sameUser || uid==Int(getuid()),
+              let seconds=ConfigureStreamRoot.integer(birth[2]),seconds>0,seconds<=9_007_199_254_740_991,
+              let micros=ConfigureStreamRoot.integer(birth[3]),micros>=0,micros<1_000_000,
+              let path=actor["executable"]?.string,path.hasPrefix("/"),path.utf8.count<4096,
+              let current=try? VerifiedPublicWorkspace.identity(process),let fields=current.array,fields.count==5,
+              let after=try? VerifiedPublicWorkspace.identity(process),after==current else{return false}
+        return Array(fields.prefix(4))==birth && fields[4] == .string(path)
+    }
+    func streamLoaderApproved(_ grant:JSON,cohort:[Int:String],uid:Int) -> Bool {
+        guard let qualification=grant["qualification"],let path=qualification["loader_receipt"]?.string,
+              let expected=qualification["loader_sha256"]?.string,ConfigureStreamRoot.hex(expected,64),
+              let imageHash=qualification["module_sha256"]?.string,ConfigureStreamRoot.hex(imageHash,64) else{return false}
+        let prefix="/Library/Application Support/HyprWM/Configure Stream Grants/\(uid)/receipts/"
+        guard path.hasPrefix(prefix),path.hasSuffix("/loaded.json") else{return false}
+        let nonce=String(path.dropFirst(prefix.count).dropLast("/loaded.json".count))
+        guard !nonce.isEmpty,nonce.count<=128,ConfigureStreamRoot.hex(nonce,nonce.count),
+              let bytes=ConfigureStreamRoot.read(path,maximum:65536,requiredMode:0o644),ConfigureStreamRoot.digest(bytes)==expected,
+              let proof=try? JSON.parse(bytes),proof["schema"] == .int(1),proof["kind"] == .string("configure-stream-loader-v1"),
+              proof["phase"] == .string("loaded-inspected"),proof["target"]==grant["target"],proof["manager"]==grant["manager"],
+              proof["window_server"]==grant["window_server"],let handle=ConfigureStreamRoot.integer(proof["handle"]),handle>0,
+              ["actual_main_thread","entry_memory_verified","signature_verified","detached","identity_after_detach",
+               "not_stopped_after_detach","retained"].allSatisfy({proof[$0] == .bool(true)}),
+              ["allow_activation","allow_input","allow_restart"].allSatisfy({proof[$0] == .bool(false)}),
+              let module=proof["module"],module["uuid"]==grant["module_uuid"],module["sha256"] == .string(imageHash),
+              module["entry"] == .string("hypr_configure_stream_v1_json"),
+              module["architecture"] == .string("arm64") || module["architecture"] == .string("arm64e"),
+              let entryPrefix=module["entry_prefix"]?.string,ConfigureStreamRoot.hex(entryPrefix,32),
+              let sourceHash=module["source_sha256"]?.string,ConfigureStreamRoot.hex(sourceHash,64),
+              let response=proof["inspection"],response["ok"] == .bool(true),let inspection=response["inspection"],
+              inspection["ok"] == .bool(true),inspection["target"]==grant["target"],inspection["module_uuid"]==grant["module_uuid"],
+              let inspected=ConfigureStreamRoot.cohort(inspection["windows"]) else{return false}
+        return cohort.allSatisfy{inspected[$0.key]==$0.value}
+    }
+    func configureStreamLease(_ pid:Int,_ wid:Int,_ space:Int,minimumTTL:Double,probeEpoch:Int?) -> ConfigureStreamLease? {
+        let clock=now()
+        guard pid>1,pid<=Int(Int32.max),wid>0,wid<=Int(UInt32.max),space>0,
+              minimumTTL.isFinite,minimumTTL>=0.25,minimumTTL<=30,!protectedProcess(pid),
+              let identity=try? VerifiedPublicWorkspace.identity(pid),let fields=identity.array,fields.count==5,
+              let uid=ConfigureStreamRoot.integer(fields[1]),uid==Int(getuid()),
+              let seconds=ConfigureStreamRoot.integer(fields[2]),seconds>0,
+              let micros=ConfigureStreamRoot.integer(fields[3]),micros>=0,micros<1_000_000 else{return nil}
+        let path="/Library/Application Support/HyprWM/Configure Stream Grants/\(uid)/\(pid)-\(uid)-\(seconds)-\(micros).json"
+        guard let bytes=ConfigureStreamRoot.read(path,maximum:16384),let grant=try? JSON.parse(bytes),
+              grant["schema"] == .int(1),grant["kind"] == .string("configure-stream-v1"),grant["scope"] == .string("qualified-own-windows"),
+              streamActorCurrent(grant["target"],pid:pid,sameUser:true),
+              ConfigureStreamRoot.uuid(grant["target"]?["main_uuid"]) != nil,
+              streamActorCurrent(grant["manager"],pid:Int(getpid()),sameUser:true),streamActorCurrent(grant["window_server"]),
+              let serverBirth=grant["window_server"]?["birth"]?.array,serverBirth.count==4,
+              ConfigureStreamRoot.integer(serverBirth[1])==88,
+              let serverPath=grant["window_server"]?["executable"]?.string,
+              URL(fileURLWithPath:serverPath).resolvingSymlinksInPath().path=="/System/Library/PrivateFrameworks/SkyLight.framework/Versions/A/Resources/WindowServer",
+              let module=ConfigureStreamRoot.uuid(grant["module_uuid"]),ConfigureStreamRoot.uuid(grant["skylight_uuid"]) != nil,
+              let epoch=ConfigureStreamRoot.integer(grant["epoch"]),epoch>0,epoch<=9_007_199_254_740_991,probeEpoch==nil || epoch==probeEpoch,
+              ConfigureStreamRoot.integer(grant["ordinary_space"])==space,
+              let expires=ConfigureStreamRoot.number(grant["expires"]),expires-clock>=minimumTTL,expires<=clock+30,
+              ["allow_activation","allow_input","allow_restart"].allSatisfy({grant[$0] == .bool(false)}),
+              let cohort=ConfigureStreamRoot.cohort(grant["windows"]),let object=cohort[wid],
+              streamLoaderApproved(grant,cohort:cohort,uid:uid),
+              let snapshot=try? focusSnapshot(),snapshot.stable,!snapshot.locked,snapshot.spaceType==0,snapshot.space==space,
+              activeSpace()==UInt64(space) else{return nil}
+        var buffer=[CChar](repeating:0,count:16385),connection:Int32=0
+        let count=hs_copy_configure_stream_json(UInt32(wid),Int32(pid),UInt64(seconds),UInt64(micros),&buffer,UInt32(buffer.count),&connection)
+        guard count>0,let property=try? buffer.withUnsafeBytes({try JSON.parse(Data($0.prefix(Int(count))))}),
+              property["schema"] == .int(1),property["version"] == .int(1),property["kind"] == .string("configure-stream"),
+              property["installed"] == .bool(true),property["enabled"] == .bool(true),property["inactive"] == .bool(false),
+              property["proof_kind"] == .string("synchronous-frame-readback-v1"),property["module_uuid"] == .string(module),
+              property["grant_sha256"] == .string(ConfigureStreamRoot.digest(bytes)),property["epoch"] == .int(epoch),
+              property["target"]==grant["target"],property["manager"]==grant["manager"],property["window_server"]==grant["window_server"],
+              property["ordinary_space"] == .int(space),property["expires"]?.double==expires,property["connection"] == .int(Int(connection)),
+              let generation=ConfigureStreamRoot.integer(property["generation"]),generation>0,
+              let floor=ConfigureStreamRoot.number(property["not_before"]),floor>0,
+              let observed=ConfigureStreamRoot.number(property["observed_at"]),floor<=observed,observed<=now(),now()-observed<=0.2,
+              let rows=property["windows"]?.array,ConfigureStreamRoot.cohort(property["windows"])==cohort else{return nil}
+        let ready=probeEpoch==nil
+        guard property["capability"] == .int(ready ? 6:0) else{return nil}
+        if !ready {
+            guard property["in_flight"] == .int(0),property["drain_scheduled"] == .bool(false),
+                  property["admitted_callbacks"] == .int(0) else{return nil}
+        }
+        var selectedMinimum:(Double,Double)?,selectedProbe:Rect?,selectedActual:Rect?
+        for row in rows {
+            guard let member=ConfigureStreamRoot.integer(row["wid"]),
+                  hs_window_connection(UInt32(member),Int32(pid))==connection,
+                  snapshot.windows.contains(where:{$0.wid==member && $0.pid==pid && $0.on && $0.space==space && $0.layer==0 && !$0.nativeFullscreen}),
+                  let actual=winBounds(member),actual.arr.allSatisfy({$0.isFinite}),
+                  let minimum=clientMinimum(pid,member),minimum.0>0,minimum.1>0,
+                  actual.w+1>=minimum.0,actual.h+1>=minimum.1,
+                  let packed=ConfigureStreamRoot.integer(row["minimum"]),packed>0,packed<=Int(UInt32.max),
+                  Double(packed&0xffff)/2==minimum.0,Double((packed>>16)&0xffff)/2==minimum.1,
+                  let sequence=ConfigureStreamRoot.integer(row["sequence"]),sequence>=0,
+                  let dispatched=ConfigureStreamRoot.integer(row["dispatched_sequence"]),dispatched>=0,dispatched<=sequence,
+                  let stamp=ConfigureStreamRoot.number(row["t0"]),stamp==0 || floor<stamp && stamp<=observed else{return nil}
+            let rowReady=row["ready"] == .bool(true)
+            guard ready ? rowReady : row["pending"] == .bool(false) && row["in_flight"] == .bool(false) && row["awaiting_readback"] == .bool(false) else{return nil}
+            var probeFrame:Rect?
+            if rowReady {
+                guard let ack=row["initial_probe_ack"],let probe=ConfigureStreamRoot.integer(ack["sequence"]),probe>0,probe<=sequence,
+                      let t0=ConfigureStreamRoot.number(ack["t0"]),floor<t0,
+                      let time=ConfigureStreamRoot.number(ack["time"]),t0<=time,time<=observed,
+                      let frame=ConfigureStreamRoot.frame(ack["frame"]),frame.w+1>=minimum.0,frame.h+1>=minimum.1,
+                      let last=row["last_ack"],let lastSequence=ConfigureStreamRoot.integer(last["sequence"]),lastSequence>=probe,lastSequence<=dispatched,
+                      let lastT0=ConfigureStreamRoot.number(last["t0"]),floor<lastT0,
+                      let lastTime=ConfigureStreamRoot.number(last["time"]),lastT0<=lastTime,lastTime<=observed,
+                      ConfigureStreamRoot.frame(last["frame"]) != nil else{return nil}
+                probeFrame=frame
+            }
+            if member==wid {
+                guard ready || !rowReady && sequence==0 && stamp==0 else{return nil}
+                selectedMinimum=minimum;selectedProbe=probeFrame;selectedActual=actual
+            }
+        }
+        guard let minimum=selectedMinimum,let actual=selectedActual,expires-now()>=minimumTTL,now()-observed<=0.2,
+              activeSpace()==UInt64(space),hs_window_connection(UInt32(wid),Int32(pid))==connection,
+              streamActorCurrent(grant["target"],pid:pid,sameUser:true),
+              streamActorCurrent(grant["manager"],pid:Int(getpid()),sameUser:true),streamActorCurrent(grant["window_server"]),
+              let again=ConfigureStreamRoot.read(path,maximum:16384),again==bytes else{return nil}
+        let finalClock=now()
+        guard expires-finalClock>=minimumTTL,finalClock>=observed,finalClock-observed<=0.2 else{return nil}
+        return ConfigureStreamLease(pid:pid,wid:wid,space:space,epoch:epoch,birth:"\(pid):\(seconds):\(micros)",object:object,
+            moduleUUID:module,grantSHA256:ConfigureStreamRoot.digest(bytes),expires:expires,observedAt:observed,
+            minimum:minimum,cohort:cohort,initialProbeFrame:selectedProbe,currentFrame:actual)
+    }
+}
 
 final class LiveSys: SysAPI {
     private var tabHintTokens: [Int: Int32] = [:]
@@ -33,9 +233,10 @@ final class LiveSys: SysAPI {
     private var closeCount=0
     private let focusQueue=DispatchQueue(label:"hyprwm.focus",qos:.userInteractive),focusLock=NSLock()
     private let contextQueue=DispatchQueue(label:"hyprwm.focus.context",qos:.userInitiated)
+    private let presenceQueue=DispatchQueue(label:"hyprwm.window.presence",qos:.userInitiated)
     private var contextCache:[Int:(birth:String,time:Double,wid:Int?,flags:Int)]=[:]
     private var contextPending=Set<Int>()
-    private var presenceCache:[Int:(pid:Int,birth:String,result:Int)]=[:]
+    private var presenceCache:[Int:(pid:Int,birth:String,time:Double,result:Int)]=[:]
     private var presencePending:[Int:UInt64]=[:]
     private var presenceSequence:UInt64=0
     private var focusSequence=0,focusWorkers=0
@@ -66,18 +267,20 @@ final class LiveSys: SysAPI {
     }
     func windowPresence(_ pid:Int,_ wid:Int) -> Int {
         guard wid>0,wid<=Int(UInt32.max),let birth=processBirth(pid) else{return -1}
+        let time=now()
         focusLock.lock()
-        if let cached=presenceCache[wid],cached.pid==pid,cached.birth==birth {focusLock.unlock();return cached.result}
+        if let cached=presenceCache[wid],cached.pid==pid,cached.birth==birth,
+           cached.result==0 || time-cached.time<0.03 {focusLock.unlock();return cached.result}
         if presencePending[wid] != nil {focusLock.unlock();return -1}
         presenceSequence &+= 1;let sequence=presenceSequence;presencePending[wid]=sequence;focusLock.unlock()
-        contextQueue.async{[weak self] in
+        presenceQueue.async{[weak self] in
             guard let self else{return}
             let result=self.processBirth(pid)==birth ? Int(hs_window_presence(Int32(pid),UInt32(wid))):-1
             let fresh=self.processBirth(pid)==birth
             self.focusLock.lock();defer{self.focusLock.unlock()}
             guard self.presencePending[wid]==sequence else{return}
             self.presencePending[wid]=nil
-            if fresh {self.presenceCache[wid]=(pid,birth,result)}
+            if fresh {self.presenceCache[wid]=(pid,birth,self.now(),result)}
             if self.presenceCache.count>256 {self.presenceCache[self.presenceCache.keys.sorted().first!]=nil}
         }
         return -1
@@ -317,6 +520,12 @@ final class LiveSys: SysAPI {
         guard result==0,value>0,value<=UInt64(UInt32.max),processBirth(pid)==birth,
               winPidLevel(wid).pid==pid else{return nil}
         return(Double(value&0xffff)/2,Double((value>>16)&0xffff)/2)
+    }
+    func streamLease(_ pid:Int,_ wid:Int,_ space:Int,minimumTTL:Double) -> ConfigureStreamLease? {
+        configureStreamLease(pid,wid,space,minimumTTL:minimumTTL,probeEpoch:nil)
+    }
+    func streamProbeLease(_ pid:Int,_ wid:Int,_ space:Int,epoch:Int) -> ConfigureStreamLease? {
+        configureStreamLease(pid,wid,space,minimumTTL:0.25,probeEpoch:epoch)
     }
     func nativeResize(_ pid: Int) -> NativeResizeContext? {
         guard let birth=processBirth(pid), !protectedProcess(pid) else { return nil }

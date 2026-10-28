@@ -19,6 +19,7 @@ import uuid
 
 
 MARKER = 'hyprwm-user-install-v1'
+TOOLBAR_MANAGER = Path('toolbar/HyprWM Spaces.app/Contents/Resources/hook/toolbar/manage.py')
 
 
 def paths():
@@ -86,6 +87,36 @@ def external_engine_state(path):
     return path
 
 
+def toolbar_restore(app,offline=False):
+    receipt=owned_receipt(app)
+    if 'toolbar' not in receipt:return
+    runtime=Path(os.environ['HOME']).expanduser().resolve()/'.config/hyprwm-style'
+    settings=runtime/'native-toolbar-session/settings.json'
+    if not settings.exists():return
+    info=settings.lstat()
+    if settings.is_symlink() or not stat.S_ISREG(info.st_mode) or info.st_uid!=os.getuid() or info.st_mode&0o077 or info.st_size>65536:
+        raise RuntimeError('Toolbar configuration is unreadable; installation preserved')
+    configuration=json.loads(settings.read_bytes())
+    manager=Path(configuration['manager'])
+    if manager.is_symlink() or manager.resolve()!=manager:raise RuntimeError('Toolbar recovery manager is not canonical; code preserved')
+    info=manager.stat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.getuid() or info.st_mode&0o022 or hashlib.sha256(manager.read_bytes()).hexdigest()!=configuration['manager_sha256']:
+        raise RuntimeError('Toolbar recovery manager changed; retained code and receipts are required before removal')
+    arguments=[str(Path(sys.executable).resolve()),str(manager),'--runtime',str(runtime),'remove-service']
+    if offline:arguments+=['--offline']
+    result=subprocess.run(arguments,capture_output=True,text=True,timeout=55,env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'})
+    if result.returncode:raise RuntimeError('Toolbar restoration is pending; installation preserved: '+result.stderr[-500:])
+    value=json.loads(result.stdout)
+    if value.get('drained') is not True:raise RuntimeError('Toolbar restoration is pending; installation preserved')
+
+
+def toolbar_update_preflight(app):
+    if 'toolbar' not in owned_receipt(app):return
+    runtime=Path(os.environ['HOME']).expanduser().resolve()/'.config/hyprwm-style/native-toolbar-session'
+    if (runtime/'settings.json').exists():
+        raise RuntimeError('The configured toolbar retains an installation graph; restore it and explicitly migrate its qualification before updating. Current app preserved.')
+
+
 def stage_bundle(root,staged,engine_state_path=None):
     if staged.exists() or staged.is_symlink():raise RuntimeError('Bundle destination already exists; preserved')
     macos = staged / 'Contents/MacOS'
@@ -99,6 +130,9 @@ def stage_bundle(root,staged,engine_state_path=None):
     shutil.copy2(root / 'hook/config/portable-defaults.json', config / 'hypr_cfg.json')
     for name in ('runtime.schema.json', 'hypr_shim.lua'):
         shutil.copy2(root / 'hook/config' / name, config / name)
+    toolbar=resources/'toolbar'
+    subprocess.run([str(Path(sys.executable).resolve()),str(root/'hook/toolbar/build.py'),'--output',str(toolbar)],check=True,
+                   env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'})
     version = os.environ.get('HYPRWM_APP_VERSION', '0.1.0')
     info = dict(CFBundleIdentifier='dev.hyprwm.HyprWM', CFBundleName='HyprWM',
                 CFBundleDisplayName='HyprWM', CFBundleExecutable='hyprwm-swift',
@@ -113,6 +147,8 @@ def stage_bundle(root,staged,engine_state_path=None):
     (staged / 'Contents/Info.plist').write_bytes(plistlib.dumps(info))
     receipt = dict(installer=MARKER, compiled_binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
                    version=version, mode='auto', engine_installed=False)
+    receipt['toolbar']={'manager':str(TOOLBAR_MANAGER),'build_receipt_sha256':hashlib.sha256((toolbar/'build-receipt.json').read_bytes()).hexdigest(),
+                        'default_enabled':False,'live_qualified':False}
     if engine_state_path is not None:receipt['engine_state_path']=str(engine_state_path)
     (resources / 'InstallReceipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
     subprocess.run(['codesign', '--force', '--sign', '-', '--identifier', 'dev.hyprwm.HyprWM', str(staged)], check=True)
@@ -139,6 +175,7 @@ def install(root,engine_state_path=None):
         raise RuntimeError('Refusing to replace a symlink at the app destination')
     if app.exists():
         previous=owned_receipt(app)
+        toolbar_update_preflight(app)
         if engine_state_path is None and 'engine_state_path' in previous:
             value=previous['engine_state_path']
             if not isinstance(value,str) or not value.startswith('/'):
@@ -169,7 +206,8 @@ def install(root,engine_state_path=None):
             print(f'Previous app preserved: {backup}')
         staged.rename(app)
     executable = app / 'Contents/MacOS/hyprwm-swift'
-    hook = app / 'Contents/Resources/hook'
+    resources = app / 'Contents/Resources'
+    hook = resources / 'hook'
     for name in ('hyprwm', 'hyprwmctl'):
         if name == 'hyprwmctl':
             body = (root / 'scripts/hyprwmctl').read_text()
@@ -178,6 +216,7 @@ def install(root,engine_state_path=None):
             body = '#!/bin/sh\n# ' + MARKER + '\nset -eu\n'
             body += 'export HYPRWM_HOOK=${HYPRWM_HOOK:-' + shlex.quote(str(hook)) + '}\n'
             body += 'case "${1:-}" in\n'
+            body += '  toolbar) shift; exec '+shlex.quote(str(Path(sys.executable).resolve()))+' '+shlex.quote(str(resources/TOOLBAR_MANAGER))+' "$@" ;;\n'
             body += '  restore-all) if [ -S "${HYPRWM_CTL:-/tmp/hyprwm.ctl}" ]; then exec ' + shlex.quote(str(bin_dir / 'hyprwmctl')) + ' "$@"; fi ;;\n'
             body += '  status|pause|resume|reload) exec ' + shlex.quote(str(bin_dir / 'hyprwmctl')) + ' "$@" ;;\n'
             body += 'esac\nexec ' + shlex.quote(str(executable)) + ' "$@"\n'
@@ -214,6 +253,7 @@ def uninstall(offline):
     if app.is_symlink():
         raise RuntimeError('Refusing a symlink at the app destination')
     owned_receipt(app)
+    toolbar_restore(app,offline)
     current = status()
     if current is not None:
         if offline:

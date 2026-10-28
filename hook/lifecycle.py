@@ -352,11 +352,22 @@ class Lifecycle:
         record = self.store.load()
         current = self.optional_status()
         census = self.census()
+        keys = self.hook / 'keys/hyprkeys'
+        prepared_keys = False
         if current is None:
             swift_paths = {str(path) for path in self.swift()}
             if any(self.role(row) == 'daemon' or
                    (row['executable'] in swift_paths and row.get('argv') is None) for row in census):
                 raise LifecycleError('daemon process already exists but control is unavailable; no second daemon launched')
+            # A reboot removes the temporary baseline. Swift applies configured
+            # overrides during startup, before it can publish the control socket.
+            if (runtime == 'swift' and self.spawn == self._spawn and keys.is_file()
+                    and not any(self.role(row) == 'hotkeys' for row in census)
+                    and not os.path.lexists('/tmp/hyprkeys.json')):
+                with open_log('/tmp/hyprkeys.log') as output:
+                    subprocess.run([sys.executable, str(self.hook / 'keys/binds.py')], check=True,
+                                   cwd=self.hook.parent, stdout=output, stderr=output)
+                prepared_keys = True
             identity = self.launch('daemon', self.daemon_command(runtime),
                                    '/tmp/hyprwm.log', record)
             deadline = self.clock() + 10
@@ -371,10 +382,9 @@ class Lifecycle:
             if current is None:
                 raise LifecycleError('daemon not ready; ownership record retained, no process was killed')
         notes = []
-        keys = self.hook / 'keys/hyprkeys'
         if not any(self.role(row) == 'hotkeys' for row in census) and keys.is_file():
             # Existing hotkeys are left alone: rewriting their config is not an idempotent start.
-            if self.spawn == self._spawn:
+            if self.spawn == self._spawn and not prepared_keys:
                 with open_log('/tmp/hyprkeys.log') as output:
                     subprocess.run([sys.executable, str(self.hook / 'keys/binds.py')], check=True,
                                    cwd=self.hook.parent, stdout=output, stderr=output)

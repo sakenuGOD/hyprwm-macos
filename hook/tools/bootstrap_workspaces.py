@@ -36,12 +36,29 @@ SKY_UUID = 'CD5F2362-8462-38D4-8C57-0BCD4E04F962'
 APPROVED_IMAGES = {
     'arm64': ('bc0e57e6f96c3009918d3a62f2069279', '6cc19a738c8b5385b5970bbd51495dcf1a3a82896f68e14a658b62967eab41ae'),
     'arm64e': ('32d9b671cc89350798ae8a97eaa09b1e', '6385ce7c361616e32f24e6816e33600db5b838c08c2d23d71a84082ccfd989bc')}
+# A recovery build is authorized only after its independently inspected exact
+# identities are added here. The original image/receipt remains authoritative.
+APPROVED_RECOVERY_IMAGES = {
+    'arm64': ('0342a46aae2838968ca8a4b04073c899', '8239cc114e3899e77ad0dacab15bb16b2947dc18e410e3b7022034c6e5a30b19'),
+    'arm64e': ('73a9119ef5cd317e9e8bf7b33c1c1681', '09734d164272084b70e99a45ddcd98450a658f06f885c09917592e4b8b7563c4')}
+RECOVERY_INSTALL_NAME = 'hyprwm-workspaces-owned-recovery-20261028'
 APPROVED_SOURCES = {
     'hook/native-space/DockSpacesBridge.m': '82173255d7172eadca1cf4aa91be3f4b5e91710a0d9b7f34de6f0c59b4b779a9',
     'hook/src/managed_process_identity.c': '33ceec7761918eca50287f3af18217f5164b8d934644f8f6c3661bc57e81834c'}
 APPROVED_HELPERS = {
     'prepare_native.py': 'b0c8700ae1147cc912aa1b34af224df2db4d6d1b2633859542c250c091f80e75',
+    'workspace_lldb.py': '424344f2abf5eeab43cb7bb62df11ef66faa2e62b8a73826bbe2c7e99e0d312c'}
+LEGACY_APPROVED_HELPERS = {
+    'prepare_native.py': 'b0c8700ae1147cc912aa1b34af224df2db4d6d1b2633859542c250c091f80e75',
     'workspace_lldb.py': '1faca9fcdda8a097f1b42b56ec7d27d838340ec196f0e768d1871027c344931c'}
+
+
+def approved_profile_set(profiles):
+    if not isinstance(profiles, dict) or set(profiles) != {'arm64', 'arm64e'}:
+        return False
+    pairs = {arch: (profile.get('uuid'), profile.get('sha256'))
+             for arch, profile in profiles.items() if isinstance(profile, dict)}
+    return pairs == APPROVED_IMAGES or (bool(APPROVED_RECOVERY_IMAGES) and pairs == APPROVED_RECOVERY_IMAGES)
 
 
 def read_file(path, owners, limit=2**21):
@@ -73,8 +90,10 @@ def save_json(path, value):
     os.replace(temporary, path)
 
 
-def freeze_helpers(run, uid, resume):
-    for name, expected in APPROVED_HELPERS.items():
+def freeze_helpers(run, uid, resume, pins=None):
+    pins = APPROVED_HELPERS if pins is None else pins
+    need(pins in (APPROVED_HELPERS, LEGACY_APPROVED_HELPERS), 'Unapproved workspace helper set')
+    for name, expected in pins.items():
         data = read_file((run if resume else TOOLS)/name, (0,) if resume else (0, uid))
         need(hashlib.sha256(data).hexdigest() == expected, 'Unapproved workspace helper: ' + name)
         if not resume:
@@ -305,7 +324,61 @@ def detached_running(expected, result):
 
 
 
-def prepare_context(run, image_dir, uid, user, control, replace_stale, manager_path, manager_sha):
+def departed_peer(peer):
+    fresh = identity(peer['pid'])
+    if fresh:
+        return (fresh['seconds'], fresh['micros']) != (peer['sec'], peer['usec'])
+    try:
+        os.kill(peer['pid'], 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
+def owned_retirement_context(directory, uid, control, manager_path, dock, server, lease, previous, expected=None):
+    directory = root_run(directory)
+    files = {name: read_file(directory/name, (0,)) for name in ('context.json', 'native.json', 'published.json')}
+    hashes = {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}
+    if expected is not None:
+        need(hashes == expected['files'], 'Original root workspace receipt changed')
+    context, native, published = (json.loads(files[name]) for name in ('context.json', 'native.json', 'published.json'))
+    request = context['request'];pins = context.get('source_pins')
+    need(context.get('schema') == 1 and context.get('uid') == uid and
+         context.get('control') == str(control) and context.get('manager_path') == str(manager_path) and
+         pins in (APPROVED_HELPERS, LEGACY_APPROVED_HELPERS), 'Owned compatible workspace receipt required')
+    for name, digest in pins.items():
+        need(hashlib.sha256(read_file(directory/name, (0,))).hexdigest() == digest, 'Original frozen helper changed')
+    need(approved_profile_set(context.get('profiles')), 'Original complete approved workspace profiles required')
+    for profile in context['profiles'].values():
+        image = Path(profile['artifact'])
+        need(image.is_absolute() and image.resolve(strict=True) == image and
+             hashlib.sha256(read_file(image, (0,))).hexdigest() == profile['sha256'], 'Original root workspace image changed')
+    need(context.get('lease') == str(lease) and json.loads(previous) == request and
+         request.get('kind') == 'native-Dock-existing-v1' and request['owner'] == actor(dock) and
+         actor(context['dock']) == actor(dock) and actor(context['server']) == actor(server) and
+         request['generation'] == dict(build='25G241', sky_uuid=SKY_UUID, window_server=actor(server)) and
+         published.get('lease') == str(lease) and published.get('dock') == request['owner'] and
+         published.get('peer') == request['peer'], 'Original published lease/generation required')
+    profile = context['profiles'].get(native.get('architecture'), {})
+    need(native.get('ok') is True and native.get('detached') is True and native.get('native_code') == 0 and
+         native.get('native', {}).get('installed') is True and native.get('source_pins') == pins and
+         native.get('module_uuid') == profile.get('uuid') and native.get('module_sha256') == profile.get('sha256') and
+         native.get('artifact') == profile.get('artifact') and type(native.get('retained_handle')) is int and
+         native['retained_handle'] > 0, 'Completed exact retained installation required')
+    need(request['peer']['uid'] == uid and request['peer']['path'] == str(manager_path) and
+         departed_peer(request['peer']), 'Original manager kernel birth must be gone')
+    endpoint = Path(request['socket'])
+    need(endpoint.is_absolute() and endpoint.parent == lease.parent and endpoint.name.startswith('dock-') and
+         str(endpoint) == str(endpoint.resolve(strict=False)), 'Original canonical private endpoint required')
+    if expected is None:
+        item = endpoint.lstat()
+        need(stat.S_ISSOCK(item.st_mode) and item.st_uid == uid and not item.st_mode & 0o077,
+             'Original private workspace endpoint required')
+        expected = dict(receipt=str(directory), files=hashes, socket_inode=[item.st_dev, item.st_ino])
+    return context, native, expected
+
+
+def prepare_context(run, image_dir, uid, user, control, replace_stale, manager_path, manager_sha, retire_owned=None):
     dock = find_actor('Dock', DOCK, uid)
     server = find_actor('WindowServer', SERVER, 88)
     peer = manager(control, uid, manager_path, manager_sha)
@@ -315,33 +388,42 @@ def prepare_context(run, image_dir, uid, user, control, replace_stale, manager_p
     private_directory(private, uid, user.pw_gid)
     info = private.lstat();parent_inode = (info.st_dev, info.st_ino)
     lease = private/'lease.json';old, old_inode = snapshot(lease, uid)
+    retirement = None;retiring_context = None
     if old:
         value = json.loads(old);old_owner = value.get('owner', {})
-        need(replace_stale, 'Workspace lease exists; --replace-stale requires a departed Dock')
+        need(replace_stale or retire_owned, 'Workspace lease exists; explicit replacement authority required')
         need(value.get('kind') == 'native-Dock-existing-v1' and set(old_owner) == {'pid','uid','sec','usec','path'} and
              old_owner['path'] == DOCK and old_owner['uid'] == uid and type(old_owner['pid']) is int and old_owner['pid'] > 1,
              'Unrecognized lease preserved')
-        need(old_owner != actor(dock), 'Current Dock lease preserved; use normal manager rebind')
-        current_old = identity(old_owner['pid'])
-        need(not current_old or actor(current_old) != old_owner, 'Previous Dock is alive; lease preserved')
+        if retire_owned:
+            retiring_context, _, retirement = owned_retirement_context(retire_owned, uid, control, manager_path, dock, server, lease, old)
+        else:
+            need(old_owner != actor(dock), 'Current Dock lease preserved; use normal manager rebind')
+            current_old = identity(old_owner['pid'])
+            need(not current_old or actor(current_old) != old_owner, 'Previous Dock is alive; lease preserved')
+    need(not retire_owned or retirement, 'Owned current lease required for retirement')
+    approved = APPROVED_RECOVERY_IMAGES if retirement else APPROVED_IMAGES
     manifest = json.loads(bounded_read(image_dir/'workspace-images.json', uid))
     need(manifest.get('schema') == 1 and manifest.get('sources') == APPROVED_SOURCES and
          set(manifest.get('profiles', {})) == {'arm64','arm64e'}, 'Reviewed workspace build required')
+    need(not retirement or (set(approved) == {'arm64','arm64e'} and manifest.get('install_name') == RECOVERY_INSTALL_NAME and
+                           all(approved[arch][0] != retiring_context['profiles'][arch]['uuid'] for arch in approved)),
+         'Separately approved independent recovery images required')
     for arch in ('arm64','arm64e'):
         profile = manifest['profiles'][arch]
-        need((profile.get('uuid'),profile.get('sha256')) == APPROVED_IMAGES[arch] and
+        need((profile.get('uuid'),profile.get('sha256')) == approved[arch] and
              profile.get('file') == 'DockSpacesBridge.'+arch+'.dylib', 'Workspace image is not independently approved')
     images = Path(tempfile.mkdtemp(prefix='hyprwm-workspace-image-',dir='/private/tmp'));os.chmod(images,0o755)
     profiles = {}
     for arch in ('arm64','arm64e'):
         profile = manifest['profiles'][arch];data = bounded_read(image_dir/profile['file'],uid)
-        need(hashlib.sha256(data).hexdigest() == APPROVED_IMAGES[arch][1], 'Workspace image changed')
+        need(hashlib.sha256(data).hexdigest() == approved[arch][1], 'Workspace image changed')
         image = images/profile['file'];image.write_bytes(data);os.chmod(image,0o644)
         subprocess.run(['/usr/bin/codesign','--verify','--strict',str(image)],check=True,
                        stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         text = subprocess.check_output([protected_tool('dwarfdump'),'--uuid',str(image)],text=True)
         rows = re.findall(r'UUID: ([0-9A-F-]+) \(([^)]+)\)',text)
-        need(len(rows)==1 and rows[0][1]==arch and rows[0][0].replace('-','').lower()==APPROVED_IMAGES[arch][0],
+        need(len(rows)==1 and rows[0][1]==arch and rows[0][0].replace('-','').lower()==approved[arch][0],
              'Workspace image architecture/UUID changed')
         profiles[arch] = dict(profile,artifact=str(image))
     endpoint = private/('dock-'+secrets.token_hex(6)+'.sock')
@@ -353,52 +435,20 @@ def prepare_context(run, image_dir, uid, user, control, replace_stale, manager_p
                    request=request,profiles=profiles,dock=dock,server=server,source_pins=APPROVED_HELPERS,
                    lease=str(lease),previous=old.hex() if old is not None else None,
                    previous_inode=old_inode,parent_inode=parent_inode,backup='.lease-before-'+request['epoch'])
+    if retirement:
+        context['retire_owned_current'] = retirement
     # This root-private context is the authority for every retry, including a
     # debugger interruption before it could write its first native receipt.
     save_json(run/'context.json',context)
     return context
 
 
-def execute_context(run, context, uid, user, control, manager_path, manager_sha, resume):
-    need(context.get('schema')==1 and context.get('uid')==uid and context.get('source_pins')==APPROVED_HELPERS,
-         'Incompatible root workspace context')
-    need(context.get('control')==str(control) and context.get('manager_path')==str(manager_path),
-         'Resume cannot change manager path or control endpoint')
-    dock,server = context['dock'],context['server'];request = context['request']
-    need(same(dock) and same(server) and actor(dock)==request['owner'] and actor(server)==request['generation']['window_server'],
-         'Bootstrap generation departed; old native addresses are never replayed')
-    peer = manager(control,uid,manager_path,manager_sha)
-    prior = json.loads(read_file(run/'native.json',(0,))) if (run/'native.json').exists() else {}
-    installed = prior.get('prior_installed') is True or (prior.get('native',{}).get('installed') is True and prior.get('native_code')==0)
-    successor = actor(peer)!=request['peer']
-    if successor:
-        previous_peer = identity(request['peer']['pid'])
-        need(resume and (installed or prior.get('mutation_attempted') is True) and request['peer']['path']==str(manager_path) and
-             (not previous_peer or actor(previous_peer)!=request['peer']),
-             'Original manager still owns this unpublished workspace installation')
-    for arch,profile in context['profiles'].items():
-        need(arch in APPROVED_IMAGES and (profile['uuid'],profile['sha256'])==APPROVED_IMAGES[arch],
-             'Unapproved retained workspace image')
-        need(hashlib.sha256(read_file(Path(profile['artifact']),(0,))).hexdigest()==profile['sha256'],
-             'Retained root-owned workspace image changed')
-    lease = Path(context['lease']);old = bytes.fromhex(context['previous']) if context['previous'] is not None else None
-    old_inode = tuple(context['previous_inode']) if context['previous_inode'] is not None else None
-    parent_inode = tuple(context['parent_inode']);new = (json.dumps(request,indent=2)+'\n').encode()
-    if resume and installed and snapshot(lease,uid)[0]==new:
-        print('Workspace lease already published: '+str(lease));return
-    expected = dict(pid=dock['pid'],birth=[dock['pid'],dock['uid'],dock['seconds'],dock['micros']],executable=dock['path'],argv=None)
-    configuration = dict(IDENTITY=expected,ACTION=1,EXISTING_HANDLE=prior.get('retained_handle',0),
-                         SOURCE_PINS=APPROVED_HELPERS,PROFILES=context['profiles'],EXPECTED_UUIDS={DOCK_UUID},
-                         OUTPUT=str(run/'native.json'),REQUEST=request,RESUME=resume,
-                         PRIOR_INSTALLED=installed,PRIOR_ATTEMPTED=prior.get('mutation_attempted') is True,
-                         ALLOW_SUCCESSOR=successor)
-    driver = run/'driver.py'
+def invoke_native(run, dock, configuration, stem='bootstrap'):
+    driver = run/('driver.py' if stem == 'bootstrap' else stem+'-driver.py')
     driver.write_text('import sys\nsys.path.insert(0,'+repr(str(run))+')\n'+
                       '\n'.join(k+'='+repr(v) for k,v in configuration.items())+'\n'+(run/'workspace_lldb.py').read_text())
     os.chmod(driver,0o600)
-    log = run/'bootstrap.log';environment = {k:v for k,v in os.environ.items() if not k.startswith(('PYTHON','DYLD_','LD_'))}
-    need(same(dock) and same(server) and actor(manager(control,uid,manager_path,manager_sha))==actor(peer),
-         'Generation changed before attach')
+    log = run/(stem+'.log');environment = {k:v for k,v in os.environ.items() if not k.startswith(('PYTHON','DYLD_','LD_'))}
     arguments = ['/usr/bin/arch','-arm64',protected_tool('lldb'),'--batch','--no-lldbinit',
                  '-O','plugin disable language-runtime.swift','-O','settings set target.detach-on-error true',
                  '-O','settings set target.load-script-from-symbol-file false',
@@ -420,11 +470,104 @@ def execute_context(run, context, uid, user, control, manager_path, manager_sha,
                     code = child.wait(timeout=3)
                 except subprocess.TimeoutExpired:
                     child.kill();code = child.wait(timeout=3)  # Only our debugger, never Dock.
-    result = json.loads(read_file(run/'native.json',(0,))) if (run/'native.json').exists() else {}
+    path = Path(configuration['OUTPUT'])
+    result = json.loads(read_file(path,(0,))) if path.exists() else {}
     detached_running(dock,result)
-    need(not timed_out and code==0 and result.get('ok') is True and result.get('detached') is True and
-         result.get('native',{}).get('installed') is True,
-         'Workspace bootstrap incomplete; use --resume '+str(run)+'; inspect '+str(log))
+    need(not timed_out and code==0 and result.get('ok') is True and result.get('detached') is True,
+         'Workspace native action incomplete; use --resume '+str(run)+'; inspect '+str(log))
+    return result
+
+
+def retire_owned_current(run, context, uid, control, manager_path, manager_sha):
+    authority = context['retire_owned_current'];dock, server = context['dock'], context['server']
+    lease = Path(context['lease']);previous = bytes.fromhex(context['previous'])
+    old, native, _ = owned_retirement_context(Path(authority['receipt']), uid, control, manager_path,
+                                             dock, server, lease, previous, authority)
+    endpoint = Path(old['request']['socket'])
+    completed = run/'retired.json';output = run/'retirement-native.json'
+    if not completed.exists():
+        need(snapshot(lease, uid) == (previous, tuple(context['previous_inode'])),
+             'Original lease changed before owned retirement')
+        prior = json.loads(read_file(output, (0,))) if output.exists() else {}
+        # A successful reply/detach is retained even if socket cleanup was delayed.
+        if not (prior.get('ok') is True and prior.get('retired') is True and prior.get('detached') is True):
+            need(same(dock) and same(server) and
+                 actor(manager(control,uid,manager_path,manager_sha)) == context['request']['peer'],
+                 'Generation changed before owned retirement')
+            expected = dict(pid=dock['pid'],birth=[dock['pid'],dock['uid'],dock['seconds'],dock['micros']],executable=dock['path'],argv=None)
+            configuration = dict(IDENTITY=expected,ACTION=2,EXISTING_HANDLE=native['retained_handle'],
+                                 SOURCE_PINS=context['source_pins'],PROFILES=old['profiles'],EXPECTED_UUIDS={DOCK_UUID},
+                                 OUTPUT=str(output),REQUEST=dict(old['request'],shutdown=True),RESUME=True,
+                                 PRIOR_INSTALLED=True,PRIOR_ATTEMPTED=prior.get('mutation_attempted') is True,
+                                 ALLOW_SUCCESSOR=True)
+            prior = invoke_native(run, dock, configuration, 'retirement-native')
+        need(prior.get('retired') is True and prior.get('dlclose_called') is False and prior.get('handle_retained') is True,
+             'Original workspace instance retirement unconfirmed')
+        detached_running(dock, prior)
+        deadline = time.monotonic()+2
+        while True:
+            try:
+                item = endpoint.lstat()
+            except FileNotFoundError:
+                break
+            need(stat.S_ISSOCK(item.st_mode) and item.st_uid == uid and not item.st_mode & 0o077 and
+                 [item.st_dev,item.st_ino] == authority['socket_inode'], 'Original endpoint changed; preserve it')
+            need(time.monotonic() < deadline, 'Owned endpoint cleanup incomplete; retain recovery receipt')
+            time.sleep(.01)
+        need(same(dock) and same(server) and departed_peer(old['request']['peer']) and
+             actor(manager(control,uid,manager_path,manager_sha)) == context['request']['peer'],
+             'Generation changed after owned retirement')
+        save_json(completed, dict(schema=1, retired=True, authority=authority, native_result=str(output)))
+    proof = json.loads(read_file(completed, (0,)))
+    need(proof == dict(schema=1, retired=True, authority=authority, native_result=str(output)) and
+         not endpoint.exists(), 'Exact owned retirement proof/endpoint absence required')
+    result = json.loads(read_file(output, (0,)))
+    need(result.get('ok') is True and result.get('retired') is True and result.get('detached') is True and
+         result.get('action') == 2 and result.get('dlclose_called') is False and result.get('handle_retained') is True,
+         'Retained successful retirement result required')
+    detached_running(dock,result)
+
+
+def execute_context(run, context, uid, user, control, manager_path, manager_sha, resume):
+    need(context.get('schema')==1 and context.get('uid')==uid and context.get('source_pins') in (APPROVED_HELPERS, LEGACY_APPROVED_HELPERS),
+         'Incompatible root workspace context')
+    need(context.get('control')==str(control) and context.get('manager_path')==str(manager_path),
+         'Resume cannot change manager path or control endpoint')
+    dock,server = context['dock'],context['server'];request = context['request']
+    need(same(dock) and same(server) and actor(dock)==request['owner'] and actor(server)==request['generation']['window_server'],
+         'Bootstrap generation departed; old native addresses are never replayed')
+    peer = manager(control,uid,manager_path,manager_sha)
+    prior = json.loads(read_file(run/'native.json',(0,))) if (run/'native.json').exists() else {}
+    installed = prior.get('prior_installed') is True or (prior.get('native',{}).get('installed') is True and prior.get('native_code')==0)
+    successor = actor(peer)!=request['peer']
+    if successor:
+        previous_peer = identity(request['peer']['pid'])
+        need(resume and (installed or prior.get('mutation_attempted') is True) and request['peer']['path']==str(manager_path) and
+             (not previous_peer or actor(previous_peer)!=request['peer']),
+             'Original manager still owns this unpublished workspace installation')
+    need(approved_profile_set(context.get('profiles')), 'Unapproved complete retained workspace image set')
+    for arch,profile in context['profiles'].items():
+        need(hashlib.sha256(read_file(Path(profile['artifact']),(0,))).hexdigest()==profile['sha256'],
+             'Retained root-owned workspace image changed')
+    lease = Path(context['lease']);old = bytes.fromhex(context['previous']) if context['previous'] is not None else None
+    old_inode = tuple(context['previous_inode']) if context['previous_inode'] is not None else None
+    parent_inode = tuple(context['parent_inode']);new = (json.dumps(request,indent=2)+'\n').encode()
+    if context.get('retire_owned_current'):
+        need(actor(peer) == request['peer'] and context['source_pins'] == APPROVED_HELPERS,
+             'Recovery is bound to its exact successor and current retirement helper')
+        retire_owned_current(run,context,uid,control,manager_path,manager_sha)
+    if resume and installed and snapshot(lease,uid)[0]==new:
+        print('Workspace lease already published: '+str(lease));return
+    expected = dict(pid=dock['pid'],birth=[dock['pid'],dock['uid'],dock['seconds'],dock['micros']],executable=dock['path'],argv=None)
+    configuration = dict(IDENTITY=expected,ACTION=1,EXISTING_HANDLE=prior.get('retained_handle',0),
+                         SOURCE_PINS=context['source_pins'],PROFILES=context['profiles'],EXPECTED_UUIDS={DOCK_UUID},
+                         OUTPUT=str(run/'native.json'),REQUEST=request,RESUME=resume,
+                         PRIOR_INSTALLED=installed,PRIOR_ATTEMPTED=prior.get('mutation_attempted') is True,
+                         ALLOW_SUCCESSOR=successor)
+    need(same(dock) and same(server) and actor(manager(control,uid,manager_path,manager_sha))==actor(peer),
+         'Generation changed before attach')
+    result = invoke_native(run, dock, configuration)
+    need(result.get('native',{}).get('installed') is True, 'Workspace bootstrap installation unconfirmed')
     need(same(dock) and same(server) and actor(manager(control,uid,manager_path,manager_sha))==actor(peer),
          'Generation changed before publication; retain root receipt '+str(run))
     endpoint = Path(request['socket']);item = endpoint.lstat()
@@ -446,7 +589,11 @@ def main():
     parser.add_argument('--manager-sha256',required=True)
     parser.add_argument('--control-socket',type=Path,default=Path('/tmp/hyprwm.ctl'))
     parser.add_argument('--replace-stale',action='store_true')
+    parser.add_argument('--retire-owned-current',type=Path,
+                        help='Retire the exact published root receipt before installing a separate approved instance')
     args = parser.parse_args()
+    need(not args.retire_owned_current or (args.image_dir and not args.replace_stale),
+         '--retire-owned-current requires --image-dir and cannot use --replace-stale')
     need(os.geteuid()==0 and not sys.flags.optimize and sys.flags.isolated and sys.flags.no_site,
          'Run explicit root bootstrap with python3 -I -S')
     need(args.owner_uid>0 and re.fullmatch('[0-9a-f]{64}',args.manager_sha256), 'Desktop UID and approved manager SHA-256 required')
@@ -455,13 +602,15 @@ def main():
     manager_path = args.manager_executable.expanduser().resolve(strict=True)
     with publisher_lock(args.owner_uid):
         if args.resume:
-            run = root_run(args.resume.expanduser().absolute());freeze_helpers(run,args.owner_uid,True)
+            run = root_run(args.resume.expanduser().absolute())
             context = json.loads(read_file(run/'context.json',(0,)))
+            freeze_helpers(run,args.owner_uid,True,context.get('source_pins'))
         else:
             run = Path(tempfile.mkdtemp(prefix='hyprwm-workspace-bootstrap-',dir='/private/tmp'));os.chmod(run,0o700)
             freeze_helpers(run,args.owner_uid,False)
             context = prepare_context(run,args.image_dir.expanduser().resolve(strict=True),args.owner_uid,user,control,
-                                      args.replace_stale,manager_path,args.manager_sha256)
+                                      args.replace_stale,manager_path,args.manager_sha256,
+                                      args.retire_owned_current.expanduser().absolute() if args.retire_owned_current else None)
         execute_context(run,context,args.owner_uid,user,control,manager_path,args.manager_sha256,bool(args.resume))
 
 

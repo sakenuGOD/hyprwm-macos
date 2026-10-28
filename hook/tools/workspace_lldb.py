@@ -67,6 +67,9 @@ def execute():
   pointer='__builtin_ptrauth_sign_unauthenticated((void*)'+hex(address)+',0,0)' if architecture=='arm64e' else hex(address)
   return '(('+signatures[name]+')'+pointer+')('+args+')'
  try:
+  if ACTION not in (1,2):raise RuntimeError('unreviewed workspace action')
+  if ACTION==2 and not (RESUME and PRIOR_INSTALLED and EXISTING_HANDLE and REQUEST.get('shutdown') is True):
+   raise RuntimeError('retirement requires the exact retained installation and explicit shutdown')
   packet=lldb.SBCommandReturnObject()
   lldb.debugger.GetCommandInterpreter().HandleCommand('process plugin packet send QSetDetachOnError:1',packet)
   if not packet.Succeeded() or 'response: OK' not in packet.GetOutput():raise RuntimeError('debugger detach-on-error transport unavailable')
@@ -150,6 +153,7 @@ def execute():
    # load an unknown image or rerun a constructor, and is never paired with dlclose.
    handle=evaluate(c_expression('dlopen',json.dumps(ARTIFACT)+',18'),'adopt_noload').GetValueAsUnsigned()
   else:
+   if ACTION==2:raise RuntimeError('retirement never loads a missing image')
    if handle:raise RuntimeError('retained image mapping disappeared')
    handle=evaluate(c_expression('dlopen',json.dumps(ARTIFACT)+',2'),'dlopen').GetValueAsUnsigned()
   if not handle:raise RuntimeError('one bounded dlopen failed; no retry')
@@ -171,6 +175,24 @@ def execute():
    return code,value
   if generation()!=IDENTITY:raise RuntimeError('generation changed before native install')
   code,status=call('status')
+  if ACTION==2:
+   receipt.update(status_before_retirement=status,status_before_retirement_code=code)
+   if code and status.get('error')=='current_lifetime_auth_required' and PRIOR_ATTEMPTED:
+    # The immutable installed lease and recorded cancel attempt distinguish a
+    # disabled retained instance from an uninstalled image. Never install it.
+    receipt['already_disabled_after_cancel_attempt']=True
+   else:
+    if not ((not code and status.get('ok') is True) or status.get('error')=='session_generation'):
+     raise RuntimeError('authenticated original installation required for retirement')
+    receipt['mutation_attempted']=True;save()
+    code,value=call('cancel');receipt.update(retirement=value,retirement_code=code);save()
+    if code or value.get('ok') is not True or value.get('queued_cancelled') is not True or value.get('native_cancel_supported') is not False or value.get('acknowledged') is not False:
+     raise RuntimeError('owned workspace retirement unconfirmed')
+   code,status=call('status');receipt.update(status=status,status_code=code)
+   if not code or status.get('error')!='current_lifetime_auth_required' or generation()!=IDENTITY:
+    raise RuntimeError('retained workspace instance disable/generation unconfirmed')
+   receipt.update(ok=True,retired=True,reason='owned-workspace-instance-disabled',native_effect_cancelled=False)
+   return
   if ALLOW_SUCCESSOR:
    # With the original manager gone, only probe the original authenticated
    # service. session_generation follows DSAuth in the pinned bridge, proving

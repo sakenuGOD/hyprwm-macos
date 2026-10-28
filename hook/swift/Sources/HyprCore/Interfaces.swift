@@ -118,6 +118,10 @@ public protocol ChannelAPI: AnyObject {
     func alpha(_ wid: Int, _ a: Double, _ curve: Int, _ dur: Double, frm: Double?)
     func geometry(_ wid: Int, to: Rect, curves: (Int,Int), durations: (Double,Double), from: Rect?, warp: Bool, stretch: Bool, native: Bool, wait: Bool, hold: Bool)
     func configureNative(_ wid: Int, _ frame: Rect)
+    /// Separate SCFG transport; legacy native geometry never gains F_STREAM.
+    func streamGeometry(_ wid:Int,to:Rect,curves:(Int,Int),durations:(Double,Double),from:Rect?,hold:Bool) -> Bool
+    func configureStreamProbe(_ wid:Int,_ frame:Rect) -> Bool
+    func streamMotionHorizon(curve:Int,duration:Double,from:Rect,to:Rect,minimum:(Double,Double),hold:Bool) -> Double?
     func snapshotGeometry(_ wid:Int,to:Rect,curves:(Int,Int),durations:(Double,Double),from:Rect?) -> Bool
     var snapshotSupported:Bool { get }
     var engineTime:Double { get }
@@ -155,6 +159,9 @@ public extension ChannelAPI {
         geom(wid,to,curves.0,curves.1,dpos:durations.0,dsize:durations.1,frm:from,move:true,warp:warp,stretch:stretch)
     }
     func configureNative(_ wid: Int, _ frame: Rect) {}
+    func streamGeometry(_ wid:Int,to:Rect,curves:(Int,Int),durations:(Double,Double),from:Rect?,hold:Bool) -> Bool {false}
+    func configureStreamProbe(_ wid:Int,_ frame:Rect) -> Bool {false}
+    func streamMotionHorizon(curve:Int,duration:Double,from:Rect,to:Rect,minimum:(Double,Double),hold:Bool) -> Double? {nil}
     func decorationFocus(_ wid: Int, fullscreen: Int) {}
     func space(_ wid: Int, _ sid: Int) {}
     func geom(_ wid: Int, _ to: Rect, _ cpos: Int, _ csize: Int, dpos: Double = 0, dsize: Double = 0,
@@ -242,6 +249,8 @@ public protocol SysAPI: AnyObject {
     func appPath(_ pid: Int) -> String?
     func clientCapability(_ pid: Int) -> Int
     func clientMinimum(_ pid:Int,_ wid:Int) -> (Double,Double)?
+    func streamLease(_ pid:Int,_ wid:Int,_ space:Int,minimumTTL:Double) -> ConfigureStreamLease?
+    func streamProbeLease(_ pid:Int,_ wid:Int,_ space:Int,epoch:Int) -> ConfigureStreamLease?
     func nativeResize(_ pid: Int) -> NativeResizeContext?
     func interactionOverlay() -> Bool
     func overviewTransitionActive() -> Bool
@@ -285,6 +294,8 @@ public extension SysAPI {
     func appPath(_ pid: Int) -> String? { nil }
     func clientCapability(_ pid: Int) -> Int { 0 }
     func clientMinimum(_ pid:Int,_ wid:Int) -> (Double,Double)? { nil }
+    func streamLease(_ pid:Int,_ wid:Int,_ space:Int,minimumTTL:Double) -> ConfigureStreamLease? {nil}
+    func streamProbeLease(_ pid:Int,_ wid:Int,_ space:Int,epoch:Int) -> ConfigureStreamLease? {nil}
     func nativeResize(_ pid: Int) -> NativeResizeContext? { nil }
     func interactionOverlay() -> Bool { false }
     func overviewTransitionActive() -> Bool { false }

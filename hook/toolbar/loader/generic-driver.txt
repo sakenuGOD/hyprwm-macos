@@ -1,0 +1,138 @@
+import importlib.util,json,lldb,time
+def execute():
+ target=lldb.debugger.GetSelectedTarget();process=target.GetProcess()
+ receipt={'schema':1,'identity':IDENTITY,'action':ACTION,'ok':False,'detached':False,'activation_attempted':False,'input_attempted':False,'mutation_attempted':False,'start_wall_ns':time.time_ns(),'steps':[],'source_pins':SOURCE_PINS}
+ handle=EXISTING_HANDLE;buffer=0;evaluate=None;native={};exports={};profile=None
+ def uuid(v):return v.replace('-','').lower()
+ def path(spec):return spec.fullpath
+ def generation():
+  s=importlib.util.spec_from_file_location('menu_birth',LIFECYCLE);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
+  return m.DarwinProcesses().identity(IDENTITY['pid'],read_argv=False)
+__QUALIFIED_SYMBOL_HELPERS__
+ def c_expression(name,args):
+  signatures={'pthread_main_np':'int(*)(void)','dlopen':'void*(*)(const char*,int)','malloc':'void*(*)(unsigned long)','free':'void(*)(void*)','hypr_appmenus_v1_json':'int(*)(int,int,unsigned,unsigned long long,unsigned long long,const char*,const char*,unsigned,char*,unsigned)'}
+  if name not in signatures:raise RuntimeError('unqualified C signature')
+  address=(exports if name=='hypr_appmenus_v1_json' else native).get(name)
+  if not address:raise RuntimeError('canonical qualified Code address required')
+  pointer='__builtin_ptrauth_sign_unauthenticated((void*)'+hex(address)+',0,0)' if architecture=='arm64e' else hex(address)
+  return '(('+signatures[name]+')'+pointer+')('+args+')'
+ try:
+  if process.GetProcessID()!=IDENTITY['pid'] or generation()!=IDENTITY:raise RuntimeError('exact native generation after attach refused')
+  main=target.FindModule(target.GetExecutable())
+  if not main.IsValid() or path(main.GetFileSpec())!=IDENTITY['executable']:raise RuntimeError('loaded executable path refused')
+  MAIN_UUID=uuid(main.GetUUIDString() or '')
+  if MAIN_UUID not in EXPECTED_UUIDS:raise RuntimeError('loaded UUID absent from installed executable metadata')
+  triple=target.GetTriple();architecture='arm64e' if triple.startswith('arm64e-') else 'arm64' if triple.startswith('arm64-') else None
+  if architecture not in PROFILES:raise RuntimeError('architecture has no qualified module/transport profile')
+  profile=PROFILES[architecture];ARTIFACT=profile['artifact'];MODULE_UUID=profile['uuid'];MODULE_SHA=profile['sha256']
+  receipt.update(main_uuid=MAIN_UUID,architecture=architecture,target_triple=triple,module_sha256=MODULE_SHA,module_uuid=MODULE_UUID,artifact=ARTIFACT)
+  thread=next((t for t in process if t.GetIndexID()==1),None)
+  if thread is None:raise RuntimeError('main thread index1 missing')
+  def idle_main(t):
+   frames=list(t)[:128];names=[f.GetFunctionName() or '' for f in frames]
+   return bool(names and names[0] in ('mach_msg2_trap','mach_msg_trap','__CFRunLoopServiceMachPort') and
+    names.count('__CFRunLoopServiceMachPort')==1 and names.count('-[NSApplication run]')==1 and
+    sum('RunSpecific' in n for n in names)==1 and
+    not any(any(s in n for s in ('dispatch_once','dlopen','load_images','initialize]')) for n in names))
+  receipt['main_idle_at_attach']=idle_main(thread)
+  if not receipt['main_idle_at_attach']:
+   # Stop at a normal event-receive boundary, never inside launch/initializers.
+   # Until then all application threads run; the timeout is a refusal bound.
+   image='/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation'
+   contexts=target.FindSymbols('__CFRunLoopServiceMachPort',lldb.eSymbolTypeCode)
+   addresses={c.GetSymbol().GetStartAddress().GetLoadAddress(target) for c in contexts
+    if c.GetSymbol().GetName()=='__CFRunLoopServiceMachPort' and path(c.GetModule().GetFileSpec())==image}
+   if len(addresses)!=1 or lldb.LLDB_INVALID_ADDRESS in addresses:raise RuntimeError('qualified main-runloop boundary unavailable')
+   bp=target.BreakpointCreateByAddress(addresses.pop());bp.SetThreadID(thread.GetThreadID())
+   listener=lldb.SBListener('hyprwm-native-menu-main-idle')
+   listener.StartListeningForEvents(process.GetBroadcaster(),lldb.SBProcess.eBroadcastBitStateChanged)
+   asynchronous=lldb.debugger.GetAsync();deadline=time.monotonic()+5;arrived=False
+   receipt['main_idle_wait_started_ns']=time.monotonic_ns();receipt['main_idle_stops']=0
+   try:
+    lldb.debugger.SetAsync(True)
+    while time.monotonic()<deadline:
+     if process.Continue().Fail():raise RuntimeError('main-runloop continuation refused')
+     while time.monotonic()<deadline:
+      event=lldb.SBEvent()
+      if not listener.WaitForEvent(1,event):continue
+      if not lldb.SBProcess.EventIsProcessEvent(event):continue
+      if lldb.SBProcess.GetRestartedFromEvent(event):continue
+      state=lldb.SBProcess.GetStateFromEvent(event)
+      if state in (lldb.eStateRunning,lldb.eStateStepping):continue
+      if state!=lldb.eStateStopped:raise RuntimeError('target left the owned runloop wait')
+      thread=process.GetThreadByIndexID(1);receipt['main_idle_stops']+=1
+      if thread.GetStopReason()!=lldb.eStopReasonBreakpoint or thread.GetStopReasonDataAtIndex(0)!=bp.GetID():raise RuntimeError('unrelated target stop; no expression allowed')
+      arrived=idle_main(thread)
+      if not arrived:
+       receipt['last_nonidle_main_stack']=[f.GetFunctionName() or '' for f in list(thread)[:128]]
+      break
+     if arrived or time.monotonic()>=deadline:break
+    if not arrived:raise RuntimeError('bounded main-runloop idle event did not arrive')
+   finally:
+    if process.GetState() in (lldb.eStateRunning,lldb.eStateStepping):process.Stop()
+    target.BreakpointDelete(bp.GetID());listener.StopListeningForEvents(process.GetBroadcaster(),lldb.SBProcess.eBroadcastBitStateChanged)
+    lldb.debugger.SetAsync(asynchronous);receipt['main_idle_wait_finished_ns']=time.monotonic_ns()
+   if generation()!=IDENTITY:raise RuntimeError('generation changed at main-runloop boundary')
+  if not idle_main(thread):raise RuntimeError('verified main-runloop idle frame required')
+  receipt['main_idle_verified']=True
+  process.SetSelectedThread(thread);frame=thread.GetFrameAtIndex(0)
+  options=lldb.SBExpressionOptions();options.SetLanguage(lldb.eLanguageTypeC);options.SetTryAllThreads(False);options.SetIgnoreBreakpoints(True);options.SetUnwindOnError(True)
+  options.SetStopOthers(False) # Other threads must be able to finish dyld/once work.
+  def evaluate(expression,label):
+   options.SetTimeoutInMicroSeconds(3000000 if label=='dlopen' else 1000000)
+   step={'label':label,'start':time.monotonic_ns()};receipt['steps'].append(step)
+   try:
+    value=frame.EvaluateExpression(expression,options)
+    if value.GetError().Fail():raise RuntimeError(str(value.GetError()))
+    return value
+   finally:step['elapsed_ns']=time.monotonic_ns()-step['start'];options.SetTimeoutInMicroSeconds(1000000)
+  for name in ('pthread_main_np','dlopen','malloc','free'):native[name]=native_symbol(name)
+  if evaluate(c_expression('pthread_main_np',''),'actual_main').GetValueAsSigned()!=1:raise RuntimeError('actual pthread_main_np refused')
+  receipt['actual_main_thread']=True;receipt['thread_index']=1
+  if not handle:
+   if any(uuid(m.GetUUIDString() or '')==MODULE_UUID for m in target.modules):raise RuntimeError('existing module requires explicit retained-handle adoption')
+   handle=evaluate(c_expression('dlopen',json.dumps(ARTIFACT)+',2'),'dlopen').GetValueAsUnsigned()
+  if not handle:raise RuntimeError('one bounded dlopen failed; no retry')
+  module=next((m for m in target.modules if path(m.GetFileSpec())==ARTIFACT),None)
+  if module is None or uuid(module.GetUUIDString() or '')!=MODULE_UUID:raise RuntimeError('loaded exact artifact UUID/path refused')
+  exports['hypr_appmenus_v1_json']=export_code('hypr_appmenus_v1_json')
+  buffer=evaluate(c_expression('malloc','65536'),'malloc').GetValueAsUnsigned()
+  if not buffer:raise RuntimeError('bounded output buffer allocation failed')
+  def call(action):
+   birth=IDENTITY['birth']
+   args=','.join([str(action),str(IDENTITY['pid']),str(birth[1]),str(birth[2]),str(birth[3]),json.dumps(IDENTITY['executable']),json.dumps(MAIN_UUID),str(FLAGS),'(char*)'+hex(buffer),'65536'])
+   code=evaluate(c_expression('hypr_appmenus_v1_json',args),'native_'+str(action)).GetValueAsSigned()
+   error=lldb.SBError();raw=process.ReadCStringFromMemory(buffer,65536,error)
+   if error.Fail():raise RuntimeError(str(error))
+   value=json.loads(raw)
+   if type(value)!=dict:raise RuntimeError('native JSON object required')
+   return code,value
+  code,before=call(0);receipt['native_before']=before
+  if code or before.get('ok') is not True:raise RuntimeError('native exact-self readonly status refused')
+  def flag(v,w):return type(v) in (bool,int) and v==int(w)
+  if ACTION in (3,4) and flag(before.get('prepared'),True):raise RuntimeError('existing binding refused; no snapshots of hidden originals')
+  if generation()!=IDENTITY:raise RuntimeError('generation changed before mutation')
+  code,value=call(ACTION);receipt.update(native=value,native_code=code,mutation_attempted=ACTION in (2,3,4))
+  if code and value.get('error') in ('eligible_existing_menu_required','external_first_map_not_ready') and flag(value.get('status',{}).get('prepared'),False):
+   receipt.update(reason='existing_menu_not_ready',readiness_reason=value.get('error'),mutation_attempted=False,enabled=False,current_menu_matches=False)
+  elif code:raise RuntimeError('native menu operation refused: '+str(value.get('error')))
+  elif ACTION in (3,4):
+   if not flag(value.get('prepared'),True) or value.get('enabled') is not True or not flag(value.get('current_menu_matches'),True) or value.get('explicit_inactive_stage') is not True:raise RuntimeError('native staged ownership refused')
+   receipt.update(ok=True,enabled=True,current_menu_matches=True,reason='staged-existing-menu')
+  elif ACTION==2:
+   if value.get('enabled') is not False:raise RuntimeError('native OFF unconfirmed')
+   receipt.update(ok=True,enabled=False,current_menu_matches=False,reason='owned-off')
+  if generation()!=IDENTITY:raise RuntimeError('generation changed after native call')
+ except Exception as error:receipt['error']=str(error)
+ finally:
+  if buffer and evaluate and native.get('free'):
+   try:evaluate('({ '+c_expression('free','(void*)'+hex(buffer))+'; 0; })','free');receipt['buffer_freed']=True
+   except Exception as error:receipt.update(buffer_free_error=str(error),ok=False)
+  receipt.update(retained_handle=handle,handle_retained=bool(handle),dlclose_called=False)
+  try:
+   error=process.Detach(False);receipt['detached']=error.Success()
+   if error.Fail():receipt.update(ok=False,detach_error=str(error))
+  except Exception as error:receipt.update(detached=False,ok=False,detach_error=str(error))
+  receipt['end_wall_ns']=time.time_ns()
+  with open(OUTPUT,'x') as f:json.dump(receipt,f,indent=2);f.write('\n')
+execute()

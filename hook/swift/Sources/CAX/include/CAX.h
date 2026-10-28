@@ -28,6 +28,8 @@ int hs_session_locked(void);
 int hs_window_connection(unsigned wid, int expected_pid);
 int hs_window_server_pid(void);
 int hs_process_birth(int pid, uint64_t *seconds, uint64_t *micros);
+int hs_copy_configure_stream_json(unsigned wid, int pid, uint64_t seconds, uint64_t micros,
+                                  char *buffer, unsigned capacity, int *connection);
 int hs_win_pid_level(unsigned wid, int *pid, int *level);      // 0 = success
 int hs_front_pid(int *pid);                                    // 0 = success
 int hs_win_bounds(unsigned wid, double *out4);                 // 0 = success

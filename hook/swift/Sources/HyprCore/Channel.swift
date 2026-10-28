@@ -140,6 +140,74 @@ public final class LiveChannel: ChannelAPI {
             UInt32(curves.0),UInt32(curves.1),durations.0,durations.1) != 0 { full() }
     }
     public func configureNative(_ wid: Int, _ frame: Rect) { if ch_cfg(UInt32(wid),frame.x,frame.y,frame.w,frame.h) != 0 { full() } }
+    public func streamGeometry(_ wid:Int,to:Rect,curves:(Int,Int),durations:(Double,Double),from:Rect?,hold:Bool) -> Bool {
+        let initial=from ?? Rect(0,0,0,0)
+        let flags=UInt32(F_MOVE)|UInt32(F_NATIVE)|UInt32(F_STREAM)|(from != nil ? UInt32(F_FROM):0)|(hold ? UInt32(F_HOLD):0)
+        guard ch_geom(Int32(OP_GEOM),UInt32(wid),flags,to.x,to.y,to.w,to.h,initial.x,initial.y,initial.w,initial.h,
+                      UInt32(curves.0),UInt32(curves.1),durations.0,durations.1)==0 else {full();return false}
+        fullLogged=false;return true
+    }
+    public func configureStreamProbe(_ wid:Int,_ frame:Rect) -> Bool {
+        guard ch_cfg_flags(UInt32(wid),UInt32(F_STREAM),frame.x,frame.y,frame.w,frame.h)==0 else {full();return false}
+        fullLogged=false;return true
+    }
+    /// Native springs stop by displacement/velocity thresholds, independently
+    /// of dur. Bound a spring starting at rest; callers reject moving retargets.
+    public func streamMotionHorizon(curve:Int,duration:Double,from:Rect,to:Rect,minimum:(Double,Double),hold:Bool) -> Double? {
+        guard curve>=0,curve<Int(CH_NCURVE),duration.isFinite,duration>0,
+              from.arr.allSatisfy({$0.isFinite}),to.arr.allSatisfy({$0.isFinite}),minimum.0>0,minimum.1>0 else{return nil}
+        let records=(base + MemoryLayout<CChan.ch>.offset(of:\CChan.ch.curve)!).assumingMemoryBound(to:ch_curve.self)
+        let record=records[curve],header=hdr.pointee
+        guard header.hold_max.isFinite,(-1.0...2.0).contains(header.hold_max),header.period.isFinite,
+              header.period>0,header.period<=0.1 else{return nil}
+        var lifetime=duration,lower=0.0,upper=1.0
+        if record.type==UInt32(CV_SPRING) {
+            guard record.mass.isFinite,record.k.isFinite,record.d.isFinite,record.d>0 else{return nil}
+            let mass=max(0.0001,record.mass),stiffness=max(0.0001,record.k)
+            let omega=sqrt(stiffness/mass),gamma=record.d/(2*mass),epsilon=0.00025
+            guard omega.isFinite,gamma.isFinite,omega>0,gamma>0 else{return nil}
+            if gamma<omega {
+                let frequency=sqrt(omega*omega-gamma*gamma)
+                guard frequency.isFinite,frequency>0 else{return nil}
+                let amplitude=max(hypot(1,gamma/frequency),omega*omega/frequency)
+                lifetime=max(lifetime,log(max(1,amplitude/epsilon))/gamma)
+                upper=1+exp(-gamma*Double.pi/frequency)
+            } else if abs(gamma-omega)<=max(omega,1)*0.0001 {
+                // t*exp(-g*t) <= 2/(g*e)*exp(-g*t/2).
+                let amplitude=max(1+2/exp(1),2*gamma/exp(1))
+                lifetime=max(lifetime,2*log(max(1,amplitude/epsilon))/gamma)
+            } else {
+                let root=sqrt(gamma*gamma-omega*omega),slow = -gamma+root,fast = -gamma-root
+                guard root.isFinite,slow<0,fast<slow else{return nil}
+                let a=fast/(slow-fast),b = -1-a
+                let amplitude=max(abs(a)+abs(b),abs(a*slow)+abs(b*fast))
+                lifetime=max(lifetime,log(max(1,amplitude/epsilon))/(-slow))
+            }
+        } else if record.type==UInt32(CV_BEZIER) {
+            let samples=withUnsafeBytes(of:record.by){Array($0.bindMemory(to:Double.self))}
+            let xs=withUnsafeBytes(of:record.bx){Array($0.bindMemory(to:Double.self))}
+            guard samples.count>=2,xs.count==samples.count,samples.allSatisfy({$0.isFinite}),
+                  xs.allSatisfy({$0.isFinite && $0>=0 && $0<=1}),zip(xs,xs.dropFirst()).allSatisfy({$0.0<=$0.1}) else{return nil}
+            lower=min(0,samples.min() ?? 0);upper=max(1,samples.max() ?? 1)
+            // The native evaluator extrapolates its first baked segment for
+            // 0<x<bx[0]; the table itself omits t=0.
+            let dx=xs[1]-xs[0]
+            if dx>0.000001 {
+                let intercept=samples[0]-xs[0]*(samples[1]-samples[0])/dx
+                guard intercept.isFinite else{return nil}
+                lower=min(lower,intercept);upper=max(upper,intercept)
+            }
+        } else {return nil}
+        // Every interpolated sample must satisfy the receiver's actual minimum,
+        // including an underdamped shrink's first overshoot and Bezier overshoot.
+        func smallest(_ start:Double,_ goal:Double) -> Double {
+            min(start+(goal-start)*lower,start+(goal-start)*upper)
+        }
+        let minWidth=smallest(from.w,to.w),minHeight=smallest(from.h,to.h)
+        guard minWidth>=1,minHeight>=1,minWidth+0.01>=minimum.0,minHeight+0.01>=minimum.1 else{return nil}
+        let horizon=max(duration+0.25,lifetime+(hold ? max(0.15,header.hold_max):0)+1+0.5)
+        guard horizon.isFinite,horizon<=30 else{return nil};return horizon
+    }
     public var snapshotSupported:Bool {
         let required=UInt32(CH_CAP_SNAPSHOT)|UInt32(CH_CAP_SNAPSHOT_COVER)
         return (hdr.pointee.version & required) == required

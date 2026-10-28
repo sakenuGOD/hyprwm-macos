@@ -6,6 +6,13 @@ struct ViewportPan {
     var accepted=false
 }
 extension WM {
+    /// Cached notification state only: no AX, native query or lease heartbeat.
+    public func cachedViewportEventState() -> JSON {
+        .array(viewportPans.keys.sorted().compactMap {wid in
+            guard let value=viewportPans[wid] else{return nil}
+            return .object([("wid",.int(wid)),("x",.double(value.x)),("y",.double(value.y)),("accepted",.bool(value.accepted))])
+        })
+    }
     private func viewportCandidate(_ wid:Int,_ space:Int,_ windows:[WinInfo]) -> (WinInfo,String,EngWin)? {
         guard space>0,sp(space).tree?.contains(wid)==true,
               !hidden.contains(where:{$0.wid==wid}),!closing.contains(wid),

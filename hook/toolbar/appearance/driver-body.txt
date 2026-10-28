@@ -1,0 +1,119 @@
+import json,lldb,time,importlib.util
+def execute():
+ target=lldb.debugger.GetSelectedTarget();process=target.GetProcess()
+ receipt={'identity':IDENTITY,'expected_wid':WID,'main_uuid':MAIN_UUID,'module_sha256':MODULE_SHA,
+          'module_uuid':MODULE_UUID,'controller_sha256':CONTROLLER_SHA,'nonce':NONCE,'action':ACTION,
+          'headers_or_framework_imports':False,'start_wall_ns':time.time_ns(),'steps':[],'ok':False}
+ handle=EXISTING_HANDLE;buffer=0;frame=None;evaluate=None;native={};retain=False
+ def uuid(value):return value.replace('-','').lower()
+ def path(spec):return spec.fullpath
+ def generation():
+  spec=importlib.util.spec_from_file_location('responder_native_birth',LIFECYCLE)
+  module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+  return module.DarwinProcesses().identity(IDENTITY['pid'],read_argv=False)
+ def native_symbol(name):
+  expected={'pthread_main_np':'/usr/lib/system/libsystem_pthread.dylib',
+            'dlopen':'/usr/lib/system/libdyld.dylib','dlsym':'/usr/lib/system/libdyld.dylib',
+            'dlerror':'/usr/lib/system/libdyld.dylib',
+            'dlclose':'/usr/lib/system/libdyld.dylib',
+            'malloc':'/usr/lib/system/libsystem_malloc.dylib','free':'/usr/lib/system/libsystem_malloc.dylib'}[name]
+  # Record all returned kinds, but only a genuine Code symbol can authorize a call.
+  values=set();contexts=target.FindSymbols(name,lldb.eSymbolTypeAny);count=contexts.GetSize()
+  rows=[];receipt.setdefault('native_symbol_candidates',{})[name]={'expected_name':name,'expected_image':expected,'count':count,'rows':rows}
+  if count>512:raise RuntimeError('bounded native symbol candidates exceeded: '+name)
+  for index in range(count):
+   context=contexts.GetContextAtIndex(index);module=context.GetModule();symbol=context.GetSymbol()
+   image=path(module.GetFileSpec());actual_name=symbol.GetName();address=symbol.GetStartAddress().GetLoadAddress(target)
+   row={'name':actual_name[:256] if actual_name else None,'symbol_type':int(symbol.GetType()),'image':image[:1024] if image else None,
+        'image_uuid':uuid(module.GetUUIDString() or ''),'address':hex(address),'accepted':False};rows.append(row)
+   if symbol.GetType()!=lldb.eSymbolTypeCode:row['refusal']='non-code-symbol-type';continue
+   if actual_name!=name:row['refusal']='nonexact-symbol-name';continue
+   if image!=expected:row['refusal']='wrong-native-image';continue
+   if not address or address==lldb.LLDB_INVALID_ADDRESS:row['refusal']='invalid-load-address';continue
+   owner=target.ResolveLoadAddress(address).GetModule()
+   if not owner.IsValid() or path(owner.GetFileSpec())!=expected or uuid(owner.GetUUIDString() or '')!=row['image_uuid']:
+    row['refusal']='load-address-owner-mismatch';continue
+   row['accepted']=True;values.add(address)
+  if len(values)!=1:raise RuntimeError('exact native symbol unavailable/ambiguous: '+name+'; exact distinct addresses='+str(len(values)))
+  address=values.pop();receipt.setdefault('native_symbol_selected',{})[name]={'name':name,'image':expected,'address':hex(address)}
+  return address
+ try:
+  if process.GetProcessID()!=IDENTITY['pid'] or generation()!=IDENTITY:raise RuntimeError('native generation mismatch after attach')
+  main=target.FindModule(target.GetExecutable())
+  if not main.IsValid() or path(main.GetFileSpec())!=IDENTITY['executable'] or uuid(main.GetUUIDString() or '')!=MAIN_UUID:
+   raise RuntimeError('loaded executable path/UUID mismatch')
+  thread=next((t for t in process if t.GetIndexID()==1),None)
+  if thread is None:raise RuntimeError('candidate main thread index1 absent')
+  process.SetSelectedThread(thread);frame=thread.GetFrameAtIndex(0)
+  options=lldb.SBExpressionOptions();options.SetLanguage(lldb.eLanguageTypeC)
+  options.SetIgnoreBreakpoints(True);options.SetTimeoutInMicroSeconds(1000000)
+  options.SetTryAllThreads(False);options.SetUnwindOnError(True)
+  def evaluate(expression):
+   value=frame.EvaluateExpression(expression,options)
+   if value.GetError().Fail():raise RuntimeError(str(value.GetError()))
+   return value
+  for name in ('pthread_main_np','dlopen','dlerror','dlsym','malloc','free','dlclose'):native[name]=native_symbol(name)
+  if evaluate('((int(*)(void))'+hex(native['pthread_main_np'])+')()').GetValueAsSigned()!=1:
+   raise RuntimeError('actual pthread_main_np refused selected thread')
+  receipt['actual_main_thread']=True;receipt['thread_index']=thread.GetIndexID()
+  buffer=evaluate('((void*(*)(unsigned long))'+hex(native['malloc'])+')(16384)').GetValueAsUnsigned()
+  if not buffer:raise RuntimeError('owned receipt buffer allocation failed')
+  # Clear and consume this attempt's thread-local dlerror INSIDE the same C
+  # expression as its ONE dlopen; copy immediately into our bounded buffer.
+  expression='({ char *b=(char*)'+hex(buffer)+'; b[0]=0; ((char*(*)(void))'+hex(native['dlerror'])+')(); void *h=((void*(*)(const char*,int))'+hex(native['dlopen'])+')('+json.dumps(ARTIFACT)+',2); if(!h){const char *e=((char*(*)(void))'+hex(native['dlerror'])+')(); unsigned n=0; for(;e && n<4095 && e[n];n++)b[n]=e[n]; b[n]=0;} h; })'
+  receipt['dlopen_attempt_requested']=not bool(EXISTING_HANDLE)
+  if not EXISTING_HANDLE:handle=evaluate(expression).GetValueAsUnsigned()
+  receipt['dlopen_attempts']=0 if EXISTING_HANDLE else 1
+  receipt['dlerror_copied_in_original_expression']=True
+  if not handle:
+   error=lldb.SBError();message=process.ReadCStringFromMemory(buffer,4096,error)
+   if error.Fail():raise RuntimeError('dlopen failed; own error buffer read refused: '+str(error))
+   receipt['dlopen_error']=message;receipt['dlopen_error_may_be_truncated']=len(message)>=4095
+   raise RuntimeError('exact module dlopen returned null: '+(message or '(dlerror returned no message)'))
+  module=next((m for m in target.modules if path(m.GetFileSpec())==ARTIFACT),None)
+  if module is None or uuid(module.GetUUIDString() or '')!=MODULE_UUID:raise RuntimeError('loaded candidate image UUID/path mismatch')
+  exports={}
+  for name in ('hyprappearance_v1_json',):
+   address=evaluate('((void*(*)(void*,const char*))'+hex(native['dlsym'])+')((void*)'+hex(handle)+','+json.dumps(name)+')').GetValueAsUnsigned()
+   if not address:raise RuntimeError('exact-handle export missing: '+name)
+   owner=target.ResolveLoadAddress(address).GetModule()
+   if not owner.IsValid() or path(owner.GetFileSpec())!=ARTIFACT or uuid(owner.GetUUIDString() or '')!=MODULE_UUID:
+    raise RuntimeError('export resolves outside exact candidate image: '+name)
+   exports[name]=address
+  receipt['exports_verified']=list(exports)
+  if generation()!=IDENTITY:raise RuntimeError('native generation changed before snapshot')
+  birth=IDENTITY['birth']
+  expression='((int(*)(int,int,unsigned,unsigned long long,unsigned long long,const char*,const char*,unsigned,char*,unsigned))'+hex(exports['hyprappearance_v1_json'])+')('+','.join([str(ACTION),str(IDENTITY['pid']),str(birth[1]),str(birth[2]),str(birth[3]),json.dumps(IDENTITY['executable']),json.dumps(MAIN_UUID),str(WID),'(char*)'+hex(buffer),'16384'])+')'
+  code=evaluate(expression).GetValueAsSigned();receipt['native_code']=code
+  error=lldb.SBError();raw=process.ReadCStringFromMemory(buffer,16384,error)
+  if error.Fail():raise RuntimeError(str(error))
+  value=json.loads(raw)
+  receipt['native']=value
+  retain=(ACTION in (1,3) or bool(value.get('saved_originals')))
+  if value.get('schema')!=1 or value.get('pid')!=IDENTITY['pid'] or value.get('wid')!=WID:raise RuntimeError('appearance native receipt identity mismatch')
+  if code:raise RuntimeError('appearance refused '+str(code)+': '+str(value.get('reason')))
+  if generation()!=IDENTITY:raise RuntimeError('native generation changed after snapshot')
+  receipt['native']=value;receipt['ok']=True
+ except Exception as error:
+  receipt['error']=str(error)
+  if ACTION in (1,3) and handle:retain=True
+ finally:
+  # Each cleanup is independent; any cleanup refusal still reaches Detach.
+  if buffer and evaluate and native.get('free'):
+   try:
+    evaluate('({ ((void(*)(void*))'+hex(native['free'])+')((void*)'+hex(buffer)+'); 0; })');receipt['buffer_freed']=True
+   except Exception as error:receipt['buffer_free_error']=str(error);receipt['ok']=False
+  receipt['handle']=handle;receipt['handle_retained']=bool(handle and (retain or EXISTING_HANDLE and (ACTION!=2 or not receipt.get('ok'))))
+  if handle and not receipt['handle_retained'] and evaluate and native.get('dlclose'):
+   try:
+    result=evaluate('((int(*)(void*))'+hex(native['dlclose'])+')((void*)'+hex(handle)+')').GetValueAsSigned()
+    receipt['own_dlopen_reference_closed']=result==0
+    if result:receipt['ok']=False
+   except Exception as error:receipt['dlclose_error']=str(error);receipt['ok']=False
+  try:
+   error=process.Detach(False);receipt['detached']=error.Success()
+   if error.Fail():receipt['detach_error']=str(error);receipt['ok']=False
+  except Exception as error:receipt['detached']=False;receipt['detach_error']=str(error);receipt['ok']=False
+  receipt['end_wall_ns']=time.time_ns()
+  with open(OUTPUT,'x') as stream:json.dump(receipt,stream,indent=2);stream.write('\n')
+execute()

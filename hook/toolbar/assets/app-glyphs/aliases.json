@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "bundles": {
+    "app.zen-browser.zen": ":zen_browser:",
+    "com.apple.appstore": ":app_store:",
+    "com.apple.passwords": ":passwords:",
+    "com.apple.preview": ":preview:",
+    "com.apple.safari": ":safari:",
+    "com.apple.terminal": ":terminal:",
+    "com.apple.textedit": ":textedit:",
+    "com.apple.finder": ":finder:",
+    "com.microsoft.excel": ":microsoft_excel:",
+    "com.mitchellh.ghostty": ":ghostty:",
+    "com.spotify.client": ":spotify:",
+    "ru.keepcoder.telegram": ":telegram:",
+    "com.mitchellh.ghostty.debug": ":ghostty:",
+    "com.mitchellh.ghostty-dock-tile": ":ghostty:",
+    "app.zen-browser.zen-media-plugin-helper": ":zen_browser:",
+    "app.zen-browser.zen-gpu-helper": ":zen_browser:",
+    "app.zen-browser.plugincontainer": ":zen_browser:",
+    "com.databridges.privacy.v2raytun.snextension": ":v2raytun:",
+    "com.databridges.privacy.v2raytun.packet-extension-mac": ":v2raytun:",
+    "cc.ffitch.shottr-launchatloginhelper": ":shottr:",
+    "com.apple.passwords.menubarextra": ":passwords:",
+    "com.databridges.privacy.v2raytun": ":v2raytun:",
+    "cc.ffitch.shottr": ":shottr:"
+  },
+  "custom": {
+    ":v2raytun:": {
+      "file": "v2raytun.svg",
+      "names": [
+        "v2RayTun"
+      ]
+    },
+    ":shottr:": {
+      "file": "shottr.svg",
+      "names": [
+        "Shottr"
+      ]
+    }
+  }
+}

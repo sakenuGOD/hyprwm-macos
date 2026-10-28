@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <unistd.h>
 
 #ifndef HYPRWM_GIT_REVISION
 #define HYPRWM_GIT_REVISION "unknown"
@@ -39,6 +40,7 @@ int hs_process_birth(int pid, uint64_t *seconds, uint64_t *micros) {
 extern int SLSMainConnectionID(void);
 extern CGError SLSGetWindowOwner(int cid, uint32_t wid, int *owner);
 extern CGError SLSConnectionGetPID(int cid, pid_t *pid);
+extern CGError SLSCopyConnectionProperty(int caller, int target, CFStringRef key, CFTypeRef *value);
 extern CGError SLSGetWindowLevel(int cid, uint32_t wid, int *level);
 extern CGError _SLPSGetFrontProcess(ProcessSerialNumber *psn);
 extern CGError SLSGetWindowBounds(int cid, uint32_t wid, CGRect *r);
@@ -68,6 +70,29 @@ int hs_window_connection(unsigned wid, int expected_pid) {
     if (expected_pid <= 0 || SLSGetWindowOwner(hs_cid(), wid, &owner) || owner <= 0 ||
         SLSConnectionGetPID(owner, &pid) || pid != expected_pid) return -1;
     return owner;
+}
+
+/* Same four-argument Copy ABI as identity/transport_native.m. The property is
+ * data only: root grant/module authority is checked by the Swift reader. */
+int hs_copy_configure_stream_json(unsigned wid, int pid, uint64_t seconds, uint64_t micros,
+                                  char *buffer, unsigned capacity, int *connection) {
+    uint64_t sec=0,usec=0;pid_t caller=0;CFTypeRef value=NULL;int result=-1;
+    if(!buffer || capacity<2 || capacity>65536 || !connection || !wid || pid<=1 ||
+       hs_process_birth(pid,&sec,&usec) || sec!=seconds || usec!=micros)return -1;
+    int owner=hs_window_connection(wid,pid);
+    if(owner<=0 || SLSConnectionGetPID(hs_cid(),&caller) || caller!=getpid())return -1;
+    if(!SLSCopyConnectionProperty(hs_cid(),owner,CFSTR("hyprwm.configure-stream.v1"),&value) &&
+       value && CFGetTypeID(value)==CFDataGetTypeID()) {
+        CFIndex length=CFDataGetLength((CFDataRef)value);
+        const UInt8 *bytes=CFDataGetBytePtr((CFDataRef)value);
+        if(length>0 && length<=16384 && length<capacity && !memchr(bytes,0,(size_t)length)) {
+            memcpy(buffer,bytes,(size_t)length);buffer[length]=0;result=(int)length;
+        }
+    }
+    if(value)CFRelease(value);
+    if(result<0 || hs_window_connection(wid,pid)!=owner || hs_process_birth(pid,&sec,&usec) ||
+       sec!=seconds || usec!=micros)return -1;
+    *connection=owner;return result;
 }
 
 int hs_win_pid_level(unsigned wid, int *pid, int *level) {

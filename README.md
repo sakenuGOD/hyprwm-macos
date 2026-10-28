@@ -65,7 +65,7 @@ Explicit floats, float rules and native auxiliary windows share the floating
 plane above ordinary tiles. Local playback documents identified through macOS
 Accessibility and file types stay floating. `layout.minimum_policy = "ratio"`
 keeps split proportions when an application needs a larger native frame; its
-presentation is cropped to the allocated tile. Use `hyprwmctl pan left`, `right`, `up`, `down` and `reset` to reach clipped content where the native viewport is available. Fullscreen and float controls remain available. The separate toolbar navigation UI is not included.
+presentation is cropped to the allocated tile. Use `hyprwmctl pan left`, `right`, `up`, `down` and `reset` to reach clipped content where the native viewport is available. Fullscreen and float controls remain available. The [native toolbar source](hook/toolbar/README.md) includes a separate build and optional session tools; fresh builds keep menu relocation and workspace actions disabled until local qualification. Full enable, migration and clean-install behavior remain unqualified. See [toolbar deployment limits](DEPLOY.md#optional-native-toolbar).
 
 ## Current limits
 
@@ -74,6 +74,13 @@ The native presentation path uses accepted client texture dimensions for 1:1 cro
 The current checkout ships the Engine runtime. Historical Lite behavior appears
 in the [animation comparison](docs/ANIMATION_AUDIT.md), with unavailable code
 and unverified behavior explicitly marked.
+
+The experimental [configure-stream (C1) sources](hook/configure-stream/ConfigureStream.h)
+remain off by default and unqualified. Building them does not enable the path;
+they require a separately reviewed loader, current protected grant and native
+qualification. The [Telegram main-only appearance export](hook/toolbar/appearance/README.md)
+is source-only and is not integrated with the public session or installer. It
+does not include a portable qualified controller or native binary.
 
 ## Development
 

@@ -1,0 +1,12 @@
+{
+  "upstream": "https://github.com/kvndrsslr/sketchybar-app-font",
+  "commit": "b3e5230adc36a8abb17f85db2d88d80737bf6638",
+  "release": "v3.0.11",
+  "license": "CC0-1.0",
+  "font_sha256": "e366106cb373470e89c93c4a10a69f139cd8721d6a8fab186a7a657dc74a50e7",
+  "mapping": "APPM table embedded in this font",
+  "custom_svgs": {
+    "v2raytun.svg": "Original paneled Defender-style shield; CC0-1.0",
+    "shottr.svg": "Original capture/target symbol; CC0-1.0"
+  }
+}

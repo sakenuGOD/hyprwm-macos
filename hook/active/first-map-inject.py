@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Enable the existing first-frame client for one exact regular app generation."""
 from pathlib import Path
-import ctypes,importlib.util,json,os,plistlib,pwd,shutil,socket,stat,struct,subprocess,sys,tempfile,time,uuid
+import ctypes,hashlib,importlib.util,json,os,plistlib,pwd,shutil,socket,stat,struct,subprocess,sys,tempfile,time,uuid
 if sys.flags.optimize:
     raise RuntimeError('First-map identity guards require Python optimization disabled')
 
@@ -22,6 +22,85 @@ def capability(library,pid,version=3):
     assert library.notify_register_check(f'hyprwm.admission.v{version}.cap.{pid}'.encode(),ctypes.byref(token))==0
     try:assert library.notify_get_state(token.value,ctypes.byref(value))==0;return value.value
     finally:library.notify_cancel(token.value)
+
+def publish_binding(binding,expected,server,module):
+    """Root receipt only after verified image/install, successful detach and cap1."""
+    assert os.geteuid()==0 and binding.get('schema')==1 and binding.get('installed') is True and binding.get('detached') is True
+    birth=[expected[k] for k in ('pid','uid','seconds','micros')]
+    assert binding['target']['birth']==birth and binding['target']['executable']==expected['path']
+    entries=[image_entry(module,arch) for arch in ('arm64','arm64e')]
+    assert any(binding['module_uuid']==entry['uuid'] and binding['entry_prefix']==entry['prefix'] for entry in entries)
+    binding=dict(binding,server=dict(pid=server['pid'],birth=[server[k] for k in ('pid','uid','seconds','micros')],executable=server['path']),
+                 module_sha256=hashlib.sha256(module.read_bytes()).hexdigest(),version=3)
+    parts=['Library','Application Support','HyprWM','Admission Bindings',str(expected['uid'])]
+    directory=os.open('/',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+    try:
+        for part in parts:
+            created=False
+            try:os.mkdir(part,0o755,dir_fd=directory);created=True
+            except FileExistsError:pass
+            child=os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=directory)
+            try:
+                info=os.fstat(child);assert info.st_uid==0 and not info.st_mode&0o022
+                if created:os.fchmod(child,0o755)
+            except BaseException:os.close(child);raise
+            os.close(directory);directory=child
+        name='-'.join(map(str,birth))+'.json';temporary='.binding-'+uuid.uuid4().hex
+        fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=directory)
+        try:
+            with os.fdopen(fd,'wb') as stream:
+                stream.write((json.dumps(binding,sort_keys=True)+'\n').encode());stream.flush();os.fsync(stream.fileno());os.fchmod(stream.fileno(),0o644)
+            os.replace(temporary,name,src_dir_fd=directory,dst_dir_fd=directory);os.fsync(directory)
+        finally:
+            try:os.unlink(temporary,dir_fd=directory)
+            except FileNotFoundError:pass
+    finally:os.close(directory)
+
+def read_binding(expected,module):
+    """Read an accepted root receipt through its fixed protected directory FDs."""
+    assert os.geteuid()==0
+    birth=[expected[k] for k in ('pid','uid','seconds','micros')]
+    directory=os.open('/',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+    try:
+        for part in ['Library','Application Support','HyprWM','Admission Bindings',str(expected['uid'])]:
+            child=os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC,dir_fd=directory)
+            try:
+                info=os.fstat(child);assert info.st_uid==0 and not info.st_mode&0o022
+            except BaseException:os.close(child);raise
+            os.close(directory);directory=child
+        name='-'.join(map(str,birth))+'.json'
+        fd=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC,dir_fd=directory)
+        try:
+            before=os.fstat(fd)
+            assert stat.S_ISREG(before.st_mode) and before.st_uid==0 and not before.st_mode&0o022 and before.st_nlink==1 and 0<before.st_size<=65536
+            raw=os.read(fd,65537);after=os.fstat(fd);named=os.stat(name,dir_fd=directory,follow_symlinks=False)
+            stamp=lambda row:(row.st_dev,row.st_ino,row.st_size,row.st_mtime_ns,row.st_mode,row.st_uid,row.st_nlink)
+            assert len(raw)==before.st_size and stamp(before)==stamp(after)==stamp(named),'root admission binding changed during read'
+        finally:os.close(fd)
+    finally:os.close(directory)
+    binding=json.loads(raw);target=binding['target'];server=binding['server']
+    assert binding.get('schema')==1 and binding.get('version')==3 and binding.get('installed') is True and binding.get('detached') is True
+    assert target['birth']==birth and target['executable']==expected['path']
+    assert str(uuid.UUID(target['main_uuid'])).upper()==target['main_uuid']
+    info=module.lstat();assert stat.S_ISREG(info.st_mode) and info.st_uid==0 and not info.st_mode&0o022
+    assert binding['module_sha256']==hashlib.sha256(module.read_bytes()).hexdigest()
+    entries=[image_entry(module,arch) for arch in ('arm64','arm64e')]
+    assert any(binding['module_uuid']==entry['uuid'] and binding['entry_prefix']==entry['prefix'] for entry in entries)
+    prior=server['birth']
+    assert isinstance(prior,list) and len(prior)==4 and all(type(value) is int for value in prior)
+    assert type(server['pid']) is int and prior[0]==server['pid']>1 and prior[1]==expected['uid'] and prior[2]>0 and 0<=prior[3]<1000000
+    assert isinstance(server['executable'],str) and server['executable'].startswith('/') and len(os.fsencode(server['executable']))<4096
+    assert server['executable']==os.path.realpath(server['executable'])
+    return binding
+
+def server_departed(native,server):
+    current=native.identity(server['pid'])
+    if current is not None:
+        return [current[k] for k in ('pid','uid','seconds','micros')]!=server['birth']
+    try:os.kill(server['pid'],0)
+    except ProcessLookupError:return True
+    except OSError:return False
+    return False
 
 def manager(control,uid):
     native=loader()
@@ -180,55 +259,67 @@ def load(pid,uid,seconds,micros,control='/tmp/hyprwm.ctl'):
     protected=['Dock','SystemUIServer','ControlCenter','WindowManager','loginwindow']
     assert expected['path'] not in [f'/System/Library/CoreServices/{name}.app/Contents/MacOS/{name}' for name in protected]
     library=native.notify()
-    if capability(library,pid)==1:
-        home=Path(pwd.getpwuid(uid).pw_dir).resolve();folder=home/'Library/Application Support/HyprWM/first-map'
-        _,table=read_grants(folder/'grants-v3.json',uid)
-        rows=[row for row in table['targets'] if row.get('birth')==[pid,uid,seconds,micros] and row.get('executable')==expected['path']]
-        assert len(rows)==1 and isinstance(rows[0].get('main_uuid'),str),'existing first-map grant identity unavailable'
-        publish_grant(dict(rows[0],server_executable=server['path']),uid,control)
-        token=request(library,pid,True);library.notify_cancel(token)
-        return dict(ok=True,pid=pid,admission=True,existing=True)
-    source=Path(__file__).with_name('hypradmission.v3.dylib');assert source.is_file()
-    legacy=Path(__file__).with_name('hypradmission.v2.dylib');legacy_entries={}
-    if legacy.exists():
-        old=legacy.lstat();assert stat.S_ISREG(old.st_mode) and old.st_uid==0 and not old.st_mode&0o022
-        legacy_entries={arch:{symbol:image_entry(legacy,arch,symbol) for symbol in
-                        ['hypradmission_uninstall','hypradmission_is_installed']} for arch in ['arm64','arm64e']}
-    user=pwd.getpwuid(uid);home=Path(user.pw_dir).resolve()
-    folder=home/'Library/Application Support/HyprWM/Client Modules'
-    handle=owned_directory(folder,uid,user.pw_gid,create=True);os.close(handle)
-    bundle=Path(expected['path'].split('.app/')[0]+'.app');bid=plistlib.loads((bundle/'Contents/Info.plist').read_bytes()).get('CFBundleIdentifier')
-    if isinstance(bid,str) and bid and all(c.isalnum() or c in '._-' for c in bid):
-        container=home/'Library/Containers'/bid/'Data'
-        if container.is_dir() and not container.is_symlink() and container.resolve()==container:folder=container
-    item=folder.lstat();assert stat.S_ISDIR(item.st_mode) and item.st_uid==uid and not item.st_mode&0o022
-    destination=folder/'hypradmission.v3.dylib';temporary=folder/('.admission-'+uuid.uuid4().hex)
-    directory=owned_directory(folder,uid,user.pw_gid)
-    descriptor=os.open(temporary.name,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=directory)
-    try:
-        os.fchown(descriptor,uid,user.pw_gid)
-        with os.fdopen(descriptor,'wb') as stream:stream.write(source.read_bytes());stream.flush();os.fsync(stream.fileno())
-        os.replace(temporary.name,destination.name,src_dir_fd=directory,dst_dir_fd=directory)
-    finally:
-        try:os.unlink(temporary.name,dir_fd=directory)
-        except FileNotFoundError:pass
-        os.close(directory)
+    source=Path(__file__).with_name('hypradmission.v3.dylib')
+    existing=capability(library,pid)==1;binding=None;destination=None;legacy_entries={}
+    if existing:
+        try:binding=read_binding(expected,source)
+        except (OSError,ValueError,KeyError,TypeError,AssertionError,struct.error):
+            return dict(ok=False,pid=pid,admission=True,existing=True,pending=True,reason='existing_v3_unproven')
+        current_server=dict(pid=server['pid'],birth=[server[k] for k in ('pid','uid','seconds','micros')],executable=server['path'])
+        if binding['server']==current_server:
+            grant=dict(binding['target'],server_executable=server['path'])
+            publish_grant(grant,uid,control)
+            fresh=native.identity(pid);current=manager(control,uid)
+            assert fresh and all(fresh[k]==expected[k] for k in ('pid','uid','seconds','micros','path'))
+            assert all(current[k]==server[k] for k in ('pid','uid','seconds','micros','path')) and capability(library,pid)==1
+            token=request(library,pid,True);library.notify_cancel(token)
+            return dict(ok=True,pid=pid,admission=True,existing=True)
+        if not server_departed(native,binding['server']):
+            return dict(ok=False,pid=pid,admission=True,existing=True,pending=True,reason='existing_v3_server_not_retired')
+    else:
+        assert source.is_file()
+        legacy=Path(__file__).with_name('hypradmission.v2.dylib')
+        if legacy.exists():
+            old=legacy.lstat();assert stat.S_ISREG(old.st_mode) and old.st_uid==0 and not old.st_mode&0o022
+            legacy_entries={arch:{symbol:image_entry(legacy,arch,symbol) for symbol in
+                            ['hypradmission_uninstall','hypradmission_is_installed']} for arch in ['arm64','arm64e']}
+        user=pwd.getpwuid(uid);home=Path(user.pw_dir).resolve()
+        folder=home/'Library/Application Support/HyprWM/Client Modules'
+        handle=owned_directory(folder,uid,user.pw_gid,create=True);os.close(handle)
+        bundle=Path(expected['path'].split('.app/')[0]+'.app');bid=plistlib.loads((bundle/'Contents/Info.plist').read_bytes()).get('CFBundleIdentifier')
+        if isinstance(bid,str) and bid and all(c.isalnum() or c in '._-' for c in bid):
+            container=home/'Library/Containers'/bid/'Data'
+            if container.is_dir() and not container.is_symlink() and container.resolve()==container:folder=container
+        item=folder.lstat();assert stat.S_ISDIR(item.st_mode) and item.st_uid==uid and not item.st_mode&0o022
+        destination=folder/'hypradmission.v3.dylib';temporary=folder/('.admission-'+uuid.uuid4().hex)
+        directory=owned_directory(folder,uid,user.pw_gid)
+        descriptor=os.open(temporary.name,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=directory)
+        try:
+            os.fchown(descriptor,uid,user.pw_gid)
+            with os.fdopen(descriptor,'wb') as stream:stream.write(source.read_bytes());stream.flush();os.fsync(stream.fileno())
+            os.replace(temporary.name,destination.name,src_dir_fd=directory,dst_dir_fd=directory)
+        finally:
+            try:os.unlink(temporary.name,dir_fd=directory)
+            except FileNotFoundError:pass
+            os.close(directory)
     directory=Path(tempfile.mkdtemp(prefix='hyprwm-first-map-load-'));wrapper=directory/'load.py';log=directory/'load.log'
-    config=dict(expected=expected,server=server,control=control,library=str(destination),
+    config=dict(expected=expected,server=server,control=control,library=str(destination) if destination else None,
                 entries={arch:image_entry(source,arch) for arch in ['arm64','arm64e']},
                 legacy_entries=legacy_entries,
-                dylib_loader=native.loader_entry(),module=str(Path(__file__).resolve()))
+                mode='existing_v3' if existing else 'fresh',binding=binding,source=str(source.resolve()),
+                dylib_loader=None if existing else native.loader_entry(),module=str(Path(__file__).resolve()))
     wrapper.write_text('CONFIG='+repr(config)+'\n'+Path(__file__).with_name('first-map-load.py').read_text())
     debugger=native.protected_tool('lldb');output='';attached=False
-    was_accepting=capability(library,pid,version=2)==1
+    was_accepting=not existing and capability(library,pid,version=2)==1
     try:
         # Complete candidate/staging preflight before disabling a working client.
         # This also clears the predecessor's permanent desiredEnabled listener.
-        token=request(library,pid,False,version=2);library.notify_cancel(token)
-        end=time.monotonic()+1
-        while capability(library,pid,version=2)==1:
-            assert time.monotonic()<end,'previous first-map client is draining'
-            time.sleep(.01)
+        if not existing:
+            token=request(library,pid,False,version=2);library.notify_cancel(token)
+            end=time.monotonic()+1
+            while capability(library,pid,version=2)==1:
+                assert time.monotonic()<end,'previous first-map client is draining'
+                time.sleep(.01)
         with log.open('w') as output:
             child=subprocess.Popen(['/usr/bin/arch','-arm64',debugger,'--no-lldbinit',
                 '-O','plugin disable symbol-file','-O','plugin disable instrumentation-runtime','-O','plugin disable language-runtime.swift',
@@ -241,14 +332,23 @@ def load(pid,uid,seconds,micros,control='/tmp/hyprwm.ctl'):
             except subprocess.TimeoutExpired:child.kill();child.wait(timeout=2);raise RuntimeError('owned first-map debugger disconnected: '+log.read_text()[-1500:])
         output=log.read_text();assert code==0 and 'FIRST_MAP_DETACH True INSTALLED True' in output,output[-1500:]
         assert capability(library,pid)==1,'first-map client did not become ready'
+        rows=[json.loads(line[len('FIRST_MAP_BINDING '):]) for line in output.splitlines() if line.startswith('FIRST_MAP_BINDING ')]
+        assert len(rows)==1,'actual loaded/detached first-map binding required'
+        fresh=native.identity(pid);current=manager(control,uid)
+        assert fresh and all(fresh[k]==expected[k] for k in ('pid','uid','seconds','micros','path'))
+        assert all(current[k]==server[k] for k in ('pid','uid','seconds','micros','path'))
+        if existing:assert read_binding(expected,source)==binding,'accepted root binding changed during rebind'
+        assert capability(library,pid)==1,'first-map client lost readiness before root publication'
+        publish_binding(rows[0],expected,server,source)
+        library.notify_post(f'hyprwm.admission.v3.cap.{pid}'.encode())
         token=request(library,pid,True);library.notify_cancel(token)
-        return dict(ok=True,pid=pid,admission=True,existing=False)
+        return dict(ok=True,pid=pid,admission=True,existing=True,rebound=True) if existing else dict(ok=True,pid=pid,admission=True,existing=False)
     except BaseException as error:
         text=log.read_text() if log.exists() else ''
         restored=False
         # Old request1 still uses its original shared-source ownership guard.
         # Never label fallback as v3 readiness, or call into an unknown image.
-        if (not attached and was_accepting) or ('FIRST_MAP_DETACH True' in text and 'FIRST_MAP_PREDECESSOR' in text):
+        if not existing and ((not attached and was_accepting) or ('FIRST_MAP_DETACH True' in text and 'FIRST_MAP_PREDECESSOR' in text)):
             fresh=native.identity(pid)
             current=manager(control,uid)
             if fresh and all(fresh[k]==expected[k] for k in ['pid','uid','seconds','micros','path']) and all(current[k]==server[k] for k in ['pid','uid','seconds','micros','path']):

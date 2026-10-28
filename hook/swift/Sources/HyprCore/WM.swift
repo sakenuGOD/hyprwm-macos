@@ -493,6 +493,14 @@ public final class WM {
         // Keep the existing guarded live geometry/configure path immediate.
         let acceptedCloseBatch=self.acceptedCloseBatch(space,rects:rects);ordinaryReadyNonce=nil
         defer {ordinaryFallback.removeAll()}
+        let streamOpeningWait=inOn && opening.contains {wid in
+            guard let window=cur[wid] else{return false}
+            return !restoring.contains(wid) && !presentedOpenings.contains(wid) &&
+                !windowPolicy(window).noAnimation && !ordinaryFallback.contains(wid)
+        }
+        let streamCohort=acceptedCloseBatch==nil ? configureStreamCohort(rects,current:cur,engine:engW,real:real,
+            space:space,opening:opening,force:force,curve:mvC,duration:mvD,motionOn:mvOn,hold:streamOpeningWait):[:]
+        let streamHold = !streamCohort.isEmpty && streamOpeningWait
         if !opening.isEmpty && inOn { // Concealed openings remain invisible until their size is ready.
             for wid in opening where !restoring.contains(wid) && !presentedOpenings.contains(wid) {
                 c.alpha(wid, 0.0, 0, 0.0, frm: 0.0)
@@ -523,12 +531,13 @@ public final class WM {
                 clientPolicy?.admitted(cw,sys) == true && sys.clientCapability(cw.pid) >= 6 && dragSession == nil
             var capturedSnapshot=false
             var terminalMove=false
+            let streamFrames=streamCohort[wid] != nil
             let nativeFrames = options.production && acceptedCloseBatch==nil && options.nativeFrames && !noAnimation && mvOn &&
-                !snapshotFrames &&
+                !snapshotFrames && !streamFrames &&
                 (!opening.contains(wid) || restoring.contains(wid)) && clientPolicy?.admitted(cw,sys) == true && sys.clientCapability(cw.pid) >= 6 &&
                 sys.clientMinimum(cw.pid,wid).map{to.w+1 >= $0.0 && to.h+1 >= $0.1} == true &&
                 !(engW[wid].map { $0.geo != 2 && $0.moving } ?? false) && dragSession == nil
-            if nativeFrames { cfgSink?.cancel(wid) }
+            if nativeFrames || streamFrames { cfgSink?.cancel(wid) }
             if opening.contains(wid) && inOn && !noAnimation && !restoring.contains(wid) && !presentedOpening {
                 var frm: Rect?
                 if options.production {
@@ -550,7 +559,9 @@ public final class WM {
                 // consumes the command (AX is faster than a tick), otherwise the engine sees the new frame and teleports.
                 var frm: Rect?
                 let ew = engW[wid]
-                if ew == nil || !ew!.moving { frm = restoreFrom.removeValue(forKey: wid) ?? vis[wid] }
+                if ew == nil || !ew!.moving {
+                    frm = streamFrames ? streamCohort[wid]?.currentFrame : restoreFrom.removeValue(forKey: wid) ?? vis[wid]
+                }
                 deco.ensure(wid, cw.owner, ew?.radius ?? 0)
                 if let u = deco.place(wid, to), u != 0 { c.under(wid, u) }
                 if options.production {
@@ -565,6 +576,9 @@ public final class WM {
                     if !capturedSnapshot {
                         if presentedOpening {
                             c.geom(wid,to,motionCurve,motionCurve,dpos:motionDuration,dsize:motionDuration,frm:frm,move:false,warp:false,stretch:false)
+                        }
+                        else if streamFrames {
+                            guard c.streamGeometry(wid,to:to,curves:(mvC,mvC),durations:(mvD,mvD),from:frm,hold:streamHold) else {target[wid]=nil;continue}
                         }
                         else if nativeFrames {c.geometry(wid,to:to,curves:(mvC,mvC),durations:(mvD,mvD),from:frm,warp:!mvOn || noAnimation,
                             stretch:false,native:true,wait:false,hold:false)}
@@ -592,7 +606,7 @@ public final class WM {
             target[wid] = to
             if !capturedSnapshot { snapshotConfigures[wid]=nil }
             posted.append(wid)
-            if nativeFrames || capturedSnapshot { continue }
+            if nativeFrames || streamFrames || capturedSnapshot { continue }
             // Give the app its final size once. During live movement,
             // position belongs to atomic completion in WindowServer.
             let a = real[wid] ?? cw.rect
@@ -925,6 +939,7 @@ public final class WM {
         if let result = try controlHandler?(a.count == 1 ? cmd : line) { return result }
         let s = sp(space)
         let rects = layout(area, s)
+        if cmd=="configure-stream-probe" {return try configureStreamProbe(a,space:space,wins:wins,rects:rects)}
         let targetsWindow=["focus","move","togglesplit","float","fullscreen","close","quit","hide","setprop","resize"].contains(cmd)
         let requiresTile = !["float","close","quit","hide","setprop"].contains(cmd)
         let nativeWindow=options.production && targetsWindow ? nativeCommandWindow(space,wins,rects,requiresTile:requiresTile):nil

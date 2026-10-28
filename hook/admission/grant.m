@@ -90,7 +90,12 @@ static void publishReadiness(void) {
         char name[96];snprintf(name,sizeof(name),"hyprwm.admission.v3.cap.%d",getpid());
         if(notify_register_check(name,&token)!=NOTIFY_STATUS_OK)return;
     }
-    notify_set_state(token,hypradmission_is_accepting()?1:0);
+    uint64_t desired=hypradmission_is_accepting()?1:0,previous=0;
+    BOOL changed=notify_get_state(token,&previous)!=NOTIFY_STATUS_OK||previous!=desired;
+    if(notify_set_state(token,desired)==NOTIFY_STATUS_OK&&changed){
+        char name[96];snprintf(name,sizeof(name),"hyprwm.admission.v3.cap.%d",getpid());
+        notify_post(name);
+    }
 }
 
 int HAInstallCurrentGrant(void) {

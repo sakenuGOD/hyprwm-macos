@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "origin": "sketchybar/design/final/runtime (validated source-only copy)",
+  "sha256": {
+    "adapters/forest_codec.py": "bcf41babe1be3a4b024e4e6ab4955ab36312a52ef05742605a2c630a2b699cb0",
+    "adapters/forest_runtime.py": "9da8a1dea5a4357bff8afe17b87afaf23d43d2acddd64f8fc19837451b9b9881",
+    "adapters/forest_watch.py": "5472c65b0956c8bd193a278234471209bb67c9303d18c043c3d8c90e12e2bf87",
+    "adapters/native_popup.py": "bf54a017c27f90b792521394a4bebf4a1f85b535593f52da53bcba3dfbe14b3b",
+    "lib/model.py": "f6689c68cd5667424e96206872d59c7418f9742d42274f680df80a0425e1792c"
+  },
+  "local_changes": {
+    "lib/model.py": "Recognize authenticated layout_changed/session_changed/viewport_changed hints; fresh status remains authoritative."
+  }
+}

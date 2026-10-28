@@ -49,6 +49,13 @@ extension WM {
         }
         let context=sys.focusContext(pid)
         guard context.flags&NativeFocusFlags.positive==0 else{return false}
+        // Start the exact primary's read while focus refresh is pending, but
+        // consume absence only after focus is known and has no dialog evidence.
+        var presence = -1
+        if prior != nil || info[pid]?[wid]?.type=="primary" {
+            closePresenceTransitions.insert(wid)
+            presence=sys.windowPresence(pid,wid)
+        }
         // Native unmap can precede the asynchronous AX press reply. A window
         // missing from this Space is sufficient for its exact close request;
         // transient Space-zero/fullscreen gaps still require stronger evidence.
@@ -62,9 +69,7 @@ extension WM {
         }
         // Ambiguous native Cmd-W/tab/fullscreen transitions use one cached,
         // background public AXWindows read. Present/unknown never count as close.
-        guard prior != nil || info[pid]?[wid]?.type=="primary" else{return false}
-        closePresenceTransitions.insert(wid)
-        guard sys.windowPresence(pid,wid)==0,sys.processBirth(pid)==birth else{return false}
+        guard presence==0,sys.processBirth(pid)==birth else{return false}
         closeDepartures[wid]=CloseDeparture(pid:pid,birth:birth,space:space);return true
     }
     func requestClose(_ window:WinInfo) -> String {

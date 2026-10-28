@@ -1,0 +1,7 @@
+{
+  "source": "https://github.com/ghostty-org/website/blob/7962e91e190ff226be1a4983eb9368b7ddb4dff9/public/ghostty-logo.svg",
+  "source_sha256": "9b8fa00d5a61e9c51ae661e1e1a60b60cdb23948b5c293cb9766739c336cef6b",
+  "source_commit": "7962e91e190ff226be1a4983eb9368b7ddb4dff9",
+  "license": "MIT",
+  "adaptation": "outer official silhouette and official terminal cutouts, monochrome white even-odd native Bezier fill; original proportions preserved"
+}
