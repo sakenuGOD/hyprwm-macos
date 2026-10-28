@@ -16,20 +16,24 @@ final class LayoutBoundsTests:XCTestCase {
             else {XCTAssertLessThanOrEqual(a.y+a.h,b.y)}
         }}
     }
-    func testAXConfirmedWindowMinimumConstrainsCrowdedRatioWithoutUsingStaleOwnerCache() throws {
+    func testCrowdedRatioIgnoresClientMinimaAndKeepsVerifiedFloorsIdentityBound() throws {
         let f=ProductionPolicyTests()
         let left=Node(split:"h",ratio:0.5,a:Node(leaf:1),b:Node(split:"v",ratio:0.5,a:Node(leaf:2),b:Node(leaf:3)))
         let (wm,sys,_,_)=try f.world(Node(split:"v",ratio:0.5,a:left,b:Node(leaf:4)))
         wm.tile.minimumPolicy="ratio"
+        let expected=wm.layout(f.area,wm.sp(1))
         wm.mins["Fixture"]=[.double(1400),.double(900)]
         let target=try XCTUnwrap(wm.layout(f.area,wm.sp(1))[3]);wm.target[3]=target
         var result=CfgResult(wid:3,owner:"Fixture",to:target,
                              got:Rect(target.x,target.y,459,target.h),e:0,
                              pre:Rect(target.x,target.y,720,600))
         result.pid=103;result.birth="birth-3";result.isCurrent={true};wm.cfgQ=[result]
-        XCTAssertTrue(wm.configured(),"A newly verified hard minimum must reflow even if an old owner cache is larger")
+        XCTAssertTrue(wm.configured(),"Record the live AX floor even if an old owner cache is larger")
         let rects=wm.layout(f.area,wm.sp(1))
-        XCTAssertGreaterThanOrEqual(try XCTUnwrap(rects[3]).w,459)
+        // a7a7afd deliberately keeps ratio partitions independent of learned and verified minima.
+        for (wid,rect) in expected {XCTAssertEqual(rects[wid],rect)}
+        XCTAssertEqual(try XCTUnwrap(rects[3]).w,290)
+        XCTAssertEqual(wm.tile.verifiedMins[3]?.0,459,"The live floor is retained without changing ratio partitions")
         XCTAssertGreaterThanOrEqual(try XCTUnwrap(rects[2]).w,200)
         XCTAssertLessThan(try XCTUnwrap(rects[4]).w,1400,"An unrelated window must not inherit the cached or verified minimum")
         for a in rects.values {
@@ -40,8 +44,8 @@ final class LayoutBoundsTests:XCTestCase {
             }
         }
         sys.births[103]="replacement-process"
-        XCTAssertLessThan(try XCTUnwrap(wm.layout(f.area,wm.sp(1))[3]).w,459,
-                          "A recycled window identity must not inherit a previous AX floor")
+        XCTAssertEqual(wm.layout(f.area,wm.sp(1))[3],target)
+        XCTAssertNil(wm.tile.verifiedMins[3],"A recycled window identity must not inherit a previous AX floor")
     }
     func testCrowdedRatioLayoutKeepsTargetsDisjointWhenClientsMustBeClipped() throws {
         let f=ProductionPolicyTests()

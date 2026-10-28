@@ -313,6 +313,8 @@ final class WMScenarioTests: XCTestCase {
                 if kind == "cmd", let s = res.string, s.hasPrefix("{"), let w = want.string {
                     res = try JSON.parse(s)                       // status: compare as JSON
                     want = try JSON.parse(w)
+                    // d66e9fc added viewport status; the Python channel has no native capability.
+                    want = want.setting("viewport",.object([("supported",.bool(false))]))
                 }
                 if let d = jsonDiff(res, want) { XCTFail("\(ctx): response \(d)"); return }
                 if let d = jsonDiff(.array(eng.ch.ops), st["chan"]!) { XCTFail("\(ctx): channel \(d)"); return }

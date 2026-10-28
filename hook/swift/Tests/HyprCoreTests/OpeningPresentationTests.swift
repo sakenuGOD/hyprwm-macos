@@ -25,7 +25,7 @@ final class OpeningPresentationTests:XCTestCase {
         XCTAssertNil(wm.newbies[2])
     }
 
-    func testAlreadyPresentedWindowNeverDisappearsOrFliesFromItsInitialFrame() throws {
+    func testAlreadyPresentedWindowMovesFromItsVisibleFrameWithoutDisappearing() throws {
         let f=ProductionPolicyTests(),(wm,sys,eng,original)=try f.world(f.pair())
         let sink=SnapshotHandoffTests.Recorder();wm.cfgSink=sink;eng.ch.terminalEnabled=true
         var wins=original
@@ -36,11 +36,14 @@ final class OpeningPresentationTests:XCTestCase {
         wm.apply(f.area,1,wins,opening:[2])
         let opacity=eng.ch.ops.filter{$0["op"] == .string("alpha") && $0["wid"] == .int(2)}
         XCTAssertFalse(opacity.contains{$0["a"] == .double(0) || $0["frm"] == .double(0)},"An already shown window must not blink off before tiling")
-        let motion=try XCTUnwrap(eng.ch.ops.first{$0["op"] == .string("warp") && $0["wid"] == .int(2)})
-        XCTAssertEqual(motion["frm"],wm.target[2]?.json)
-        XCTAssertEqual(motion["move"],.bool(true))
+        let motion=try XCTUnwrap(eng.ch.ops.first{$0["op"] == .string("geom") && $0["wid"] == .int(2)})
+        XCTAssertEqual(motion["frm"],initial.json)
+        XCTAssertEqual(motion["to"],wm.target[2]?.json)
+        XCTAssertEqual(motion["move"],.bool(false))
         XCTAssertEqual(motion["stretch"],.bool(false))
-        XCTAssertEqual(motion["dpos"],.double(0))
+        let (curve,duration,_)=eng.anim("windowsIn")
+        XCTAssertEqual(motion["cpos"],.int(curve));XCTAssertEqual(motion["csize"],.int(curve))
+        XCTAssertEqual(motion["dpos"],.double(duration));XCTAssertEqual(motion["dsize"],.double(duration))
         XCTAssertEqual(sink.jobs.filter{$0.wid==2}.count,1)
         XCTAssertTrue(eng.ch.snapshotRequests.isEmpty)
     }
