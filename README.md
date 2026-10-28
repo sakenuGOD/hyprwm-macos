@@ -16,7 +16,7 @@
 > - Tiling requires the native engine, which runs inside WindowServer.
 > - The engine supports only **macOS 26.7.1 (build 25G241), Apple silicon**.
 >   Other builds are refused at startup.
-> - It needs **System Integrity Protection disabled** (debugging restrictions)
+> - It needs **System Integrity Protection (SIP) fully disabled**
 >   and `sudo` for setup. Use a machine you are comfortable experimenting on.
 > - Repeat native setup after every reboot or WindowServer restart.
 > - A native-engine failure can disrupt your desktop. Save your work first.
@@ -48,12 +48,33 @@ Closing animations and some focus cases still need work. See [known issues](#sta
 | What you want to do | What you need |
 | --- | --- |
 | Build the Swift app | macOS 14+, Xcode Command Line Tools (Swift 5.9+), Python 3 and Git. |
-| Run with tiling | All of the above, **macOS 26.7.1 (25G241), Apple silicon, SIP debugging restrictions disabled, and admin rights**. |
+| Run with tiling | All of the above, **macOS 26.7.1 (25G241), Apple silicon, SIP fully disabled, and admin rights**. |
 | Rebuild a Hyprland Lua configuration in a source checkout | Optional: `lua` (`brew install lua`). The installed app does not need Lua. |
 
 Tiling stays off without the native engine. There is no Lite mode in this branch.
 
 ## Install
+
+0. **Check the Mac before building.** In Terminal, run:
+
+   ```sh
+   sw_vers -productVersion
+   sw_vers -buildVersion
+   uname -m
+   csrutil status
+   ```
+
+   The first three must print `26.7.1`, `25G241` and `arm64`. The native engine
+   refuses other macOS builds. The supported SIP setup is **fully disabled**;
+   disabling only debugging restrictions has not been verified.
+
+   If SIP is enabled, shut down the Mac, hold the power button until startup
+   options appear, choose **Options → Continue**, then **Utilities → Terminal**.
+   Run `csrutil disable` in Recovery, restart, and confirm `csrutil status` reports
+   `System Integrity Protection status: disabled.` before continuing.
+   This reduces system protection. Re-enable it later with `csrutil enable` in
+   Recovery, then restart. See [Apple's SIP instructions](https://developer.apple.com/documentation/security/disabling-and-enabling-system-integrity-protection)
+   and [Apple silicon Recovery steps](https://support.apple.com/102518).
 
 1. Clone the repository, then build and install the app:
 
@@ -76,7 +97,8 @@ Tiling stays off without the native engine. There is no Lite mode in this branch
    ./install.sh --engine-state "$HYPRWM_NATIVE_STATE"
    ```
 
-3. Open `~/Applications/HyprWM.app` and grant **Accessibility** access when prompted.
+3. Set up the [global keyboard helper](#global-keyboard-helper) for focus and move shortcuts.
+   Open `~/Applications/HyprWM.app` and grant **Accessibility** access when prompted.
    Add `~/.local/bin` to your `PATH` to use `hyprwm` and `hyprwmctl` by name.
 
 **Keep this folder; the installed app still uses it.** The installer preserves your configuration and does not launch the app.
@@ -96,9 +118,30 @@ Use the menu if macOS does not deliver a menu shortcut globally.
 | Command–, | Open Settings. |
 | Option–Command–Q | Quit HyprWM and restore managed windows. |
 
-The optional keyboard helper also provides Control–Option–arrows to focus and
-Control–Option–Shift–arrows to move, from the [Lua defaults](hook/config/defaults/.config/hypr/hyprland.lua).
-The app installer does not start that helper. Check **Settings → Keyboard Shortcuts** for your active bindings.
+### Global keyboard helper
+
+The separate keyboard helper provides **Control–Option–arrows** to focus and
+**Control–Option–Shift–arrows** to move windows. `install.sh` does not build or
+start it. From the cloned folder, run these commands as your normal user:
+
+```sh
+clang -fobjc-arc -framework Carbon -framework AppKit -o hook/keys/hyprkeys hook/keys/hyprkeys.m
+test -e hook/config/hypr_cfg.json || cp hook/config/portable-defaults.json hook/config/hypr_cfg.json
+python3 hook/keys/binds.py
+./hook/keys/hyprkeys
+```
+
+The helper stays in that Terminal window; open the app from Finder or another
+Terminal window. Keep the helper running while using its shortcuts, and press
+**Control–C** in its Terminal to stop it. Stop an existing helper normally before
+starting another copy. The helper reads `/tmp/hyprkeys.json` and connects to the
+default `/tmp/hyprwm.ctl` socket. Repeat generation and start after a reboot.
+
+The helper uses macOS's public hotkey API and needs neither Accessibility nor
+Input Monitoring permission. **HyprWM.app still needs Accessibility** under
+**System Settings → Privacy & Security → Accessibility**. If you use newer custom
+Lua files, install `lua` before regenerating shortcuts. Check **Settings → Keyboard
+Shortcuts** for your active bindings; macOS or another app may reserve a shortcut.
 
 ## Configuration
 

@@ -3,22 +3,28 @@
 ## Before you start
 
 HyprWM is experimental. Tiling requires a native engine inside WindowServer,
-**macOS 26.7.1 (25G241), Apple silicon, disabled SIP debugging restrictions,
+**macOS 26.7.1 (25G241), Apple silicon, fully disabled SIP,
 and admin rights**. A failure can disrupt the desktop. Save your work first.
 Building the Swift app only needs macOS 14+, Xcode Command Line Tools, Swift 5.9+,
-Python 3 and Git. Check your build with `sw_vers -buildVersion`: it must print `25G241`.
+Python 3 and Git. Before building, check `sw_vers -productVersion`,
+`sw_vers -buildVersion` and `uname -m`: they must print `26.7.1`, `25G241` and `arm64`.
 Keep the cloned folder; the installed app still uses it. Never share generated
 native images or state files, reuse them on another Mac, or commit them to Git.
 
-## Disable SIP debugging restrictions
+## Disable SIP in Recovery
 
-WindowServer task access is blocked by SIP debugging restrictions. HyprWM's tools
-never change SIP for you. To use Apple's full-disable procedure, shut down your
-Apple silicon Mac, hold its power button until startup options appear, choose
+The native engine needs debugger access to WindowServer, which SIP protects.
+The supported setup is **SIP fully disabled**. Disabling only debugging
+restrictions has not been verified for this engine. HyprWM's tools never change
+SIP for you. To follow Apple's full-disable procedure, shut down your Apple
+silicon Mac, hold its power button until startup options appear, choose
 **Options → Continue**, then open **Utilities → Terminal** in Recovery.
-Run `csrutil disable`, restart, and check `csrutil status`.
+Run `csrutil disable`, restart, then run `csrutil status` in a normal Terminal.
+It must report `System Integrity Protection status: disabled.` before native setup.
 This reduces system protection; re-enable it with `csrutil enable` in Recovery
-when you stop experimenting. See [Apple's SIP instructions](https://developer.apple.com/documentation/security/disabling-and-enabling-system-integrity-protection).
+and restart when you stop experimenting. See [Apple's SIP instructions](https://developer.apple.com/documentation/security/disabling-and-enabling-system-integrity-protection),
+[protected task access](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.cs.debugger)
+and [Apple silicon Recovery steps](https://support.apple.com/102518).
 
 ## Build and install the app
 
@@ -33,8 +39,10 @@ This builds an ad-hoc signed app in `~/Applications/HyprWM.app` and CLI wrappers
 
 ## Native engine
 
-For first setup, stop all HyprWM daemons and menu companions normally. Do not run
-another manager during preparation or activation. Build as your normal user:
+On a first install there is nothing to stop. If HyprWM is already running, quit
+it normally through its menu, and quit any separate HyprWM menu companion before
+preparation or activation. Do not run another manager during these steps.
+Build as your normal user:
 
 ```sh
 HYPRWM_NATIVE_WORK=$(mktemp -d "${TMPDIR:-/tmp}/hyprwm-native.XXXXXX")
@@ -57,11 +65,40 @@ sudo /usr/bin/python3 hook/tools/activate_native.py activate --prepared "$HYPRWM
 ```
 
 Keep the printed **state file from activation** and its rollback command.
-Open `~/Applications/HyprWM.app`, grant Accessibility, and check `~/.local/bin/hyprwmctl status`.
+Set up the keyboard helper below, then open `~/Applications/HyprWM.app`, grant
+Accessibility, and check `~/.local/bin/hyprwmctl status`.
 Startup checks the build, framework identities, channel and placement before enabling tiling.
 An unsupported build or refused task access leaves tiling off. Do not bypass a refusal.
 For a custom `HYPRWM_CTL`, pass the same absolute path as `--control-socket`.
 Updates preserve the selected engine state; `HYPRWM_ENGINE_STATE` can override it explicitly.
+
+## Global keyboard shortcuts
+
+`install.sh` does not build or start the keyboard helper. For global focus and
+move shortcuts, run this from the cloned folder as your normal user:
+
+```sh
+clang -fobjc-arc -framework Carbon -framework AppKit -o hook/keys/hyprkeys hook/keys/hyprkeys.m
+test -e hook/config/hypr_cfg.json || cp hook/config/portable-defaults.json hook/config/hypr_cfg.json
+python3 hook/keys/binds.py
+./hook/keys/hyprkeys
+```
+
+The second command supplies defaults only when no configuration is present.
+Existing configuration is preserved; newer custom Lua files require `lua` when
+generating shortcuts. The helper reads `/tmp/hyprkeys.json` and connects to
+`/tmp/hyprwm.ctl`; it currently uses only that default socket.
+
+Keep this Terminal open, and open HyprWM.app from Finder or another Terminal.
+Use **Control–Option–arrows** to focus and **Control–Option–Shift–arrows** to move
+windows. Stop the helper with **Control–C** in its Terminal before starting another
+copy. Regenerate bindings and restart it after a reboot.
+
+The helper uses macOS's public hotkey API and needs neither Accessibility nor
+Input Monitoring permission. The app needs **System Settings → Privacy & Security
+→ Accessibility → HyprWM** enabled. Shortcuts reserved by macOS or another app may
+be unavailable; inspect the helper's Terminal output and **Settings → Keyboard
+Shortcuts**.
 
 ## After a reboot
 
