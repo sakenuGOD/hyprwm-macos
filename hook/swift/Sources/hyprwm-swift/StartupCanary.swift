@@ -33,13 +33,13 @@ enum StartupCanary {
         while !bytes.contains(10),sys.now()<readyDeadline,helper.isRunning {
             var buffer=[UInt8](repeating:0,count:512);let n=read(fd,&buffer,buffer.count)
             if n>0 {bytes.append(contentsOf:buffer.prefix(n))}
-            guard bytes.count<=1024 else{throw CmdError("startup canary response exceeded limit")}
+            guard bytes.count<=1024 else{throw CmdError("startup check response exceeded limit")}
             _=RunLoop.current.run(mode:.default,before:Date(timeIntervalSinceNow:0.01))
         }
         guard let newline=bytes.firstIndex(of:10),
               let row=try? JSON.parse(bytes.prefix(upTo:newline)),
               row["pid"]?.int==Int(helper.processIdentifier),let wid=row["wid"]?.int,wid>0,
-              let birth=sys.processBirth(Int(helper.processIdentifier)) else{throw CmdError("startup canary identity unavailable")}
+              let birth=sys.processBirth(Int(helper.processIdentifier)) else{throw CmdError("startup check process identity unavailable")}
         let scoped=CanarySystem(sys:sys,pid:Int(helper.processIdentifier),wid:wid,birth:birth,space:snapshot.space)
         var mapped:WinInfo?
         let mapDeadline=sys.now()+2
@@ -50,7 +50,7 @@ enum StartupCanary {
             }
             _=RunLoop.current.run(mode:.default,before:Date(timeIntervalSinceNow:0.01))
         }
-        guard let own=mapped else{throw CmdError("startup canary missing from native map (wid \(wid), owner \(sys.winPidLevel(wid).pid ?? 0), active Space \(sys.activeSpace()))")}
+        guard let own=mapped else{throw CmdError("startup check window missing from native map (wid \(wid), owner \(sys.winPidLevel(wid).pid ?? 0), active Space \(sys.activeSpace()))")}
         let channel=CanaryChannel(base:engine.c,scope:scoped)
         let probeEngine=CanaryEngine(base:engine,channel:channel)
         let absent=NSTemporaryDirectory()+"hyprwm-canary-"+UUID().uuidString
@@ -62,7 +62,7 @@ enum StartupCanary {
         while probe.wmInfo(scoped.pid,wid)?.type != "primary",sys.now()<classifyDeadline,scoped.current {
             _=RunLoop.current.run(mode:.default,before:Date(timeIntervalSinceNow:0.02))
         }
-        guard probe.wmInfo(scoped.pid,wid)?.type=="primary" else{throw CmdError("startup canary AX map/classification failed")}
+        guard probe.wmInfo(scoped.pid,wid)?.type=="primary" else{throw CmdError("startup check could not identify its window through Accessibility")}
         let target=Rect(min(snapshot.area.x+snapshot.area.w-272,max(snapshot.area.x+12,own.x+12)),
             min(snapshot.area.y+snapshot.area.h-214,max(snapshot.area.y+12,own.y+12)),max(240,own.w+32),max(180,own.h+24))
         var accepted=false
@@ -93,8 +93,8 @@ enum StartupCanary {
         while (channel.pending || !channel.wins().isEmpty),sys.now()<releaseDeadline {
             _=RunLoop.current.run(mode:.default,before:Date(timeIntervalSinceNow:0.01))
         }
-        guard sink.idle,!channel.pending,channel.wins().isEmpty else{throw CmdError("startup canary resources did not drain")}
-        guard passed else{throw CmdError("startup canary did not reach its actual target rectangle")}
+        guard sink.idle,!channel.pending,channel.wins().isEmpty else{throw CmdError("startup check resources are still in use")}
+        guard passed else{throw CmdError("startup check window did not reach its target rectangle")}
         // Exercise the same idle precondition that the real startup uses next.
         try engine.attachForCanary()
     }

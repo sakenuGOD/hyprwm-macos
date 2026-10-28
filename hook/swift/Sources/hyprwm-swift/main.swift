@@ -208,7 +208,7 @@ if startupCheckOnly {
     guard let text=try? ControlClient(path:existing).request("status"),let status=try? JSON.parse(text),
           status["enabled"] == .bool(false),status["engine"]?["active"]?.int==0,
           status["engine"]?["holding"]?.int==0,status["engine"]?["pending_commands"] == .bool(false)
-    else{die("pause the running daemon and wait for engine idle before checking the service canary")}
+    else{die("pause the running daemon and wait for engine idle before running the startup check")}
     }
 }
 if !startupCheckOnly && (CommandServer.isAlive(ctl) || (ctl != "/tmp/hyprwm.ctl" && CommandServer.isAlive("/tmp/hyprwm.ctl"))) {
@@ -234,7 +234,7 @@ do {
     startupQualification=startupQualification.setting("stage",.string("canary"))
     try StartupCanary.check(sys:sys,engine:eng,cfg:cfg,snapshot:snapshot)
     eng.commitStartupCurves()
-    startupQualification=startupQualification.setting("stage",.string("ready")).setting("reason",.string("native census and owned resize/apply canary passed"))
+    startupQualification=startupQualification.setting("stage",.string("ready")).setting("reason",.string("window and resize checks passed"))
     if startupCheckOnly{print(startupQualification.dumps());exit(0)}
 } catch {
     var reason=String(describing:error)

@@ -154,9 +154,9 @@ public struct PublicWorkspaceACK {
     public mutating func observeIndependent(_ catalog:PublicWorkspaceCatalog,time:Double) throws {
         guard catalog.sameSession(before),catalog.observer != managerIdentity else { throw CmdError("independent native session/observer identity differs") }
         guard catalog.active==target.sid else { independentTimes=[];return }
-        guard !ordinaryRequired || OrdinaryWorkspaceWitness.validate(catalog.ordinaryWitness,space:target.sid) else {throw CmdError("complete independent ordinary native census required")}
+        guard !ordinaryRequired || OrdinaryWorkspaceWitness.validate(catalog.ordinaryWitness,space:target.sid) else {throw CmdError("complete desktop window information required")}
         guard !observers.contains(catalog.observer),time.isFinite,
-              independentTimes.last.map({time>$0}) ?? true else { throw CmdError("independent observer birth/time replay") }
+              independentTimes.last.map({time>$0}) ?? true else { throw CmdError("observer process identity or time was reused") }
         observers.append(catalog.observer);independentTimes.append(time)
         if independentTimes.count>16 {independentTimes.remove(at:1)}
     }

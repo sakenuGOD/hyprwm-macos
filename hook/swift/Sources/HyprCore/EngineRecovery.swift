@@ -25,7 +25,7 @@ extension WM {
     /// Only an authenticated handover command arms preservation. No environment bypass.
     func armHiddenHandover() throws {
         let pid = Int(getpid())
-        guard let birth = sys.processBirth(pid) else { throw CmdError("handover: daemon birth unavailable") }
+        guard let birth = sys.processBirth(pid) else { throw CmdError("handover: daemon process identity unavailable") }
         hiddenHandover = .object([("version", .int(1)), ("owner_pid", .int(pid)),
             ("owner_birth", .string(birth)), ("hidden_intents", try hiddenIntents())])
     }

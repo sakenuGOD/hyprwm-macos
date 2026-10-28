@@ -1180,7 +1180,7 @@ public final class WM {
             sys.processBirth(w.pid) == nil) { return "protected or unverified window" }
         let birth=options.production ? sys.processBirth(w.pid):nil
         let parts=birth?.split(separator:":").compactMap{Int($0)} ?? []
-        if options.production && (parts.count != 3 || parts[0] != w.pid || parts[1]<=0 || !(0..<1_000_000).contains(parts[2])) {return "hide refused: exact native birth unavailable"}
+        if options.production && (parts.count != 3 || parts[0] != w.pid || parts[1]<=0 || !(0..<1_000_000).contains(parts[2])) {return "hide refused: exact process identity unavailable"}
         let wid = w.wid
         if hidden.contains(where: { $0.wid == wid }) { return "already hidden \(wid)" }
         let s = sp(space)

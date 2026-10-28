@@ -202,7 +202,7 @@ final class VerifiedPublicWorkspace {
                 guard sourceCurrent() else{throw CmdError("explicit creation source/foreground changed before AXPress")}
                 let result=try helper(proof,["--press",String(pid),"mc.spaces.add","--receipt",receipt.path],epoch)
                 guard result["dock"]==before.dock,result["dock_fence_after"] == .bool(true),result["ax_error"] == .int(0),
-                      result["control"]?["identifier"] == .string("mc.spaces.add"),before.matchesPublicSnapshot(result["before_spaces"]) else{throw CmdError("single public add receipt refused; no retry")}
+                      result["control"]?["identifier"] == .string("mc.spaces.add"),before.matchesPublicSnapshot(result["before_spaces"]) else{throw CmdError("desktop creation check failed; no retry")}
                 lock.lock();state=state.setting("creation_receipt",result);lock.unlock()
                 let deadline=ProcessInfo.processInfo.systemUptime+2
                 var after:PublicWorkspaceCatalog?
@@ -271,7 +271,7 @@ final class VerifiedPublicWorkspace {
                 let result=try helper(proof,["--select-ordinary",String(pid),"--target",target.path,"--receipt",receipt.path],epoch)
                 guard result["mode"] == .string("select-ordinary"),result["dock"]==before.dock,result["target"]==request["target"],
                       OverviewBinding.integer(result["ax_error"])==0,result["native_current_ack"] == .bool(true),result["dock_fence_after"] == .bool(true),
-                      before.matchesPublicSnapshot(result["before_spaces"]) else{throw CmdError("public AX sender receipt refused")}
+                      before.matchesPublicSnapshot(result["before_spaces"]) else{throw CmdError("desktop selection check failed")}
             }
             let deadline=ProcessInfo.processInfo.systemUptime+6
             while ProcessInfo.processInfo.systemUptime<deadline {

@@ -72,11 +72,11 @@ enum EngineStatePreflight {
                   numbers.allSatisfy(\.isFinite),numbers[2]>0,numbers[3]>0,numbers[2]<=32768,numbers[3]<=32768,
                   abs(numbers[0])<=1_048_576,abs(numbers[1])<=1_048_576 else{throw CmdError("Engine hidden ledger row is invalid; preserved")}
             if let birth=row["swift_birth"] {
-                guard let text=birth.string,text.utf8.count<=128 else{throw CmdError("Engine hidden ledger birth is invalid; preserved")}
+                guard let text=birth.string,text.utf8.count<=128 else{throw CmdError("Engine hidden-window process identity is invalid; state preserved")}
                 let parts=text.split(separator:":",omittingEmptySubsequences:false)
                 guard parts.count==3,parts.allSatisfy({!$0.isEmpty && $0.allSatisfy({$0.isASCII && $0.isNumber})}),
                       Int(parts[0])==pid,let seconds=Int(parts[1]),seconds>0,
-                      let micros=Int(parts[2]),(0..<1_000_000).contains(micros) else{throw CmdError("Engine hidden ledger birth is invalid; preserved")}
+                      let micros=Int(parts[2]),(0..<1_000_000).contains(micros) else{throw CmdError("Engine hidden-window process identity is invalid; state preserved")}
             }else{
                 guard let generation=row["generation"]?.array,generation.count==4,
                       exactInt(generation[0])==pid,exactInt(generation[1])==Int(getuid()),

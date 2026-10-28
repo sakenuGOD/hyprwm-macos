@@ -92,7 +92,7 @@ public final class LiveChannel: ChannelAPI {
         guard token.mapping==base,(attributes[.systemNumber] as? NSNumber)?.uint64Value==token.device,
               (attributes[.systemFileNumber] as? NSNumber)?.uint64Value==token.inode,
               token.records.withUnsafeBufferPointer({hs_curves_rollback(base,$0.baseAddress,token.count)})==1 else {
-            throw CmdError("startup curve rollback refused: channel changed or canary resources remain")
+            throw CmdError("startup curve rollback refused: channel changed or check resources remain")
         }
     }
 

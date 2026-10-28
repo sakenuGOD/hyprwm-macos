@@ -7,7 +7,7 @@ import HyprCore
 enum StartupQualification {
     static func fingerprint() -> JSON {
         guard let raw=hs_platform_fingerprint_json() else {
-            return .object([("verified",.bool(false)),("stage",.string("fingerprint")),("reason",.string("platform fingerprint unavailable"))])
+            return .object([("verified",.bool(false)),("stage",.string("fingerprint")),("reason",.string("macOS build information unavailable"))])
         }
         defer{free(raw)}
         return (try? JSON.parse(String(cString:raw))) ?? .object([("verified",.bool(false))])
@@ -41,10 +41,10 @@ enum StartupQualification {
             case "pause","restore-all":
                 let status=unverifiedStatus(result,statePath:statePath,nativeWorkUnknown:nativeWorkUnknown)
                 guard status["visibility"]?["engine_recovery_active"] == .bool(false) else {
-                    throw CmdError("Engine restoration pending: retained state requires a qualified runtime")
+                    throw CmdError("Engine restoration pending: saved state requires a supported build")
                 }
                 return command == "pause" ? "paused":"no hidden windows"
-            default:throw CmdError("Unverified on this macOS build: \(result["reason"]?.string ?? "startup qualification failed")")
+            default:throw CmdError("Unverified on this macOS build: \(result["reason"]?.string ?? "startup checks failed")")
             }
         }
         let timer=DispatchSource.makeTimerSource(queue:.main)
@@ -56,15 +56,15 @@ enum StartupQualification {
     }
 
     static func census(_ sys:LiveSys) throws -> Snapshot {
-        guard ax_trusted() != 0 else{throw CmdError("Accessibility permission is required for startup canary")}
+        guard ax_trusted() != 0 else{throw CmdError("Accessibility permission is required for the startup check")}
         let snapshot=try sys.snapshot()
         guard snapshot.stable,!snapshot.locked,snapshot.space>0,snapshot.spaceType==0,
               [snapshot.area.x,snapshot.area.y,snapshot.area.w,snapshot.area.h].allSatisfy(\.isFinite),
-              snapshot.area.w>=320,snapshot.area.h>=240 else{throw CmdError("stable unlocked desktop census required")}
+              snapshot.area.w>=320,snapshot.area.h>=240 else{throw CmdError("a stable, unlocked desktop is required")}
         guard snapshot.windows.count<=8192,snapshot.windows.allSatisfy({row in
             row.wid>0 && row.wid<=Int(UInt32.max) && row.pid>0 &&
             [row.x,row.y,row.w,row.h].allSatisfy(\.isFinite) && row.w>=0 && row.h>=0
-        }) else{throw CmdError("invalid native window census")}
+        }) else{throw CmdError("invalid window information")}
         return snapshot
     }
 }

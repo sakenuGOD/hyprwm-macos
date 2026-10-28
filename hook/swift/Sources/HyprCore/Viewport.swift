@@ -38,7 +38,7 @@ extension WM {
     }
     func viewportCommand(_ args:[String],_ space:Int,_ windows:[WinInfo],_ rects:OrderedMap<Int,Rect>) throws -> String {
         guard args.count==2 || args.count==6,["left","right","up","down","reset"].contains(args[1]) else {
-            throw CmdError("pan: expected left/right/up/down/reset, optionally followed by window ID, PID, birth and Space")
+            throw CmdError("pan: expected left/right/up/down/reset, optionally followed by window ID, PID, process identity and Space")
         }
         guard eng.c.viewportSupported else{return "Content panning is unavailable in the current engine"}
         let wid:Int

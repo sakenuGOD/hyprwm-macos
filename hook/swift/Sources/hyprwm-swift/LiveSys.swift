@@ -288,7 +288,7 @@ final class LiveSys: SysAPI {
     func focusSnapshot() throws -> Snapshot {
         var buffer=[CChar](repeating:0,count:1<<21)
         let size=ws_snapshot(&buffer,Int32(buffer.count))
-        guard size>0,size<=buffer.count else{throw CmdError("bounded independent focus census unavailable")}
+        guard size>0,size<=buffer.count else{throw CmdError("window focus information unavailable or too large")}
         return ruleMetadata.enrich(try buffer.withUnsafeBufferPointer{pointer in Snapshot.parse(try JSON.parse(Array(UnsafeRawBufferPointer(start:pointer.baseAddress,count:Int(size))))) })
     }
     // AXRaise only restores stacking; it must never select the floating window as key.

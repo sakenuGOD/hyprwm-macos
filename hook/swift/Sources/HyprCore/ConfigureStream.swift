@@ -70,7 +70,7 @@ extension WM {
               let wid=UInt32(arguments[1]),wid>0,let pid=Int(arguments[2]),pid>1,pid<=Int(Int32.max),
               let requestedSpace=Int(arguments[4]),requestedSpace==space,space>0,
               let epoch=Int(arguments[5]),epoch>0,epoch<=9_007_199_254_740_991 else {
-            throw CmdError("configure-stream-probe: expected wid pid birth space epoch")
+            throw CmdError("configure-stream-probe: expected window ID, PID, process identity, Space and generation")
         }
         let id=Int(wid),c=eng.c
         guard dragSession==nil,pendingDragSession==nil,!sys.mouseDown(),!sys.sessionLocked(),

@@ -147,7 +147,7 @@ final class NativeDockWorkspace {
             lock.lock();if serial==epoch{self.credential=credential};lock.unlock()
             var reply=try send(credential,"status")
             if reply["error"] == .string("peer_identity") {
-                let rebound=try send(credential,"rebind");guard rebound["rebound"] == .bool(true) else{throw CmdError("native workspace manager rebind refused: "+(rebound["error"]?.string ?? "unqualified-rebind-reply"))};reply=try send(credential,"status")
+                let rebound=try send(credential,"rebind");guard rebound["rebound"] == .bool(true) else{throw CmdError("native workspace manager rebind refused: "+(rebound["error"]?.string ?? "invalid-rebind-reply"))};reply=try send(credential,"status")
             }
             lock.lock();if serial==epoch{state=state.setting("native_readback",.object([("busy",reply["busy"] ?? .null),("pending",reply["pending"] ?? .null),("ticket_present",.bool(!(reply["ticket"]?.string ?? "").isEmpty)),("native_dispatches",reply["native_dispatches"] ?? .null)]))};lock.unlock()
             guard reply["ok"] == .bool(true) else{throw CmdError("native workspace status refused: "+(reply["error"]?.string ?? "unknown"))}

@@ -94,7 +94,7 @@ final class LiveEngine: EngineAPI {
         let identity=try VerifiedPublicWorkspace.identity(pid)
         guard let actor=identity.array,actor.count==5,let executable=actor[4].string,
               executable.hasPrefix("/System/Library/PrivateFrameworks/SkyLight.framework/"),executable.hasSuffix("/WindowServer"),
-              OverviewBinding.integer(actor[0])==pid,OverviewBinding.integer(actor[1])==88 else {throw CmdError("exact native WindowServer path/UID/birth required")}
+              OverviewBinding.integer(actor[0])==pid,OverviewBinding.integer(actor[1])==88 else {throw CmdError("exact WindowServer path, user and process identity required")}
         if ch?.path != path { ch = try LiveChannel(path: path, create: false) }
         guard let ch, ch.magicOK, ch.sizeOK, ChannelCapabilities.abi(ch.raw.pointee.version) == 6,
               ch.raw.pointee.stop == 0 else { throw CmdError("installed engine channel is incompatible or stopped") }

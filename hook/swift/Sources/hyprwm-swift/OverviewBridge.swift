@@ -62,7 +62,7 @@ final class OverviewBridge {
     var entryRecords:[OverviewHidden] {lock.lock();defer{lock.unlock()};return cachedEntryRecords}
     private func configurePayload(_ candidate:OverviewBinding,_ records:[OverviewHidden]) throws -> JSON {
         let pid=Int(getpid())
-        guard let birth=sys.processBirth(pid)?.split(separator:":").compactMap({Int($0)}),birth.count==3,birth[0]==pid else {throw CmdError("overview11: daemon birth unavailable")}
+        guard let birth=sys.processBirth(pid)?.split(separator:":").compactMap({Int($0)}),birth.count==3,birth[0]==pid else {throw CmdError("overview11: daemon process identity unavailable")}
         var rows=records.map(\.json)
         if candidate.supportsOrdinaryPreentry {
             let screen=CGDisplayBounds(CGMainDisplayID()),display=Rect(screen.origin.x,screen.origin.y,screen.size.width,screen.size.height)

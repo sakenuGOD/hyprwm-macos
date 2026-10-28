@@ -17,7 +17,7 @@ func diagnose(hook: String, controlPath: String) -> JSON {
     do {
         let location=try EngineStateLocation.resolve(hook:hook)
         let tokens=try location.read().split(whereSeparator:{$0.isWhitespace})
-        guard let first=tokens.first,let pid=Int(first),pid>1 else {throw CmdError("Invalid native engine receipt")}
+        guard let first=tokens.first,let pid=Int(first),pid>1 else {throw CmdError("Invalid native engine state file")}
         let identity=try VerifiedPublicWorkspace.identity(pid)
         let actor=identity.array,executable=actor?.count==5 ? actor?[4].string:nil
         let matches=actor?.count==5 && OverviewBinding.integer(actor?[0])==pid &&
