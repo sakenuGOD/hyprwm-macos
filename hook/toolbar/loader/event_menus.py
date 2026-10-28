@@ -40,7 +40,7 @@ def identity(application):
  b=application.get('birth');pid=application.get('pid');exe=application.get('executable')
  if (type(pid)!=int or pid<=0 or type(b)!=list or len(b)!=4 or any(type(n)!=int for n in b) or
      b[0]!=pid or b[1]!=os.getuid() or b[2]<=0 or not 0<=b[3]<1000000 or type(exe)!=str or not exe.startswith('/') or '\0' in exe):raise ValueError('exact own-UID event PID/birth/executable required')
- return {'pid':pid,'birth':b,'executable':exe,'argv':None}
+ return {'pid':pid,'birth':b,'executable':os.path.realpath(exe),'argv':None}
 def key_of(i):return ':'.join(map(str,i['birth']))+':'+i['executable']
 
 def macho_images(path):
@@ -198,6 +198,7 @@ class MenuManager:
   if type(policy)!=int:return self.receipt('pending','native activation_policy metadata required; no process contact',attempted=False)
   if policy!=0:return self.receipt('skipped','not a native regular application/menu owner; no process contact',attempted=False)
   i=identity(app);key=key_of(i)
+  app={**app,'executable':i['executable']}
   if not self.enabled:return self.receipt('off','durable menu kill-switch',attempted=False)
   if self.suspended:return self.receipt('pending','menu policy suspended; no new attach',attempted=False)
   if self.runtime.identity(i['pid'])!=i:return self.receipt('pending','event birth changed; no process adoption',attempted=False)
