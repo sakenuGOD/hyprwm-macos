@@ -198,7 +198,7 @@ final class MenuBarController:NSObject,NSMenuDelegate,NSWindowDelegate {
         // Run it off the UI queue; a timeout terminates only this helper, never a WM process.
         let hook=self.hook
         DispatchQueue.global(qos:.userInitiated).async{[weak self] in
-            let process=Process();process.executableURL=URL(fileURLWithPath:"/usr/bin/env");process.arguments=["python3",hook+"/lifecycle.py","stop"]
+            let process=Process();process.executableURL=URL(fileURLWithPath:"/usr/bin/env");process.arguments=["python3","-B",hook+"/lifecycle.py","stop"]
             let output=Pipe();process.standardOutput=output;process.standardError=output
             do {
                 try process.run()

@@ -2,6 +2,7 @@
 """User-local app installation and fail-closed window restoration."""
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -128,12 +129,26 @@ def stage_bundle(root,staged,engine_state_path=None):
     shutil.copy2(root / 'hook/swift/.build/release/hyprwm-swift', binary)
     binary.chmod(0o755)
     shutil.copy2(root / 'hook/config/portable-defaults.json', config / 'hypr_cfg.json')
-    for name in ('runtime.schema.json', 'hypr_shim.lua'):
+    for name in ('portable-defaults.json', 'runtime.schema.json', 'hypr_shim.lua'):
         shutil.copy2(root / 'hook/config' / name, config / name)
+    shutil.copytree(root / 'hook/config/defaults', config / 'defaults')
+    runtime_hook = resources / 'hook'
+    for name in ('lifecycle.py', 'own_ui.py'):
+        shutil.copy2(root / 'hook' / name, runtime_hook / name)
+    keys = runtime_hook / 'keys'
+    keys.mkdir()
+    shutil.copy2(root / 'hook/keys/binds.py', keys / 'binds.py')
+    shutil.copy2(root / 'hook/keys/hyprkeys.m', keys / 'hyprkeys.m')
+    shutil.copy2(root / 'hook/keys/hotkey_rules.h', keys / 'hotkey_rules.h')
+    subprocess.run(['xcrun', 'clang', '-fobjc-arc', '-framework', 'Carbon', '-framework', 'AppKit',
+                    '-o', str(keys / 'hyprkeys'), str(keys / 'hyprkeys.m')], check=True)
+    release = runtime_hook / 'swift/.build/release'
+    release.mkdir(parents=True)
+    (release / 'hyprwm-swift').symlink_to('../../../../../MacOS/hyprwm-swift')
     toolbar=resources/'toolbar'
     subprocess.run([str(Path(sys.executable).resolve()),str(root/'hook/toolbar/build.py'),'--output',str(toolbar)],check=True,
                    env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'})
-    version = os.environ.get('HYPRWM_APP_VERSION', '0.1.0')
+    version = os.environ.get('HYPRWM_APP_VERSION', '0.1.1')
     info = dict(CFBundleIdentifier='dev.hyprwm.HyprWM', CFBundleName='HyprWM',
                 CFBundleDisplayName='HyprWM', CFBundleExecutable='hyprwm-swift',
                 CFBundlePackageType='APPL', CFBundleShortVersionString=version,
@@ -147,6 +162,8 @@ def stage_bundle(root,staged,engine_state_path=None):
     (staged / 'Contents/Info.plist').write_bytes(plistlib.dumps(info))
     receipt = dict(installer=MARKER, compiled_binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
                    version=version, mode='auto', engine_installed=False)
+    receipt['lifecycle_hook_relative'] = 'Contents/Resources/hook'
+    receipt['state_directory'] = str(Path(os.environ['HOME']) / 'Library/Application Support/HyprWM/runtime')
     receipt['toolbar']={'manager':str(TOOLBAR_MANAGER),'build_receipt_sha256':hashlib.sha256((toolbar/'build-receipt.json').read_bytes()).hexdigest(),
                         'default_enabled':False,'live_qualified':False}
     if engine_state_path is not None:receipt['engine_state_path']=str(engine_state_path)
@@ -215,6 +232,7 @@ def install(root,engine_state_path=None):
         else:
             body = '#!/bin/sh\n# ' + MARKER + '\nset -eu\n'
             body += 'export HYPRWM_HOOK=${HYPRWM_HOOK:-' + shlex.quote(str(hook)) + '}\n'
+            body += 'export HYPRWM_STATE_DIR=${HYPRWM_STATE_DIR:-' + shlex.quote(str(Path(os.environ['HOME']) / 'Library/Application Support/HyprWM/runtime')) + '}\n'
             body += 'case "${1:-}" in\n'
             body += '  toolbar) shift; exec '+shlex.quote(str(Path(sys.executable).resolve()))+' '+shlex.quote(str(resources/TOOLBAR_MANAGER))+' "$@" ;;\n'
             body += '  restore-all) if [ -S "${HYPRWM_CTL:-/tmp/hyprwm.ctl}" ]; then exec ' + shlex.quote(str(bin_dir / 'hyprwmctl')) + ' "$@"; fi ;;\n'
@@ -254,6 +272,34 @@ def uninstall(offline):
         raise RuntimeError('Refusing a symlink at the app destination')
     owned_receipt(app)
     toolbar_restore(app,offline)
+    # Stop the owned login services first so launchd cannot undo a clean Quit.
+    # A temporary HOME must never remove the real account's services.
+    if offline:
+        native_config = Path('/Library/Application Support/HyprWM') / ('native-session-' + str(os.getuid())) / 'config.json'
+        if native_config.exists():
+            value = json.loads(native_config.read_bytes())
+            if Path(value.get('home', '')).resolve() == Path(os.environ['HOME']).resolve():
+                status_path = native_config.parent / 'status.json'
+                phase = json.loads(status_path.read_bytes()).get('phase') if status_path.exists() else 'pending'
+                if phase != 'removed':
+                    raise RuntimeError('--offline cannot remove an app retained by installed login services; use normal uninstall')
+    else:
+        installer = Path(__file__).resolve().with_name('install_autostart.py')
+        spec = importlib.util.spec_from_file_location('hyprwm_uninstall_services', installer)
+        services = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(services)
+        try:
+            configuration = services.configuration(os.getuid())
+        except FileNotFoundError:
+            configuration = None
+        if configuration is not None:
+            if Path(configuration['home']).resolve() != Path(os.environ['HOME']).resolve():
+                raise RuntimeError('The login services belong to another home; they and the app were preserved')
+            state = services.service.read(Path(configuration['base']) / 'status.json', limit=65536)
+            if json.loads(state).get('phase') != 'removed':
+                print('sudo: restore HyprWM windows and remove its owned native and user login services.', flush=True)
+                subprocess.run(['/usr/bin/sudo', '/Library/Developer/CommandLineTools/usr/bin/python3',
+                                '-I', '-S', str(installer), 'remove', '--uid', str(os.getuid())], check=True)
     current = status()
     if current is not None:
         if offline:
@@ -296,7 +342,8 @@ def uninstall(offline):
         processes = subprocess.check_output(['ps', '-axo', 'comm='], text=True).splitlines()
         if str(app / 'Contents/MacOS/hyprwm-swift') in processes:
             raise RuntimeError('An installed process is not responding; quit it safely before uninstalling')
-    state_dir = Path(os.environ.get('HYPRWM_STATE_DIR', '/tmp/hyprwm-swift'))
+    state_dir = Path(os.environ.get('HYPRWM_STATE_DIR',
+                                  owned_receipt(app).get('state_directory', '/tmp/hyprwm-swift')))
     def ledger(name):
         path = state_dir / name
         if not path.exists():
@@ -319,6 +366,11 @@ def uninstall(offline):
         subprocess.run([str(app / 'Contents/MacOS/hyprwm-swift'), 'restore-all'],env=environment,check=True)
         if ledger('lite-recovery.json'):
             raise RuntimeError('Lite recovery remains incomplete; installation preserved')
+    keyboard_spec = importlib.util.spec_from_file_location('hyprwm_uninstall_keyboard',
+                                                         Path(__file__).with_name('install_keyboard.py'))
+    keyboard = importlib.util.module_from_spec(keyboard_spec)
+    keyboard_spec.loader.exec_module(keyboard)
+    keyboard.remove(offline=offline)
     for name in ('hyprwm', 'hyprwmctl'):
         path = bin_dir / name
         if path.is_file() and not path.is_symlink() and MARKER in path.read_text(errors='replace')[:256]:

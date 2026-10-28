@@ -18,3 +18,13 @@ jobs:
         run: ./scripts/build-hyprwm
       - name: Test Swift daemon
         run: ./scripts/test-hyprwm
+      - name: Check installer safety
+        run: python3 -B -m unittest discover -s scripts/tests -p 'test_*.py'
+      - name: Check hotkey registration
+        run: |
+          hotkey_checks=$(mktemp -d)
+          for source in hook/tests/native_hotkey_consumer_test.m hook/tests/native_hotkey_generation_test.m; do
+            executable="$hotkey_checks/$(basename "$source" .m)"
+            clang -fobjc-arc -framework Carbon -framework AppKit "$source" -o "$executable"
+            "$executable"
+          done

@@ -4,6 +4,7 @@
 // HYPRWM_STATE_DIR selects persistent state; HYPRWM_CTL selects the Unix socket.
 // HYPRWM_TIME_SCALE, HYPRWM_HOLD and HYPRWM_DEBUG override runtime behavior.
 import AppKit
+import ApplicationServices
 import CAX
 import Foundation
 import HyprCore
@@ -12,6 +13,22 @@ setvbuf(stdout, nil, _IOLBF, 0)
 signal(SIGPIPE, SIG_IGN)                       // A disconnected client must not terminate the daemon.
 
 let env = ProcessInfo.processInfo.environment
+
+let permissionArguments = Array(CommandLine.arguments.dropFirst())
+if permissionArguments == ["--permissions-json"] || permissionArguments == ["--request-permissions-json"] {
+    let trusted: Bool
+    if permissionArguments == ["--request-permissions-json"] {
+        trusted = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
+    } else { trusted = AXIsProcessTrusted() }
+    let permissions: [String: Any] = [
+        "accessibility": trusted,
+        "input_monitoring": CGPreflightListenEventAccess(),
+        "hotkey_registration_requires_input_monitoring": false
+    ]
+    if let data = try? JSONSerialization.data(withJSONObject: permissions, options: [.sortedKeys]),
+       let text = String(data: data, encoding: .utf8) { print(text); exit(0) }
+    exit(1)
+}
 
 func findHook() -> String {
     if let h = env["HYPRWM_HOOK"] { return h }
@@ -199,8 +216,21 @@ default:
 
 // Daemon lifecycle.
 let ctl = env["HYPRWM_CTL"] ?? "/tmp/hyprwm.ctl"
-let stateDir = env["HYPRWM_STATE_DIR"] ?? "/tmp/hyprwm-swift"
-try? FileManager.default.createDirectory(atPath: stateDir, withIntermediateDirectories: true)
+let stateHome = env["HOME"].flatMap { $0.hasPrefix("/") ? $0 : nil } ?? NSHomeDirectory()
+let installedStateDir = stateHome + "/Library/Application Support/HyprWM/runtime"
+let requestedStateDir = env["HYPRWM_STATE_DIR"]
+let stateDir: String = {
+    if bundledHook {
+        guard let requestedStateDir,
+              !requestedStateDir.hasPrefix(Bundle.main.bundleURL.path + "/") else { return installedStateDir }
+        return requestedStateDir
+    }
+    return requestedStateDir ?? "/tmp/hyprwm-swift"
+}()
+do {
+    try FileManager.default.createDirectory(atPath: stateDir, withIntermediateDirectories: true,
+                                          attributes: [.posixPermissions: 0o700])
+} catch { die("Could not create HyprWM state directory: \(error.localizedDescription)") }
 
 let startupCheckOnly=args == ["--startup-check"]
 if startupCheckOnly {

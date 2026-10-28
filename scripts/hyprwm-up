@@ -1,0 +1,12 @@
+#!/bin/sh
+# Manual fallback: revalidates the cached local image for this actual host.
+set -eu
+HYPRWM_UP_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+HYPRWM_UP_PYTHON=
+for HYPRWM_UP_CANDIDATE in /Library/Developer/CommandLineTools/usr/bin/python3 /opt/homebrew/bin/python3 /usr/local/bin/python3; do
+    if [ -x "$HYPRWM_UP_CANDIDATE" ]; then HYPRWM_UP_PYTHON=$HYPRWM_UP_CANDIDATE; break; fi
+done
+if [ -z "$HYPRWM_UP_PYTHON" ]; then HYPRWM_UP_PYTHON=$(command -v python3 || true); fi
+[ -n "$HYPRWM_UP_PYTHON" ] || { printf '%s\n' 'Python is unavailable; rerun ./setup.sh.' >&2; exit 1; }
+export PYTHONDONTWRITEBYTECODE=1
+exec "$HYPRWM_UP_PYTHON" -B "$HYPRWM_UP_ROOT/scripts/setup_hyprwm.py" --up "$@"
