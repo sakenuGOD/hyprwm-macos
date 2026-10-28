@@ -5,6 +5,8 @@ inspect is read-only. install requires root, explicit reviewed hashes and local
 qualified images; it never builds code or changes system security policy.
 """
 import argparse
+import contextlib
+import fcntl
 import importlib.util
 import json
 import os
@@ -150,6 +152,67 @@ def approved_identity(args, workspace_files, uid):
     return data, specification
 
 
+
+@contextlib.contextmanager
+def installation_lock(uid):
+    need(uid > 0, 'Positive desktop owner UID required')
+    mkdir_root(service.BASE)
+    path = service.BASE / ('native-session-' + str(uid) + '.upgrade.lock')
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        row = os.fstat(fd)
+        need(stat.S_ISREG(row.st_mode) and row.st_uid == 0 and row.st_nlink == 1 and
+             stat.S_IMODE(row.st_mode) == 0o600, 'Protected stable installation lock required')
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise RuntimeError('Another installation/removal/upgrade is in progress; current session preserved') from error
+        yield
+    finally:
+        os.close(fd)
+
+
+
+def fsync_directory(path):
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def sync_rename_parents(source, destination):
+    fsync_directory(source.parent)
+    if destination.parent != source.parent:
+        fsync_directory(destination.parent)
+
+
+def freeze_graph(staged, blobs, image, workspace_files, identity_bytes):
+    graph = staged / 'graph'
+    graph.mkdir(mode=0o755)
+    (staged / 'runtime').mkdir(mode=0o700)
+    contents = dict(blobs)
+    contents['native/probe-eh.dylib'] = image
+    contents.update({'workspaces/' + name: data for name, data in workspace_files.items()})
+    contents['identity/' + service.IDENTITY_FILE] = identity_bytes
+    for name, data in contents.items():
+        path = graph / name
+        path.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+        write_exclusive(path, data)
+    for name, data in contents.items():
+        need(service.sha(service.read(graph / name)) == service.sha(data), 'Staged frozen graph changed: ' + name)
+    frozen_identity = graph / 'identity' / service.IDENTITY_FILE
+    subprocess.run(['/usr/bin/codesign', '--verify', '--strict', str(frozen_identity)], check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    signing = subprocess.run(['/usr/bin/codesign', '-d', '--verbose=4', str(frozen_identity)],
+                             check=True, capture_output=True, text=True)
+    need('Signature=adhoc' in signing.stderr.splitlines(), 'Public identity helper must have an ad-hoc signature')
+    for directory in sorted((path for path in graph.rglob('*') if path.is_dir()), key=lambda path: len(path.parts), reverse=True):
+        fsync_directory(directory)
+    fsync_directory(graph)
+    fsync_directory(staged)
+
+
 def install(args):
     root_only()
     uid = args.uid
@@ -177,6 +240,14 @@ def install(args):
     need(not args.adopt_workspaces or args.adopt_activation,
          '--adopt-workspaces requires its matching --adopt-activation receipt')
     base = service.BASE / ('native-session-' + str(uid))
+    config = dict(schema=1, installer=service.MARKER, uid=uid, home=user.pw_dir, base=str(base),
+                  hook=str(hook), manager=str(manager), manager_sha256=args.manager_sha256,
+                  python=str(python), python_sha256=service.sha(service.read(python)),
+                  files=files, graph_sha256=args.toolgraph_sha256, native_sha256=args.native_sha256,
+                  identity_helper=identity_helper,
+                  workspace_files={name: service.sha(data) for name, data in workspace_files.items()}, installed=time.time())
+    if getattr(args, 'action', 'install') == 'upgrade':
+        return upgrade_reviewed(args, config, blobs, image, workspace_files, identity_bytes)
     need(not base.exists() and not base.is_symlink(), 'An autostart receipt already exists; inspect/remove it before replacing it')
     daemon, agent = plist_paths(uid, user.pw_dir)
     need(not any(path.exists() or path.is_symlink() for path in (daemon, agent)), 'Existing service files were preserved')
@@ -186,30 +257,7 @@ def install(args):
     with tempfile.TemporaryDirectory(prefix='.native-session-' + str(uid) + '-', dir=service.BASE) as temporary:
         staged = Path(temporary)
         staged.chmod(0o755)
-        graph = staged / 'graph'
-        graph.mkdir(mode=0o755)
-        (staged / 'runtime').mkdir(mode=0o700)
-        for name, data in blobs.items():
-            path = graph / name
-            path.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
-            write_exclusive(path, data)
-        for directory, data in (('native', {'probe-eh.dylib': image}), ('workspaces', workspace_files),
-                                ('identity', {service.IDENTITY_FILE: identity_bytes})):
-            (graph / directory).mkdir(mode=0o755)
-            for name, contents in data.items():
-                write_exclusive(graph / directory / name, contents)
-        frozen_identity = graph / 'identity' / service.IDENTITY_FILE
-        subprocess.run(['/usr/bin/codesign', '--verify', '--strict', str(frozen_identity)], check=True,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        signing = subprocess.run(['/usr/bin/codesign', '-d', '--verbose=4', str(frozen_identity)],
-                                 check=True, capture_output=True, text=True)
-        need('Signature=adhoc' in signing.stderr.splitlines(), 'Public identity helper must have an ad-hoc signature')
-        config = dict(schema=1, installer=service.MARKER, uid=uid, home=user.pw_dir, base=str(base),
-                      hook=str(hook), manager=str(manager), manager_sha256=args.manager_sha256,
-                      python=str(python), python_sha256=service.sha(service.read(python)),
-                      files=files, graph_sha256=args.toolgraph_sha256, native_sha256=args.native_sha256,
-                      identity_helper=identity_helper,
-                      workspace_files={name: service.sha(data) for name, data in workspace_files.items()}, installed=time.time())
+        freeze_graph(staged, blobs, image, workspace_files, identity_bytes)
         write_exclusive(staged / 'config.json', (json.dumps(config, indent=2) + '\n').encode())
         # Rename a complete immutable graph before writing any launchd entry.
         staged.rename(base)
@@ -249,6 +297,251 @@ def install(args):
                           adopted=bool(args.adopt_activation)), indent=2))
 
 
+
+def owned_plists(config):
+    paths = plist_paths(config['uid'], config['home'])
+    need(set(config.get('plists', {})) == set(map(str, paths)), 'Owned daemon/agent plist receipts required')
+    values = []
+    for path, label, action in zip(paths, labels(config['uid']), ('native-service', 'user-service')):
+        data = service.read(path, (0, config['uid']), 65536)
+        need(service.sha(data) == config['plists'][str(path)], 'Changed service plist preserved: ' + str(path))
+        value = plistlib.loads(data)
+        arguments = [config['python'], '-S', str(Path(config['base']) / 'graph/hook/tools/autostart.py'),
+                     action, '--config', str(Path(config['base']) / 'config.json')]
+        need(value.get('Label') == label and value.get('ProgramArguments') == arguments and
+             value.get('AbandonProcessGroup') is True, 'Exact child-preserving supervisor plist required: ' + str(path))
+        values.append(data)
+    return paths, values
+
+
+
+def python_images(config):
+    launcher = service.canonical(Path(config['python']), (0,))
+    need(service.sha(service.read(launcher)) == config['python_sha256'], 'Protected configured Python launcher changed')
+    images = {str(launcher): config['python_sha256']}
+    version = launcher.parent.parent
+    if (launcher.parent.name == 'bin' and re.fullmatch(r'python3\.\d+', launcher.name) and
+            version.parent.name == 'Versions' and version.parent.parent.name == 'Python3.framework'):
+        kernel = version / 'Resources/Python.app/Contents/MacOS/Python'
+        kernel = service.canonical(kernel, (0,))
+        need(os.access(kernel, os.X_OK), 'Protected framework Python executable required')
+        images[str(kernel)] = service.sha(service.read(kernel))
+    return images
+
+
+def supervisor(config, index, plist_data, processes, *, required=True):
+    domain = ('system/' if index == 0 else 'gui/' + str(config['uid']) + '/') + labels(config['uid'])[index]
+    result = subprocess.run(['/bin/launchctl', 'print', domain], capture_output=True, text=True, timeout=12)
+    if result.returncode:
+        need(not required and ('Could not find service' in result.stderr or 'No such process' in result.stderr or result.returncode == 3),
+             'Cannot inspect exact supervisor: ' + domain + ': ' + result.stderr[-500:])
+        return None
+    text = result.stdout
+    match = re.search(r'^\s*pid = ([1-9][0-9]*)\s*$', text, re.M)
+    need(match and 'abandon process group' in text.lower(), 'Loaded supervisor must have PID and abandon process group: ' + domain)
+    pid = int(match[1]); row = processes['identity'](pid)
+    arguments = plistlib.loads(plist_data)['ProgramArguments']
+    images = processes['python_images']
+    if row and row['path'] in images:
+        arguments = [row['path'], *arguments[1:]]
+    need(service.sha(service.read(Path(config['python']))) == config['python_sha256'], 'Protected configured Python changed')
+    need(row and row['uid'] == (0 if index == 0 else config['uid']) and row['status'] in (2, 3) and
+         row['path'] in images and service.sha(service.read(Path(row['path']))) == images[row['path']] and
+         processes['argv'](pid) == arguments,
+         'Loaded supervisor identity/argv differs: ' + domain)
+    fresh = processes['identity'](pid)
+    need(fresh and service.actor(fresh) == service.actor(row), 'Supervisor changed during inspection: ' + domain)
+    return dict(domain=domain, actor=service.actor(row), argv=arguments)
+
+
+def same_supervisor(snapshot, processes):
+    current = processes['identity'](snapshot['actor']['pid'])
+    return bool(current and service.actor(current) == snapshot['actor'] and
+                processes['argv'](current['pid']) == snapshot['argv'])
+
+
+def stop_supervisors(config, data, processes, *, expected=None, required=True):
+    snapshots = [supervisor(config, index, value, processes, required=required) for index, value in enumerate(data)]
+    if expected is not None:
+        need(snapshots == expected, 'Supervisor generations changed before the upgrade effect')
+    for snapshot in snapshots:
+        if snapshot:
+            need(same_supervisor(snapshot, processes), 'Supervisor birth/argv changed before bootout')
+    for index in (1, 0):
+        domain = ('system/' if index == 0 else 'gui/' + str(config['uid']) + '/') + labels(config['uid'])[index]
+        launchctl('disable', domain, missing_ok=not required)
+        if snapshots[index]:
+            launchctl('bootout', domain, missing_ok=True)
+    deadline = time.monotonic() + 15
+    while any(snapshot and (current := processes['identity'](snapshot['actor']['pid'])) and
+              service.actor(current) == snapshot['actor'] for snapshot in snapshots):
+        need(time.monotonic() < deadline, 'Exact supervisor departure is unconfirmed; graph and native session preserved')
+        time.sleep(.05)
+    return snapshots
+
+
+
+def wait_supervisors(config, data, processes):
+    deadline = time.monotonic() + 8
+    while True:
+        try:
+            return [supervisor(config, index, value, processes) for index, value in enumerate(data)]
+        except RuntimeError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(.1)
+
+
+def replace_plist(path, data, expected, uid, gid):
+    need(service.sha(service.read(path, (0, uid), 65536)) == expected, 'Changed service plist preserved: ' + str(path))
+    previous_uid, previous_gid = os.geteuid(), os.getegid()
+    temporary = None
+    try:
+        if uid:
+            os.setegid(gid); os.seteuid(uid)
+        descriptor, temporary = tempfile.mkstemp(prefix='.' + path.name + '-', dir=path.parent)
+        with os.fdopen(descriptor, 'wb') as stream:
+            os.fchmod(stream.fileno(), 0o644)
+            stream.write(data); stream.flush(); os.fsync(stream.fileno())
+        need(service.sha(service.read(path, (0, uid), 65536)) == expected, 'Service plist changed before replacement')
+        os.replace(temporary, path); temporary = None
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try: os.fsync(directory)
+        finally: os.close(directory)
+    finally:
+        if temporary is not None:
+            os.unlink(temporary)
+        if uid:
+            os.seteuid(previous_uid); os.setegid(previous_gid)
+
+
+def adoption(config, args):
+    row = service.activation(config, args.adopt_activation)
+    row = service.adopted_workspaces(config, args.adopt_workspaces, row)
+    need(row.get('phase') == 'workspaces-ready', 'A complete current native/workspace adoption is required')
+    return row
+
+
+def upgrade_files(config, staged, recovery, old, old_data, new_data, row, args, processes):
+    """Only supervisors and frozen files change; failures leave supervisors disabled."""
+    base = Path(config['base']); paths = plist_paths(config['uid'], config['home'])
+    user = pwd.getpwuid(config['uid'])
+    journal = dict(schema=1, uid=config['uid'], phase='validated', base=str(base), recovery=str(recovery),
+                   previous_graph_sha256=old['graph_sha256'], graph_sha256=config['graph_sha256'],
+                   native_sha256=config['native_sha256'], activation=str(args.adopt_activation),
+                   workspace_receipt=str(args.adopt_workspaces), owner_manager=config['manager'])
+    journal_path = recovery / 'upgrade.json'
+    def record(phase, **values):
+        journal.update(phase=phase, **values); service.save(journal_path, journal)
+    def validate():
+        need(service.load_config(base / 'config.json') == old, 'Existing installation changed during upgrade staging')
+        need(owned_plists(old)[1] == old_data, 'Existing supervisor plists changed during staging')
+        need(service.sha(service.read(Path(config['manager']), (0, config['uid']))) == config['manager_sha256'], 'Reviewed manager changed')
+        need(adoption(dict(config, base=str(staged)), args) == row, 'Current native/workspace generation changed before upgrade')
+    validate()
+    snapshots = [supervisor(old, index, value, processes) for index, value in enumerate(old_data)]
+    record('validated', supervisors=snapshots)
+    old_graph_moved = new_graph_moved = False
+    replaced = []
+    effects = False
+    try:
+        validate()
+        record('supervisor-stop-attempt')
+        effects = True
+        stop_supervisors(old, old_data, processes, expected=snapshots)
+        record('supervisors-stopped')
+        need(adoption(dict(config, base=str(staged)), args) == row, 'Current generation changed after supervisor departure')
+        need(owned_plists(old)[1] == old_data, 'Existing service plists changed before graph publication')
+        (base / 'graph').rename(recovery / 'previous-graph'); old_graph_moved = True
+        sync_rename_parents(base / 'graph', recovery / 'previous-graph')
+        record('previous-graph-retained')
+        (staged / 'graph').rename(base / 'graph'); new_graph_moved = True
+        sync_rename_parents(staged / 'graph', base / 'graph')
+        record('graph-published')
+        service.save(base / 'config.json', config, 0o644)
+        for index, (path, data) in enumerate(zip(paths, new_data)):
+            replace_plist(path, data, service.sha(old_data[index]), 0 if index == 0 else config['uid'], 0 if index == 0 else user.pw_gid)
+            replaced.append(index)
+        service.load_config(base / 'config.json')
+        need(adoption(config, args) == row, 'Current generation changed before supervisor bootstrap')
+        service.save(base / 'runtime/current.json', row)
+        service.publish(config, row, ready=True)
+        record('bootstrap-attempt')
+        for index, path in enumerate(paths):
+            domain = ('system/' if index == 0 else 'gui/' + str(config['uid']) + '/') + labels(config['uid'])[index]
+            launchctl('enable', domain)
+            launchctl('bootstrap', 'system' if index == 0 else 'gui/' + str(config['uid']), path)
+        need(adoption(config, args) == row, 'Current generation changed during supervisor bootstrap')
+        wait_supervisors(config, new_data, processes)
+        record('complete', adopted=True, previous_graph=str(recovery / 'previous-graph'))
+    except BaseException as error:
+        if effects:
+            rollback_errors = []
+            try:
+                # Both configurations use these same canonical script/config paths.
+                stop_supervisors(config, new_data, processes, required=False)
+                if new_graph_moved:
+                    (base / 'graph').rename(recovery / 'failed-graph')
+                    sync_rename_parents(base / 'graph', recovery / 'failed-graph')
+                if old_graph_moved:
+                    (recovery / 'previous-graph').rename(base / 'graph')
+                    sync_rename_parents(recovery / 'previous-graph', base / 'graph')
+                service.save(base / 'config.json', old, 0o644)
+                for index in reversed(replaced):
+                    replace_plist(paths[index], old_data[index], service.sha(new_data[index]),
+                                  0 if index == 0 else config['uid'], 0 if index == 0 else user.pw_gid)
+                for name in ('current.json', 'status.json'):
+                    saved = recovery / name
+                    if saved.exists():
+                        service.save(base / ('runtime/current.json' if name == 'current.json' else name),
+                                     json.loads(service.read(saved)), 0o600 if name == 'current.json' else 0o644)
+            except BaseException as rollback_error:
+                rollback_errors.append(str(rollback_error))
+            record('recovery-required', error=str(error), rollback_errors=rollback_errors,
+                   supervisors='disabled; never restarted against a possibly different native graph')
+        raise RuntimeError('Autostart upgrade did not complete; owner engine/manager/keyboard were not stopped. '
+                           'Supervisor recovery evidence: ' + str(journal_path) + '; ' + str(error)) from error
+    return journal_path
+
+
+def upgrade_reviewed(args, config, blobs, image, workspace_files, identity_bytes):
+    need(args.adopt_activation and args.adopt_workspaces, 'Upgrade requires exact current native and workspace adoption receipts')
+    for candidate in service.BASE.glob('.native-session-upgrade-' + str(config['uid']) + '-*/upgrade.json'):
+        previous = json.loads(service.read(candidate))
+        need(previous.get('phase') == 'complete', 'An interrupted upgrade requires explicit recovery: ' + str(candidate))
+    old = configuration(config['uid'])
+    need(all(old.get(key) == config.get(key) for key in ('uid', 'home', 'base', 'hook', 'manager', 'manager_sha256', 'python',
+                                                               'native_sha256', 'workspace_files', 'identity_helper')),
+         'Upgrade must preserve exact owner, hook, manager, Python, native/workspace images and identity helper')
+    paths, old_data = owned_plists(old)
+    base = Path(config['base'])
+    recovery = Path(tempfile.mkdtemp(prefix='.native-session-upgrade-' + str(config['uid']) + '-', dir=service.BASE))
+    recovery.chmod(0o700)
+    staged = recovery / 'next'; staged.mkdir(mode=0o700)
+    freeze_graph(staged, blobs, image, workspace_files, identity_bytes)
+    new_data = launch_plists(config)
+    config['plists'] = {str(path): service.sha(data) for path, data in zip(paths, new_data)}
+    write_exclusive(staged / 'config.json', (json.dumps(config, indent=2) + '\n').encode())
+    need(not any(name in sys.modules for name in ('prepare_native', 'activate_native')),
+         'A fresh installer interpreter is required for staged frozen native validation')
+    staged_config = dict(config, base=str(staged))
+    with service.effect_lock(old):
+        need(not (base / 'runtime/removing.json').exists(), 'Removal is pending; upgrade preserved')
+        old_row = json.loads(service.read(base / 'runtime/current.json'))
+        need(old_row.get('phase') == 'workspaces-ready', 'Existing supervisor has an unconfirmed or incomplete native/workspace attempt; preserved')
+        for name, path in (('config.json', base / 'config.json'), ('current.json', base / 'runtime/current.json'), ('status.json', base / 'status.json')):
+            write_exclusive(recovery / name, service.read(path), mode=0o600)
+        for index, data in enumerate(old_data):
+            write_exclusive(recovery / ('previous-' + str(index) + '.plist'), data, mode=0o600)
+        row = adoption(staged_config, args)
+        preparation, _ = service.native_modules(staged_config)
+        lifecycle = service.module('hyprwm_upgrade_processes', staged / 'graph/hook/lifecycle.py')
+        processes = dict(identity=preparation.identity, argv=lifecycle.DarwinProcesses().argv, python_images=python_images(config))
+        journal = upgrade_files(config, staged, recovery, old, old_data, new_data, row, args, processes)
+    print(json.dumps(dict(ok=True, installed=True, upgraded=True, adopted=True, base=str(base),
+                          status=str(base / 'status.json'), recovery=str(journal)), indent=2))
+
+
 def configuration(uid):
     need(uid > 0, 'Positive desktop owner UID required')
     return service.load_config(service.BASE / ('native-session-' + str(uid)) / 'config.json')
@@ -268,9 +561,10 @@ def status(uid):
 
 def remove(uid):
     root_only()
-    config = configuration(uid)
-    with service.effect_lock(config, removing=True):
-        remove_owned(config)
+    with installation_lock(uid):
+        config = configuration(uid)
+        with service.effect_lock(config, removing=True):
+            remove_owned(config)
 
 
 def remove_owned(config):
@@ -333,7 +627,7 @@ def main():
     scan = actions.add_parser('inspect', help='Read-only reviewed tool-graph identity')
     scan.add_argument('--root', type=Path, default=ROOT)
     scan.add_argument('--uid', type=int, default=os.getuid())
-    install_parser = actions.add_parser('install')
+    install_parser = argparse.ArgumentParser(add_help=False)
     install_parser.add_argument('--uid', type=int, required=True)
     install_parser.add_argument('--root', type=Path, default=ROOT)
     install_parser.add_argument('--hook', type=Path, required=True)
@@ -348,6 +642,8 @@ def main():
     install_parser.add_argument('--python', type=Path, default=Path('/Library/Developer/CommandLineTools/usr/bin/python3'))
     install_parser.add_argument('--adopt-activation', type=Path)
     install_parser.add_argument('--adopt-workspaces', type=Path, help='Completed root bootstrap directory for the same current native session')
+    actions.add_parser('install', parents=[install_parser])
+    actions.add_parser('upgrade', parents=[install_parser], help='Replace owned supervisors/frozen graph while adopting the current native/workspace session')
     for action in ('status', 'remove'):
         command = actions.add_parser(action)
         command.add_argument('--uid', type=int, required=True)
@@ -356,8 +652,10 @@ def main():
     try:
         if args.action == 'inspect':
             inspect(args.root, args.uid)
-        elif args.action == 'install':
-            install(args)
+        elif args.action in ('install', 'upgrade'):
+            root_only()
+            with installation_lock(args.uid):
+                install(args)
         elif args.action == 'status':
             status(args.uid)
         else:

@@ -200,8 +200,11 @@ no Lua; explicitly using `HYPR_HOME` for a custom Lua configuration requires `lu
 ## Updating
 
 A live session is preserved by setup; rebuilding does not replace its running app.
-If saved automatic-startup code differs from the new source, setup stops and keeps
-it. Save your work and configuration before replacing an existing installation.
+If only the startup scripts changed, setup can replace the two owned supervisors
+while keeping the current engine, app and keyboard helper running. It verifies the
+same manager, Python, native images and workspace session, and retains a protected
+backup. A changed executable or image, or an unfinished native attempt, is refused.
+Save your work and configuration before replacing an existing installation.
 Restore windows and remove its owned services and app, then update and set up again:
 
 ```sh

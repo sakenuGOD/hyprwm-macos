@@ -721,23 +721,30 @@ def setup(args):
     print('[7/7] Installing login autostart and adopting the exact current native session.' if not args.no_autostart else '[7/7] Starting the session without native login autostart.', flush=True)
     if not args.no_autostart:
         graph = toolgraph()
+        action = 'install'
         if existing_service.exists():
             config = json.loads(existing_service.read_bytes())
-            need(config.get('uid') == os.getuid() and config.get('manager_sha256') == sha(manager) and config.get('native_sha256') == image_sha and
-                 config.get('graph_sha256') == graph['toolgraph_sha256'],
-                 'Existing autostart installation differs; it was preserved. Inspect/remove it explicitly before migration.')
-            status = run_json([sys.executable, '-B', ROOT / 'scripts/install_autostart.py', 'status', '--uid', os.getuid()])
-            need(status.get('installed') is True, 'Removed autostart retains recovery evidence; inspect it before reinstalling.')
-            print('Matching autostart installation retained: ' + json.dumps(status.get('status', {}), sort_keys=True), flush=True)
-        else:
-            arguments = [ROOT / 'scripts/install_autostart.py', 'install', '--uid', os.getuid(), '--root', ROOT,
+            matching = (config.get('uid') == os.getuid() and config.get('manager_sha256') == sha(manager) and
+                        config.get('native_sha256') == image_sha and config.get('graph_sha256') == graph['toolgraph_sha256'])
+            if matching:
+                status = run_json([sys.executable, '-B', ROOT / 'scripts/install_autostart.py', 'status', '--uid', os.getuid()])
+                need(status.get('installed') is True, 'Removed autostart retains recovery evidence; inspect it before reinstalling.')
+                print('Matching autostart installation retained: ' + json.dumps(status.get('status', {}), sort_keys=True), flush=True)
+                action = None
+            else:
+                need(active_runtime_proof(active, manager_status()) and active.get('workspace_receipt'),
+                     'An owned autostart upgrade requires authenticated current native, manager and complete workspace adoption receipts.')
+                action = 'upgrade'
+        if action:
+            arguments = [ROOT / 'scripts/install_autostart.py', action, '--uid', os.getuid(), '--root', ROOT,
                          '--hook', hook, '--manager-executable', manager, '--manager-sha256', sha(manager),
                          '--toolgraph-sha256', graph['toolgraph_sha256'], '--native-image', native / 'probe-eh.dylib',
                          '--native-sha256', image_sha, '--workspace-image-dir', workspaces, '--python', protected_python(),
                          '--adopt-activation', active['activation']]
             if active.get('workspace_receipt'):
                 arguments += ['--adopt-workspaces', active['workspace_receipt']]
-            sudo(arguments, 'freeze the reviewed graph and install the root native-session LaunchDaemon plus user backend LaunchAgent; adopt existing publications')
+            sudo(arguments, ('upgrade the owned frozen graph and ONLY its two supervisors; preserve the current native engine, manager, menus and keyboard' if action == 'upgrade' else
+                             'freeze the reviewed graph and install the root native-session LaunchDaemon plus user backend LaunchAgent; adopt existing publications'))
     elif not args.no_open and not running:
         run(['/usr/bin/open', paths['app']])
     if not args.no_open:

@@ -6,6 +6,8 @@
   paths automatically, and preserve existing configuration and verified sessions.
 - Enabled automatic startup by default through a native-session LaunchDaemon and
   backend and keyboard LaunchAgents. Added `./scripts/hyprwm-up` as a manual fallback.
+- Added a checked upgrade of existing startup supervisors that keeps the active
+  native session, app and keyboard helper running.
 - Added a no-Lua default keyboard setup, registration status and keyboard logs.
   Global shortcuts use Carbon and need no Input Monitoring; app Accessibility and
   optional shortcut-recorder access are shown separately.
