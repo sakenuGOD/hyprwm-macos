@@ -16,7 +16,7 @@
     "nonce": "b52d256d943e4db3b12be29442f2bee9",
     "endpoint": "/private/tmp/re-tools-overview10-501-b52d256d943e4db3b12be29442f2bee9/actor.sock",
     "image": {
-      "path": "/Users/example/Library/Caches/hyprwm/product-polish-20261014/overview10-source14-entry-guard/libhypr-overview-pool10-v14.dylib",
+      "path": "/Users/example/Library/Caches/hyprwm/overview10/source14/libhypr-overview-pool10-v14.dylib",
       "uuid": "4c5f0290c9203bc9b9d4e23d92d3f80b"
     }
   },
