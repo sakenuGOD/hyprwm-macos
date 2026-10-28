@@ -238,6 +238,7 @@ final class WMScenarioTests: XCTestCase {
     // The frozen Python fixtures predate the user-facing English translation.
     // Translate response prefixes only; channel jobs, calls and state stay exact.
     private func englishReferenceResponse(_ response:String)->String {
+        if response == "таких скрытых нет" {return "no matching hidden windows"}
         let prefixes=[("всё видно","all visible"),("скрытых нет","no hidden windows"),
             ("нет окна: ","no window: "),("нет окна","no window"),("не знаю команду: ","unknown command: "),
             ("нечего запускать","nothing to launch"),("пусто","empty"),("закрываю ","closing "),
