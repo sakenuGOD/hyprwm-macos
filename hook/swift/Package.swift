@@ -1,5 +1,5 @@
 // swift-tools-version:5.9
-// hyprwm-swift: Swift port of hook/hyprwm.py (MASTER.md section 11 P1a).
+// hyprwm-swift: Swift daemon, menu and settings for HyprWM.
 // Daemon C code is NOT copied: CChan/CAX/CSnap include hook/src/ sources via shims
 // (#include "../../../src/…"); channel header hook/src/chan.h is unchanged (one ABI for both sides).
 import PackageDescription
